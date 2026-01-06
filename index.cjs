@@ -65,16 +65,19 @@ app.post("/api/register", (req, res) => {
   let validatedClinicCode = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
+    console.log(`[REGISTER] Validating clinic code: "${code}"`);
     
     // First check clinics.json (multi-clinic support)
     // clinics.json is an object where keys are clinic codes
     const clinics = readJson(CLINICS_FILE, {});
+    console.log(`[REGISTER] clinics.json keys:`, Object.keys(clinics));
     let found = false;
     
     // Direct lookup by key (most efficient)
     if (clinics[code] && clinics[code].clinicCode) {
       found = true;
       validatedClinicCode = code;
+      console.log(`[REGISTER] ✅ Found clinic "${code}" in clinics.json (direct lookup)`);
     } else {
       // Fallback: loop through all clinics (in case key doesn't match exactly)
       for (const key in clinics) {
@@ -82,6 +85,7 @@ app.post("/api/register", (req, res) => {
         if (clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code) {
           found = true;
           validatedClinicCode = code;
+          console.log(`[REGISTER] ✅ Found clinic "${code}" in clinics.json (loop, key: "${key}")`);
           break;
         }
       }
@@ -93,10 +97,12 @@ app.post("/api/register", (req, res) => {
       if (singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
         found = true;
         validatedClinicCode = code;
+        console.log(`[REGISTER] ✅ Found clinic "${code}" in clinic.json (backward compatibility)`);
       }
     }
     
     if (!found) {
+      console.log(`[REGISTER] ❌ Clinic code "${code}" not found in clinics.json or clinic.json`);
       return res.status(400).json({ ok: false, error: "invalid_clinic_code", code });
     }
   }
@@ -219,16 +225,19 @@ app.post("/api/patient/register", (req, res) => {
   let validatedClinicCode = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
+    console.log(`[REGISTER /api/patient/register] Validating clinic code: "${code}"`);
     
     // First check clinics.json (multi-clinic support)
     // clinics.json is an object where keys are clinic codes
     const clinics = readJson(CLINICS_FILE, {});
+    console.log(`[REGISTER /api/patient/register] clinics.json keys:`, Object.keys(clinics));
     let found = false;
     
     // Direct lookup by key (most efficient)
     if (clinics[code] && clinics[code].clinicCode) {
       found = true;
       validatedClinicCode = code;
+      console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinics.json (direct lookup)`);
     } else {
       // Fallback: loop through all clinics (in case key doesn't match exactly)
       for (const key in clinics) {
@@ -236,6 +245,7 @@ app.post("/api/patient/register", (req, res) => {
         if (clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code) {
           found = true;
           validatedClinicCode = code;
+          console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinics.json (loop, key: "${key}")`);
           break;
         }
       }
@@ -247,10 +257,12 @@ app.post("/api/patient/register", (req, res) => {
       if (singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
         found = true;
         validatedClinicCode = code;
+        console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinic.json (backward compatibility)`);
       }
     }
     
     if (!found) {
+      console.log(`[REGISTER /api/patient/register] ❌ Clinic code "${code}" not found in clinics.json or clinic.json`);
       return res.status(400).json({ ok: false, error: "invalid_clinic_code", code });
     }
   }
