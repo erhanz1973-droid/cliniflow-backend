@@ -2874,7 +2874,7 @@ app.get("/api/events/stats", requireAdminAuth, (req, res) => {
     const lines = fileContent.trim().split("\n").filter(line => line.trim());
     
     // Count events by type
-    const eventCounts: Record<string, number> = {};
+    const eventCounts = {};
     lines.forEach(line => {
       try {
         const event = JSON.parse(line);
