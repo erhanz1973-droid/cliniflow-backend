@@ -33,6 +33,7 @@ const REF_EVENT_FILE = path.join(DATA_DIR, "referralEvents.json");
 const CLINIC_FILE = path.join(DATA_DIR, "clinic.json");
 const CLINICS_FILE = path.join(DATA_DIR, "clinics.json"); // Admin clinics (email/password)
 const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
+const EVENTS_FILE = path.join(DATA_DIR, "events.jsonl"); // Analytics events (JSON Lines)
 
 // ================== INITIALIZE CLINICS.JSON ==================
 // Migrate clinic.json to clinics.json if clinics.json doesn't exist or is empty
@@ -955,13 +956,19 @@ app.get("/api/patient/:patientId/travel", (req, res) => {
   console.log(`[TRAVEL GET] Request for patientId: ${patientId}`);
   console.log(`[TRAVEL GET] Travel file path: ${travelFile}`);
   console.log(`[TRAVEL GET] File exists: ${fs.existsSync(travelFile)}`);
-  console.log(`[TRAVEL GET] Response data:`, {
+  console.log(`[TRAVEL GET] Full data object:`, JSON.stringify(data, null, 2));
+  console.log(`[TRAVEL GET] data.airportPickup:`, data?.airportPickup);
+  console.log(`[TRAVEL GET] data.airportPickup type:`, typeof data?.airportPickup);
+  console.log(`[TRAVEL GET] data.airportPickup !== undefined:`, data?.airportPickup !== undefined);
+  console.log(`[TRAVEL GET] data.airportPickup !== null:`, data?.airportPickup !== null);
+  console.log(`[TRAVEL GET] Response data summary:`, {
     patientId: data.patientId,
     hasHotel,
     flightsCount,
     hasPickup,
     hasNotes: !!(data.notes && data.notes.trim()),
     airportPickup: data?.airportPickup ? "present" : "null",
+    airportPickupValue: data?.airportPickup,
   });
   console.log(`[TRAVEL GET] ========== END ==========`);
   
@@ -1301,10 +1308,10 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
     const messages = Array.isArray(existing.messages) ? existing.messages : [];
     
     // Debug: log messages with attachment
-    const attachmentMessages = messages.filter((m: any) => m.type === "attachment" || m.attachment);
+    const attachmentMessages = messages.filter((m) => m.type === "attachment" || m.attachment);
     if (attachmentMessages.length > 0) {
       console.log(`[GET MESSAGES] Patient ${patientId} has ${attachmentMessages.length} attachment message(s):`);
-      attachmentMessages.forEach((m: any, idx: number) => {
+      attachmentMessages.forEach((m, idx) => {
         console.log(`[GET MESSAGES] Attachment message ${idx + 1}:`, {
           id: m.id,
           type: m.type,
@@ -1422,7 +1429,7 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     
     // Verify the saved message by reading it back
     const verifyFile = readJson(chatFile, { messages: [] });
-    const savedMessage = verifyFile.messages?.find((m: any) => m.id === newMessage.id);
+    const savedMessage = verifyFile.messages?.find((m) => m.id === newMessage.id);
     if (savedMessage) {
       console.log("[MESSAGE] ✅ Verified saved message:", JSON.stringify(savedMessage, null, 2));
     } else {
@@ -2820,6 +2827,132 @@ app.get("/api/admin/me", requireAdminAuth, (req, res) => {
     res.json({ ok: true, clinic: clinicInfo });
   } catch (error) {
     console.error("Get admin me error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// ================== ANALYTICS ==================
+// GET /api/events/download
+// Download analytics events as JSONL file (admin only - requires auth)
+app.get("/api/events/download", requireAdminAuth, (req, res) => {
+  try {
+    if (!fs.existsSync(EVENTS_FILE)) {
+      return res.status(404).json({ ok: false, error: "events_file_not_found" });
+    }
+    
+    const stats = fs.statSync(EVENTS_FILE);
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Content-Disposition", `attachment; filename="events_${Date.now()}.jsonl"`);
+    res.setHeader("Content-Length", stats.size);
+    
+    const fileStream = fs.createReadStream(EVENTS_FILE);
+    fileStream.pipe(res);
+  } catch (error) {
+    console.error("[ANALYTICS] Download error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// GET /api/events/stats
+// Get analytics stats (admin only - requires auth)
+app.get("/api/events/stats", requireAdminAuth, (req, res) => {
+  try {
+    if (!fs.existsSync(EVENTS_FILE)) {
+      return res.json({ ok: true, total_events: 0, file_size: 0, file_path: EVENTS_FILE });
+    }
+    
+    const stats = fs.statSync(EVENTS_FILE);
+    const fileContent = fs.readFileSync(EVENTS_FILE, "utf8");
+    const lines = fileContent.trim().split("\n").filter(line => line.trim());
+    
+    // Count events by type
+    const eventCounts: Record<string, number> = {};
+    lines.forEach(line => {
+      try {
+        const event = JSON.parse(line);
+        const eventName = event.event_name || "unknown";
+        eventCounts[eventName] = (eventCounts[eventName] || 0) + 1;
+      } catch {
+        // Skip invalid JSON lines
+      }
+    });
+    
+    res.json({
+      ok: true,
+      total_events: lines.length,
+      file_size: stats.size,
+      file_path: EVENTS_FILE,
+      event_counts: eventCounts,
+      last_modified: stats.mtime,
+    });
+  } catch (error) {
+    console.error("[ANALYTICS] Stats error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /api/events
+// Accept analytics events from clients
+app.post("/api/events", (req, res) => {
+  try {
+    const event = req.body;
+    
+    // Validate required fields
+    if (!event.event_name || typeof event.event_name !== "string") {
+      return res.status(400).json({ ok: false, error: "event_name_required" });
+    }
+    
+    if (!event.ts_ms || typeof event.ts_ms !== "number") {
+      return res.status(400).json({ ok: false, error: "ts_ms_required" });
+    }
+    
+    if (!event.app || typeof event.app !== "object") {
+      return res.status(400).json({ ok: false, error: "app_required" });
+    }
+    
+    if (!event.app.platform || typeof event.app.platform !== "string") {
+      return res.status(400).json({ ok: false, error: "app.platform_required" });
+    }
+    
+    if (!event.app.session_id || typeof event.app.session_id !== "string") {
+      return res.status(400).json({ ok: false, error: "app.session_id_required" });
+    }
+    
+    if (!event.props || typeof event.props !== "object") {
+      return res.status(400).json({ ok: false, error: "props_required" });
+    }
+    
+    // Reject forbidden keys in props (PII and sensitive content)
+    const forbiddenKeys = ["phone", "email", "name", "message_text", "xray", "photo_content", "password", "token"];
+    const propsKeys = Object.keys(event.props);
+    const foundForbidden = propsKeys.find(key => forbiddenKeys.includes(key.toLowerCase()));
+    if (foundForbidden) {
+      console.warn(`[ANALYTICS] Rejected event "${event.event_name}" - forbidden key in props: ${foundForbidden}`);
+      return res.status(400).json({ ok: false, error: "forbidden_key_in_props", key: foundForbidden });
+    }
+    
+    // Ensure event_version defaults to 1
+    if (!event.event_version) {
+      event.event_version = 1;
+    }
+    
+    // Add server timestamp
+    event.server_ts_ms = now();
+    
+    // Append to JSONL file (one JSON object per line)
+    const jsonLine = JSON.stringify(event) + "\n";
+    try {
+      fs.appendFileSync(EVENTS_FILE, jsonLine, "utf8");
+    } catch (fileError) {
+      // On Render, filesystem may be ephemeral - log but don't fail
+      console.warn(`[ANALYTICS] Failed to write event to file (ephemeral filesystem?): ${fileError.message}`);
+      // Still return success - in production we'd use a database
+    }
+    
+    // Return success
+    res.json({ ok: true, event_id: event.event_name + "_" + event.ts_ms });
+  } catch (error) {
+    console.error("[ANALYTICS] Event processing error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
