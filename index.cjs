@@ -58,23 +58,26 @@ const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
     
     let needsWrite = false;
     
-    // If clinics.json is empty but clinic.json has data, migrate it
-    if (Object.keys(clinics).length === 0 && clinic.clinicCode) {
-      console.log(`[INIT] Migrating clinic.json to clinics.json...`);
-      console.log(`[INIT] Clinic code: ${clinic.clinicCode}`);
-      
+    // Always ensure clinic.json's clinic is in clinics.json (if clinic.json exists)
+    if (clinic.clinicCode) {
       const clinicCode = String(clinic.clinicCode).toUpperCase().trim();
-      clinics[clinicCode] = {
-        ...clinic,
-        clinicCode: clinicCode,
-      };
-      
-      needsWrite = true;
-    } else if (Object.keys(clinics).length === 0) {
-      // If both are empty, create empty clinics.json
+      if (!clinics[clinicCode]) {
+        console.log(`[INIT] Adding clinic.json clinic "${clinicCode}" to clinics.json...`);
+        clinics[clinicCode] = {
+          ...clinic,
+          clinicCode: clinicCode,
+        };
+        needsWrite = true;
+      } else {
+        console.log(`[INIT] Clinic "${clinicCode}" already exists in clinics.json`);
+      }
+    }
+    
+    // If clinics.json is empty and clinic.json has no data, create empty clinics.json
+    if (Object.keys(clinics).length === 0 && !clinic.clinicCode) {
       console.log(`[INIT] Creating empty clinics.json file...`);
       needsWrite = true;
-    } else {
+    } else if (Object.keys(clinics).length > 0) {
       console.log(`[INIT] clinics.json already exists with ${Object.keys(clinics).length} clinic(s):`, Object.keys(clinics));
     }
     
