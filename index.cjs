@@ -7,6 +7,7 @@ const http = require("http");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const supabase = require("./supabase");
 
 const app = express();
 const server = http.createServer(app);
@@ -146,6 +147,55 @@ const now = () => Date.now();
 const rid = (p) => p + "_" + crypto.randomBytes(6).toString("hex");
 const makeToken = () => "t_" + crypto.randomBytes(10).toString("base64url");
 
+// ================== SUPABASE HELPERS (with JSON fallback) ==================
+// Clinic validation helper - checks Supabase first, then falls back to JSON
+async function validateClinicCode(code) {
+  const codeUpper = String(code).trim().toUpperCase();
+  
+  // Try Supabase first
+  if (supabase.isSupabaseAvailable()) {
+    const clinic = await supabase.getClinicByCode(codeUpper);
+    if (clinic) {
+      console.log(`[VALIDATE] ✅ Found clinic "${codeUpper}" in Supabase`);
+      return { found: true, clinicCode: codeUpper, clinic };
+    }
+  }
+  
+  // Fallback to JSON files
+  const clinics = readJson(CLINICS_FILE, {});
+  if (clinics[codeUpper]) {
+    console.log(`[VALIDATE] ✅ Found clinic "${codeUpper}" in clinics.json`);
+    return { found: true, clinicCode: codeUpper, clinic: clinics[codeUpper] };
+  }
+  
+  // Check clinic.json for backward compatibility
+  const singleClinic = readJson(CLINIC_FILE, {});
+  if (singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === codeUpper) {
+    console.log(`[VALIDATE] ✅ Found clinic "${codeUpper}" in clinic.json`);
+    return { found: true, clinicCode: codeUpper, clinic: singleClinic };
+  }
+  
+  console.log(`[VALIDATE] ❌ Clinic code "${codeUpper}" not found`);
+  return { found: false, clinicCode: null, clinic: null };
+}
+
+// Get all clinics - Supabase first, then JSON fallback
+async function getAllClinicsData() {
+  // Try Supabase first
+  if (supabase.isSupabaseAvailable()) {
+    const clinics = await supabase.getAllClinics();
+    if (Object.keys(clinics).length > 0) {
+      console.log(`[GET_CLINICS] ✅ Retrieved ${Object.keys(clinics).length} clinic(s) from Supabase`);
+      return clinics;
+    }
+  }
+  
+  // Fallback to JSON
+  const clinics = readJson(CLINICS_FILE, {});
+  console.log(`[GET_CLINICS] Retrieved ${Object.keys(clinics).length} clinic(s) from clinics.json`);
+  return clinics;
+}
+
 // ================== HEALTH ==================
 app.get("/health", (req, res) => {
   res.setHeader("X-CLINIFLOW-SERVER", "INDEX_CJS_ADMIN_V3");
@@ -174,7 +224,7 @@ app.get("/api/debug/clinics", (req, res) => {
 });
 
 // ================== REGISTER ==================
-app.post("/api/register", (req, res) => {
+app.post("/api/register", async (req, res) => {
   const { name = "", phone = "", referralCode = "", clinicCode = "" } = req.body || {};
   if (!String(phone).trim()) {
     return res.status(400).json({ ok: false, error: "phone_required" });
@@ -185,55 +235,14 @@ app.post("/api/register", (req, res) => {
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
     console.log(`[REGISTER] Validating clinic code: "${code}"`);
-    console.log(`[REGISTER] CLINICS_FILE path: ${CLINICS_FILE}`);
-    console.log(`[REGISTER] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
     
-    // First check clinics.json (multi-clinic support)
-    // clinics.json is an object where keys are clinic codes
-    const clinics = readJson(CLINICS_FILE, {});
-    console.log(`[REGISTER] clinics.json type: ${typeof clinics}`);
-    console.log(`[REGISTER] clinics.json keys:`, Object.keys(clinics));
-    console.log(`[REGISTER] clinics.json content:`, JSON.stringify(clinics, null, 2).substring(0, 500));
-    let found = false;
-    
-    // Direct lookup by key (most efficient)
-    // Key itself is the clinic code
-    if (clinics[code]) {
-      found = true;
-      validatedClinicCode = code;
-      console.log(`[REGISTER] ✅ Found clinic "${code}" in clinics.json (direct lookup by key)`);
+    const validation = await validateClinicCode(code);
+    if (!validation.found) {
+      const allClinics = await getAllClinicsData();
+      console.log(`[REGISTER] ❌ Clinic code "${code}" not found. Available clinics:`, Object.keys(allClinics));
+      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code, available: Object.keys(allClinics) });
     }
-    
-    // Fallback: loop through all clinics (in case key doesn't match exactly)
-    if (!found) {
-      for (const key in clinics) {
-        const clinic = clinics[key];
-        console.log(`[REGISTER] Checking key "${key}": clinic.clinicCode="${clinic?.clinicCode}", match=${clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code}`);
-        if (clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code) {
-          found = true;
-          validatedClinicCode = code;
-          console.log(`[REGISTER] ✅ Found clinic "${code}" in clinics.json (loop, key: "${key}")`);
-          break;
-        }
-      }
-    }
-    
-    // If not found in clinics.json, check clinic.json (backward compatibility)
-    if (!found) {
-      console.log(`[REGISTER] Checking clinic.json for backward compatibility...`);
-      const singleClinic = readJson(CLINIC_FILE, {});
-      console.log(`[REGISTER] clinic.json clinicCode: ${singleClinic.clinicCode}`);
-      if (singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
-        found = true;
-        validatedClinicCode = code;
-        console.log(`[REGISTER] ✅ Found clinic "${code}" in clinic.json (backward compatibility)`);
-      }
-    }
-    
-    if (!found) {
-      console.log(`[REGISTER] ❌ Clinic code "${code}" not found. Available clinics:`, Object.keys(clinics));
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code, available: Object.keys(clinics) });
-    }
+    validatedClinicCode = validation.clinicCode;
   }
 
   const patientId = rid("p");
@@ -344,7 +353,7 @@ app.post("/api/register", (req, res) => {
 });
 
 // ================== PATIENT REGISTER (alias) ==================
-app.post("/api/patient/register", (req, res) => {
+app.post("/api/patient/register", async (req, res) => {
   const { name = "", phone = "", referralCode = "", clinicCode = "" } = req.body || {};
   if (!String(phone).trim()) {
     return res.status(400).json({ ok: false, error: "phone_required" });
@@ -355,55 +364,14 @@ app.post("/api/patient/register", (req, res) => {
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
     console.log(`[REGISTER /api/patient/register] Validating clinic code: "${code}"`);
-    console.log(`[REGISTER /api/patient/register] CLINICS_FILE path: ${CLINICS_FILE}`);
-    console.log(`[REGISTER /api/patient/register] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
     
-    // First check clinics.json (multi-clinic support)
-    // clinics.json is an object where keys are clinic codes
-    const clinics = readJson(CLINICS_FILE, {});
-    console.log(`[REGISTER /api/patient/register] clinics.json type: ${typeof clinics}`);
-    console.log(`[REGISTER /api/patient/register] clinics.json keys:`, Object.keys(clinics));
-    console.log(`[REGISTER /api/patient/register] clinics.json content:`, JSON.stringify(clinics, null, 2).substring(0, 500));
-    let found = false;
-    
-    // Direct lookup by key (most efficient)
-    // Key itself is the clinic code
-    if (clinics[code]) {
-      found = true;
-      validatedClinicCode = code;
-      console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinics.json (direct lookup by key)`);
+    const validation = await validateClinicCode(code);
+    if (!validation.found) {
+      const allClinics = await getAllClinicsData();
+      console.log(`[REGISTER /api/patient/register] ❌ Clinic code "${code}" not found. Available clinics:`, Object.keys(allClinics));
+      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code, available: Object.keys(allClinics) });
     }
-    
-    // Fallback: loop through all clinics (in case key doesn't match exactly)
-    if (!found) {
-      for (const key in clinics) {
-        const clinic = clinics[key];
-        console.log(`[REGISTER /api/patient/register] Checking key "${key}": clinic.clinicCode="${clinic?.clinicCode}", match=${clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code}`);
-        if (clinic && clinic.clinicCode && String(clinic.clinicCode).toUpperCase() === code) {
-          found = true;
-          validatedClinicCode = code;
-          console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinics.json (loop, key: "${key}")`);
-          break;
-        }
-      }
-    }
-    
-    // If not found in clinics.json, check clinic.json (backward compatibility)
-    if (!found) {
-      console.log(`[REGISTER /api/patient/register] Checking clinic.json for backward compatibility...`);
-      const singleClinic = readJson(CLINIC_FILE, {});
-      console.log(`[REGISTER /api/patient/register] clinic.json clinicCode: ${singleClinic.clinicCode}`);
-      if (singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
-        found = true;
-        validatedClinicCode = code;
-        console.log(`[REGISTER /api/patient/register] ✅ Found clinic "${code}" in clinic.json (backward compatibility)`);
-      }
-    }
-    
-    if (!found) {
-      console.log(`[REGISTER /api/patient/register] ❌ Clinic code "${code}" not found. Available clinics:`, Object.keys(clinics));
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code, available: Object.keys(clinics) });
-    }
+    validatedClinicCode = validation.clinicCode;
   }
 
   const patientId = rid("p");
@@ -1351,11 +1319,18 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     // Body'yi güvenli şekilde oku
     const body = req.body || {};
     const text = String(body.text || "").trim();
+    const type = String(body.type || "text").trim();
+    const attachment = body.attachment || null;
     
-    console.log("Patient message - patientId:", patientId, "text length:", text.length, "body keys:", Object.keys(body));
+    console.log("Patient message - patientId:", patientId, "text length:", text.length, "type:", type, "has attachment:", !!attachment, "body keys:", Object.keys(body));
     
-    if (!text) {
+    // For attachment messages, text can be empty but attachment must exist
+    if (!text && type !== "attachment") {
       return res.status(400).json({ ok: false, error: "text_required", received: body });
+    }
+    
+    if (type === "attachment" && !attachment) {
+      return res.status(400).json({ ok: false, error: "attachment_required", received: body });
     }
 
     // Token'dan gelen patientId ile URL'deki patientId eşleşmeli
@@ -1374,10 +1349,22 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     const newMessage = {
       id: `msg_${now()}_${crypto.randomBytes(4).toString("hex")}`,
       text: String(text).trim(),
+      type: type === "attachment" ? "attachment" : "text",
       from: "PATIENT",
       createdAt: now(),
       patientId: req.patientId,
     };
+    
+    // Add attachment if present
+    if (type === "attachment" && attachment) {
+      newMessage.attachment = {
+        id: String(attachment.id || ""),
+        name: String(attachment.name || ""),
+        mime: String(attachment.mime || ""),
+        size: Number(attachment.size || 0),
+        url: String(attachment.url || ""),
+      };
+    }
     
     messages.push(newMessage);
     
@@ -1388,6 +1375,7 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     };
     
     writeJson(chatFile, payload);
+    console.log("Patient message saved:", { id: newMessage.id, type: newMessage.type, hasAttachment: !!newMessage.attachment });
     res.json({ ok: true, message: newMessage });
   } catch (error) {
     console.error("Patient message send error:", error);
