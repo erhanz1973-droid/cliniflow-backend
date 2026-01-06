@@ -1338,12 +1338,19 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     const type = String(body.type || "text").trim();
     const attachment = body.attachment || null;
     
+    // OLD LOG FORMAT (for compatibility with existing logs)
+    console.log("Patient message - patientId:", patientId, "text length:", text.length, "type:", type, "has attachment:", !!attachment, "body keys:", Object.keys(body));
+    
+    // NEW LOG FORMAT
     console.log("[MESSAGE] ========== START MESSAGE CREATION ==========");
     console.log("[MESSAGE] Patient ID:", patientId);
     console.log("[MESSAGE] Body keys:", Object.keys(body));
     console.log("[MESSAGE] Body.type:", body.type, "(raw)");
     console.log("[MESSAGE] Parsed type:", type);
-    console.log("[MESSAGE] Body.attachment:", body.attachment ? "EXISTS" : "NULL", body.attachment);
+    console.log("[MESSAGE] Body.attachment:", body.attachment ? "EXISTS" : "NULL");
+    if (body.attachment) {
+      console.log("[MESSAGE] Attachment details:", JSON.stringify(body.attachment, null, 2));
+    }
     console.log("[MESSAGE] Text length:", text.length);
     console.log("[MESSAGE] ============================================");
     
@@ -1381,9 +1388,9 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     console.log("[MESSAGE] newMessage before attachment:", JSON.stringify(newMessage, null, 2));
     
     // Add attachment if present
-    // Check both type === "attachment" OR if attachment object exists
-    if ((type === "attachment" || attachment) && attachment) {
-      console.log("[MESSAGE] ✅ Adding attachment to message");
+    // IMPORTANT: Check if attachment object exists, regardless of type field
+    if (attachment && typeof attachment === "object") {
+      console.log("[MESSAGE] ✅ ATTACHMENT DETECTED - Adding to message");
       newMessage.attachment = {
         id: String(attachment.id || ""),
         name: String(attachment.name || ""),
@@ -1391,14 +1398,14 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
         size: Number(attachment.size || 0),
         url: String(attachment.url || ""),
       };
-      // Also set type to "attachment" if it's not already
-      if (newMessage.type !== "attachment") {
-        console.log("[MESSAGE] ⚠️ Type was not 'attachment', setting it now");
-        newMessage.type = "attachment";
-      }
-      console.log("[MESSAGE] Attachment added:", JSON.stringify(newMessage.attachment, null, 2));
+      // Always set type to "attachment" if attachment exists
+      newMessage.type = "attachment";
+      console.log("[MESSAGE] ✅ Attachment added and type set to 'attachment':", JSON.stringify(newMessage.attachment, null, 2));
+    } else if (type === "attachment") {
+      console.log("[MESSAGE] ⚠️ Type is 'attachment' but no attachment object found");
+      console.log("[MESSAGE] Attachment value:", attachment);
     } else {
-      console.log("[MESSAGE] ❌ No attachment added - type:", type, "attachment exists:", !!attachment, "attachment value:", attachment);
+      console.log("[MESSAGE] No attachment - type:", type, "attachment exists:", !!attachment);
     }
     
     messages.push(newMessage);
