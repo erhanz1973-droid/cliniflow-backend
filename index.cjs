@@ -1563,7 +1563,7 @@ app.get("/api/patient/:patientId/files/:filename", (req, res) => {
     
     // Set appropriate content type
     const ext = path.extname(filename).toLowerCase();
-    const contentTypeMap: Record<string, string> = {
+    const contentTypeMap = {
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
       ".png": "image/png",
