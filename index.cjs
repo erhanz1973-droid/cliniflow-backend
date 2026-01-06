@@ -429,6 +429,7 @@ app.get("/api/me", requireToken, (req, res) => {
     status: p?.status || req.role,
     name: p?.name || "",
     phone: p?.phone || "",
+    clinicCode: p?.clinicCode || null, // Include clinic code in response
   });
 });
 
@@ -449,6 +450,7 @@ app.get("/api/patient/me", requireToken, (req, res) => {
     status: finalStatus, // Return the final status
     name: p?.name || "",
     phone: p?.phone || "",
+    clinicCode: p?.clinicCode || null, // Include clinic code in response
   });
 });
 
@@ -1362,11 +1364,20 @@ app.get("/api/clinic/:code", (req, res) => {
     return res.status(400).json({ ok: false, error: "clinic_code_required" });
   }
   
-  const clinic = readJson(CLINIC_FILE, {});
+  // First check clinics.json (multi-clinic support)
+  const clinics = readJson(CLINICS_FILE, {});
+  let clinic = clinics[code];
   
-  // Check if clinic code matches
-  if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
-    // Don't return password hash to public endpoint
+  // If not found in clinics.json, check clinic.json (backward compatibility)
+  if (!clinic) {
+    const singleClinic = readJson(CLINIC_FILE, {});
+    if (singleClinic.clinicCode && singleClinic.clinicCode.toUpperCase() === code) {
+      clinic = singleClinic;
+    }
+  }
+  
+  // If found, return clinic info (without password)
+  if (clinic) {
     const { password, ...publicClinic } = clinic;
     return res.json(publicClinic);
   }
