@@ -2832,13 +2832,21 @@ app.get("/api/admin/me", requireAdminAuth, (req, res) => {
 });
 
 // ================== ANALYTICS ==================
+// Test endpoint to verify analytics routes are loaded
+app.get("/api/events/test", (req, res) => {
+  res.json({ ok: true, message: "Analytics routes are loaded", timestamp: now() });
+});
+
 // GET /api/events/download
 // Download analytics events as JSONL file (admin only - requires auth)
 app.get("/api/events/download", requireAdminAuth, (req, res) => {
+  console.log("[ANALYTICS] GET /api/events/download - Request received");
   try {
     if (!fs.existsSync(EVENTS_FILE)) {
+      console.log("[ANALYTICS] Events file not found:", EVENTS_FILE);
       return res.status(404).json({ ok: false, error: "events_file_not_found" });
     }
+    console.log("[ANALYTICS] Events file found, size:", fs.statSync(EVENTS_FILE).size);
     
     const stats = fs.statSync(EVENTS_FILE);
     res.setHeader("Content-Type", "application/x-ndjson");
