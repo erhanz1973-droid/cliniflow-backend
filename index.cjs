@@ -1831,7 +1831,7 @@ app.get("/api/clinic", (req, res) => {
 });
 
 // GET /api/clinic/:code (Public - get clinic by code)
-app.get("/api/clinic/:code", (req, res) => {
+app.get("/api/clinic/:code", async (req, res) => {
   const code = String(req.params.code || "").toUpperCase().trim();
   console.log(`[CLINIC] GET /api/clinic/:code - Requested code: "${code}"`);
   
@@ -1840,13 +1840,40 @@ app.get("/api/clinic/:code", (req, res) => {
     return res.status(400).json({ ok: false, error: "clinic_code_required" });
   }
   
+  let clinic = null;
+  
+  // Try Supabase first (if available)
+  if (supabase && supabase.isSupabaseAvailable && supabase.isSupabaseAvailable()) {
+    console.log(`[CLINIC] Checking Supabase for clinic "${code}"...`);
+    clinic = await supabase.getClinicByCode(code);
+    if (clinic) {
+      console.log(`[CLINIC] ✅ Found clinic "${code}" in Supabase`);
+      // Convert Supabase format to JSON format (snake_case to camelCase)
+      const publicClinic = {
+        clinicCode: clinic.clinic_code,
+        name: clinic.name,
+        email: clinic.email,
+        address: clinic.address || "",
+        phone: clinic.phone || "",
+        website: clinic.website || "",
+        logoUrl: clinic.logo_url || "",
+        googleMapsUrl: clinic.google_maps_url || "",
+        defaultInviterDiscountPercent: clinic.default_inviter_discount_percent,
+        defaultInvitedDiscountPercent: clinic.default_invited_discount_percent,
+        createdAt: clinic.created_at,
+        updatedAt: clinic.updated_at,
+      };
+      return res.json(publicClinic);
+    }
+  }
+  
   console.log(`[CLINIC] CLINICS_FILE path: ${CLINICS_FILE}`);
   console.log(`[CLINIC] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
   
-  // First check clinics.json (multi-clinic support)
+  // Fallback to clinics.json (multi-clinic support)
   const clinics = readJson(CLINICS_FILE, {});
   console.log(`[CLINIC] clinics.json keys:`, Object.keys(clinics));
-  let clinic = clinics[code];
+  clinic = clinics[code];
   
   // If not found in clinics.json, check clinic.json (backward compatibility)
   if (!clinic) {
@@ -2456,32 +2483,62 @@ app.post("/api/admin/login", async (req, res) => {
     const code = String(clinicCode).trim().toUpperCase();
     
     console.log(`[LOGIN] Attempting login for clinic code: "${code}"`);
-    console.log(`[LOGIN] CLINICS_FILE path: ${CLINICS_FILE}`);
-    console.log(`[LOGIN] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
     
-    // First check clinics.json (multi-clinic support)
-    const clinics = readJson(CLINICS_FILE, {});
-    console.log(`[LOGIN] clinics.json keys:`, Object.keys(clinics));
-    let clinic = clinics[code];
+    let clinic = null;
     
-    // If not found in clinics.json, check clinic.json (backward compatibility)
-    if (!clinic) {
-      console.log(`[LOGIN] Clinic "${code}" not found in clinics.json, checking clinic.json...`);
-      const singleClinic = readJson(CLINIC_FILE, {});
-      console.log(`[LOGIN] clinic.json clinicCode:`, singleClinic.clinicCode);
-      if (singleClinic.clinicCode && singleClinic.clinicCode.toUpperCase() === code) {
-        clinic = singleClinic;
-        console.log(`[LOGIN] ✅ Found clinic "${code}" in clinic.json`);
-      } else {
-        console.log(`[LOGIN] ❌ Clinic "${code}" not found in either file`);
+    // Try Supabase first (if available)
+    if (supabase && supabase.isSupabaseAvailable && supabase.isSupabaseAvailable()) {
+      console.log(`[LOGIN] Checking Supabase for clinic "${code}"...`);
+      const supabaseClinic = await supabase.getClinicByCode(code);
+      if (supabaseClinic) {
+        console.log(`[LOGIN] ✅ Found clinic "${code}" in Supabase`);
+        // Convert Supabase format to JSON format (snake_case to camelCase)
+        clinic = {
+          clinicCode: supabaseClinic.clinic_code,
+          name: supabaseClinic.name,
+          email: supabaseClinic.email,
+          password: supabaseClinic.password,
+          address: supabaseClinic.address || "",
+          phone: supabaseClinic.phone || "",
+          website: supabaseClinic.website || "",
+          logoUrl: supabaseClinic.logo_url || "",
+          googleMapsUrl: supabaseClinic.google_maps_url || "",
+          defaultInviterDiscountPercent: supabaseClinic.default_inviter_discount_percent,
+          defaultInvitedDiscountPercent: supabaseClinic.default_invited_discount_percent,
+          createdAt: supabaseClinic.created_at,
+          updatedAt: supabaseClinic.updated_at,
+        };
       }
-    } else {
-      console.log(`[LOGIN] ✅ Found clinic "${code}" in clinics.json`);
+    }
+    
+    // Fallback to clinics.json (multi-clinic support)
+    if (!clinic) {
+      console.log(`[LOGIN] CLINICS_FILE path: ${CLINICS_FILE}`);
+      console.log(`[LOGIN] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
+      const clinics = readJson(CLINICS_FILE, {});
+      console.log(`[LOGIN] clinics.json keys:`, Object.keys(clinics));
+      clinic = clinics[code];
+      
+      // If not found in clinics.json, check clinic.json (backward compatibility)
+      if (!clinic) {
+        console.log(`[LOGIN] Clinic "${code}" not found in clinics.json, checking clinic.json...`);
+        const singleClinic = readJson(CLINIC_FILE, {});
+        console.log(`[LOGIN] clinic.json clinicCode:`, singleClinic.clinicCode);
+        if (singleClinic.clinicCode && singleClinic.clinicCode.toUpperCase() === code) {
+          clinic = singleClinic;
+          console.log(`[LOGIN] ✅ Found clinic "${code}" in clinic.json`);
+        } else {
+          console.log(`[LOGIN] ❌ Clinic "${code}" not found in either file`);
+        }
+      } else {
+        console.log(`[LOGIN] ✅ Found clinic "${code}" in clinics.json`);
+      }
     }
     
     // Check if clinic exists
     if (!clinic) {
-      console.log(`[LOGIN] ❌ Clinic "${code}" does not exist. Available clinics:`, Object.keys(clinics));
+      const allClinics = readJson(CLINICS_FILE, {});
+      console.log(`[LOGIN] ❌ Clinic "${code}" does not exist. Available clinics:`, Object.keys(allClinics));
       return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
     }
     
@@ -2635,7 +2692,35 @@ app.post("/api/admin/register", async (req, res) => {
       updatedAt: now(),
     };
     
-    // Save to clinics.json (multi-clinic support)
+    // Try to save to Supabase first (if available)
+    if (supabase && supabase.isSupabaseAvailable && supabase.isSupabaseAvailable()) {
+      console.log(`[REGISTER] Attempting to save clinic "${code}" to Supabase...`);
+      const supabaseClinicData = {
+        clinic_code: code,
+        name: name,
+        email: emailLower,
+        password: hashedPassword,
+        address: "",
+        phone: "",
+        website: "",
+        logo_url: "",
+        google_maps_url: "",
+        default_inviter_discount_percent: null,
+        default_invited_discount_percent: null,
+        created_at: now(), // BIGINT (milliseconds)
+        updated_at: now(), // BIGINT (milliseconds)
+      };
+      const supabaseResult = await supabase.createClinic(supabaseClinicData);
+      if (supabaseResult) {
+        console.log(`[REGISTER] ✅ Saved clinic "${code}" to Supabase`);
+      } else {
+        console.warn(`[REGISTER] ⚠️  Failed to save clinic "${code}" to Supabase, falling back to file storage`);
+      }
+    } else {
+      console.log(`[REGISTER] Supabase not available, using file-based storage`);
+    }
+    
+    // Always save to clinics.json as fallback (for backward compatibility and local dev)
     clinics[code] = newClinic;
     writeJson(CLINICS_FILE, clinics);
     console.log(`[REGISTER] ✅ Saved clinic "${code}" to clinics.json`);
