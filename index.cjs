@@ -32,6 +32,60 @@ const CLINIC_FILE = path.join(DATA_DIR, "clinic.json");
 const CLINICS_FILE = path.join(DATA_DIR, "clinics.json"); // Admin clinics (email/password)
 const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
 
+// ================== INITIALIZE CLINICS.JSON ==================
+// Migrate clinic.json to clinics.json if clinics.json doesn't exist or is empty
+// This runs on every server start to handle Render's ephemeral filesystem
+(function initializeClinicsJson() {
+  console.log(`[INIT] ========== INITIALIZING CLINICS.JSON ==========`);
+  console.log(`[INIT] CLINICS_FILE path: ${CLINICS_FILE}`);
+  console.log(`[INIT] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
+  console.log(`[INIT] CLINIC_FILE path: ${CLINIC_FILE}`);
+  console.log(`[INIT] CLINIC_FILE exists: ${fs.existsSync(CLINIC_FILE)}`);
+  
+  const clinics = readJson(CLINICS_FILE, {});
+  const clinic = readJson(CLINIC_FILE, {});
+  
+  console.log(`[INIT] clinics.json keys:`, Object.keys(clinics));
+  console.log(`[INIT] clinic.json clinicCode:`, clinic.clinicCode);
+  
+  // If clinics.json is empty but clinic.json has data, migrate it
+  if (Object.keys(clinics).length === 0 && clinic.clinicCode) {
+    console.log(`[INIT] Migrating clinic.json to clinics.json...`);
+    console.log(`[INIT] Clinic code: ${clinic.clinicCode}`);
+    
+    const clinicCode = String(clinic.clinicCode).toUpperCase().trim();
+    clinics[clinicCode] = {
+      ...clinic,
+      clinicCode: clinicCode,
+    };
+    
+    writeJson(CLINICS_FILE, clinics);
+    console.log(`[INIT] ✅ Migrated clinic "${clinicCode}" to clinics.json`);
+    
+    // Verify the write
+    const verifyClinics = readJson(CLINICS_FILE, {});
+    console.log(`[INIT] Verified clinics.json keys:`, Object.keys(verifyClinics));
+    if (verifyClinics[clinicCode]) {
+      console.log(`[INIT] ✅ Verification successful: clinic "${clinicCode}" exists in clinics.json`);
+    } else {
+      console.error(`[INIT] ❌ Verification failed: clinic "${clinicCode}" NOT found in clinics.json!`);
+    }
+  } else if (Object.keys(clinics).length === 0) {
+    // If both are empty, create empty clinics.json
+    console.log(`[INIT] Creating empty clinics.json file...`);
+    writeJson(CLINICS_FILE, {});
+    console.log(`[INIT] ✅ Created empty clinics.json`);
+    
+    // Verify the write
+    const verifyExists = fs.existsSync(CLINICS_FILE);
+    console.log(`[INIT] Verified clinics.json exists: ${verifyExists}`);
+  } else {
+    console.log(`[INIT] clinics.json already exists with ${Object.keys(clinics).length} clinic(s):`, Object.keys(clinics));
+  }
+  
+  console.log(`[INIT] ========== END INITIALIZATION ==========`);
+})();
+
 function readJson(file, fallback) {
   try {
     if (!fs.existsSync(file)) return fallback;
@@ -58,6 +112,11 @@ app.get("/health", (req, res) => {
 app.get("/api/debug/clinics", (req, res) => {
   const clinics = readJson(CLINICS_FILE, {});
   const clinic = readJson(CLINIC_FILE, {});
+  console.log(`[DEBUG] CLINICS_FILE path: ${CLINICS_FILE}`);
+  console.log(`[DEBUG] CLINICS_FILE exists: ${fs.existsSync(CLINICS_FILE)}`);
+  console.log(`[DEBUG] clinics.json keys:`, Object.keys(clinics));
+  console.log(`[DEBUG] clinics.json content:`, JSON.stringify(clinics, null, 2));
+  console.log(`[DEBUG] clinic.json content:`, JSON.stringify(clinic, null, 2));
   res.json({
     ok: true,
     clinicsFileExists: fs.existsSync(CLINICS_FILE),
@@ -441,7 +500,9 @@ app.get("/api/patient/me", requireToken, (req, res) => {
   // Priority: patient.status > token.role > "PENDING"
   const finalStatus = p?.status || req.role || "PENDING";
   
-  console.log(`[ME] patientId: ${req.patientId}, patient.status: ${p?.status}, token.role: ${req.role}, finalStatus: ${finalStatus}`);
+  const clinicCode = p?.clinicCode || null;
+  console.log(`[ME] patientId: ${req.patientId}, patient.status: ${p?.status}, token.role: ${req.role}, finalStatus: ${finalStatus}, clinicCode: ${clinicCode}`);
+  console.log(`[ME] Patient record:`, JSON.stringify(p, null, 2));
 
   res.json({
     ok: true,
@@ -450,7 +511,7 @@ app.get("/api/patient/me", requireToken, (req, res) => {
     status: finalStatus, // Return the final status
     name: p?.name || "",
     phone: p?.phone || "",
-    clinicCode: p?.clinicCode || null, // Include clinic code in response
+    clinicCode: clinicCode, // Include clinic code in response
   });
 });
 
@@ -1612,7 +1673,7 @@ app.get("/api/admin/referrals", (req, res) => {
 });
 
 // GET /api/patient/:patientId/referrals
-// Get referrals where this patient is the inviter (only their own referrals)
+// Get referrals where this patient is either the inviter OR the invited person
 app.get("/api/patient/:patientId/referrals", (req, res) => {
   try {
     const { patientId } = req.params;
@@ -1625,8 +1686,13 @@ app.get("/api/patient/:patientId/referrals", (req, res) => {
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     
-    // Filter: only referrals where this patient is the inviter
-    let items = list.filter((x) => x && x.inviterPatientId === patientId);
+    // Filter: referrals where this patient is the inviter OR the invited person
+    let items = list.filter((x) => 
+      x && (
+        x.inviterPatientId === patientId || 
+        x.invitedPatientId === patientId
+      )
+    );
     
     // Optional status filter
     if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
@@ -1635,6 +1701,11 @@ app.get("/api/patient/:patientId/referrals", (req, res) => {
     
     // Sort by created date (newest first)
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    
+    console.log(`[REFERRALS] Patient ${patientId} has ${items.length} referral(s)`);
+    items.forEach(item => {
+      console.log(`[REFERRALS] Referral ${item.id}: inviter=${item.inviterPatientId}, invited=${item.invitedPatientId}, status=${item.status}, inviterDiscount=${item.inviterDiscountPercent}, invitedDiscount=${item.invitedDiscountPercent}`);
+    });
     
     res.json({ ok: true, items });
   } catch (error) {
@@ -2122,6 +2193,18 @@ app.post("/api/admin/register", async (req, res) => {
     // Save to clinics.json (multi-clinic support)
     clinics[code] = newClinic;
     writeJson(CLINICS_FILE, clinics);
+    console.log(`[REGISTER] ✅ Saved clinic "${code}" to clinics.json`);
+    console.log(`[REGISTER] CLINICS_FILE path: ${CLINICS_FILE}`);
+    console.log(`[REGISTER] CLINICS_FILE exists after write: ${fs.existsSync(CLINICS_FILE)}`);
+    console.log(`[REGISTER] clinics.json keys after write:`, Object.keys(clinics));
+    
+    // Verify the write
+    const verifyClinics = readJson(CLINICS_FILE, {});
+    if (verifyClinics[code]) {
+      console.log(`[REGISTER] ✅ Verified: clinic "${code}" exists in clinics.json after write`);
+    } else {
+      console.error(`[REGISTER] ❌ ERROR: clinic "${code}" NOT found in clinics.json after write!`);
+    }
     
     // Also update clinic.json if it's empty (for backward compatibility)
     if (!clinic.clinicCode) {
