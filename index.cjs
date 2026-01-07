@@ -1097,7 +1097,7 @@ app.get("/api/admin/patients", requireAdmin, (req, res) => {
 });
 
 // ================== ADMIN APPROVE ==================
-app.post("/api/admin/approve", requireAdmin, (req, res) => {
+app.post("/api/admin/approve", requireAdmin, async (req, res) => {
   const clinicCode = req.clinicCode;
   const { requestId, patientId } = req.body || {};
   
@@ -2712,31 +2712,121 @@ app.put("/api/admin/clinic", requireAdmin, async (req, res) => {
         });
         console.log(`[PUT /api/admin/clinic] Full upsert payload (JSON):`, JSON.stringify(upsertPayload, null, 2));
         
-        // Direct Supabase upsert call (using ?? operator to ensure empty strings)
-        let supabaseResult = null;
-        const { data: directUpsertData, error: supabaseUpsertError } = await supabase
+        // Direct Supabase upsert call - ensures ALL fields are saved
+        console.log(`[PUT /api/admin/clinic] ========== DIRECT SUPABASE UPSERT ==========`);
+        console.log(`[PUT /api/admin/clinic] Supabase module available:`, supabase !== null);
+        console.log(`[PUT /api/admin/clinic] Supabase isSupabaseAvailable:`, supabase?.isSupabaseAvailable?.() || false);
+        console.log(`[PUT /api/admin/clinic] Upsert payload (before call):`, JSON.stringify(upsertPayload, null, 2));
+        
+        // Get Supabase client from supabase module
+        const supabaseClient = supabase?.getSupabaseClient ? supabase.getSupabaseClient() : null;
+        
+        if (!supabaseClient) {
+          console.error(`[PUT /api/admin/clinic] ❌ Supabase client not available!`);
+          throw new Error("Supabase client not available");
+        }
+        
+        console.log(`[PUT /api/admin/clinic] ========== MANUAL UPDATE APPROACH ==========`);
+        console.log(`[PUT /api/admin/clinic] Checking if clinic exists in Supabase...`);
+        
+        // First, check if clinic exists
+        const { data: existingClinic, error: checkError } = await supabaseClient
           .from("clinics")
-          .upsert(upsertPayload, { onConflict: "clinic_code" })
-          .select()
+          .select("clinic_code, address, phone, website, logo_url")
+          .eq("clinic_code", clinicCode.toUpperCase())
           .single();
         
-        if (supabaseUpsertError) {
-          console.error(`[PUT /api/admin/clinic] ❌ Direct Supabase upsert error:`, supabaseUpsertError);
-          console.error(`[PUT /api/admin/clinic] Error details:`, JSON.stringify(supabaseUpsertError, null, 2));
-          console.error(`[PUT /api/admin/clinic] Upsert payload was:`, JSON.stringify(upsertPayload, null, 2));
-          // Fall back to supabase.upsertClinic helper
-          console.log(`[PUT /api/admin/clinic] Falling back to upsertClinic helper...`);
-          const fallbackResult = await supabase.upsertClinic(upsertPayload);
-          if (fallbackResult) {
-            console.log(`[PUT /api/admin/clinic] ✅ Fallback upsertClinic succeeded`);
-            supabaseResult = fallbackResult;
-          } else {
-            console.error(`[PUT /api/admin/clinic] ❌ Fallback also failed`);
-          }
-        } else {
-          console.log(`[PUT /api/admin/clinic] ✅ Direct Supabase upsert succeeded`);
-          supabaseResult = directUpsertData;
+        if (checkError && checkError.code !== "PGRST116") {
+          console.error(`[PUT /api/admin/clinic] ❌ Error checking clinic:`, checkError);
+          throw new Error(`Failed to check clinic: ${checkError.message}`);
         }
+        
+        let supabaseResult = null;
+        
+        if (existingClinic) {
+          // Clinic exists - use UPDATE with explicit field mapping
+          console.log(`[PUT /api/admin/clinic] Clinic exists, using UPDATE...`);
+          console.log(`[PUT /api/admin/clinic] Current values:`, {
+            address: existingClinic.address || "empty",
+            phone: existingClinic.phone || "empty",
+            website: existingClinic.website || "empty",
+          });
+          
+          const updateData = {
+            name: String(upsertPayload.name || ""),
+            email: String(upsertPayload.email || ""),
+            password: String(upsertPayload.password || ""),
+            address: String(upsertPayload.address || ""), // CRITICAL: Explicitly set
+            phone: String(upsertPayload.phone || ""), // CRITICAL: Explicitly set
+            website: String(upsertPayload.website || ""), // CRITICAL: Explicitly set
+            logo_url: String(upsertPayload.logo_url || ""), // CRITICAL: Explicitly set
+            google_maps_url: String(upsertPayload.google_maps_url || ""),
+            default_inviter_discount_percent: upsertPayload.default_inviter_discount_percent,
+            default_invited_discount_percent: upsertPayload.default_invited_discount_percent,
+            google_reviews: upsertPayload.google_reviews,
+            trustpilot_reviews: upsertPayload.trustpilot_reviews,
+            updated_at: upsertPayload.updated_at,
+          };
+          
+          console.log(`[PUT /api/admin/clinic] UPDATE payload:`, {
+            address: updateData.address || "empty",
+            phone: updateData.phone || "empty",
+            website: updateData.website || "empty",
+            logo_url: updateData.logo_url || "empty",
+          });
+          console.log(`[PUT /api/admin/clinic] Full UPDATE payload (JSON):`, JSON.stringify(updateData, null, 2));
+          
+          const { data: updateResult, error: updateError } = await supabaseClient
+            .from("clinics")
+            .update(updateData)
+            .eq("clinic_code", clinicCode.toUpperCase())
+            .select()
+            .single();
+          
+          if (updateError) {
+            console.error(`[PUT /api/admin/clinic] ❌ UPDATE error:`, updateError);
+            console.error(`[PUT /api/admin/clinic] Error details:`, JSON.stringify(updateError, null, 2));
+            throw new Error(`Supabase UPDATE failed: ${updateError.message}`);
+          }
+          
+          supabaseResult = updateResult;
+          console.log(`[PUT /api/admin/clinic] ✅ UPDATE succeeded`);
+        } else {
+          // Clinic doesn't exist - use INSERT
+          console.log(`[PUT /api/admin/clinic] Clinic doesn't exist, using INSERT...`);
+          
+          const { data: insertResult, error: insertError } = await supabaseClient
+            .from("clinics")
+            .insert([upsertPayload])
+            .select()
+            .single();
+          
+          if (insertError) {
+            console.error(`[PUT /api/admin/clinic] ❌ INSERT error:`, insertError);
+            console.error(`[PUT /api/admin/clinic] Error details:`, JSON.stringify(insertError, null, 2));
+            throw new Error(`Supabase INSERT failed: ${insertError.message}`);
+          }
+          
+          supabaseResult = insertResult;
+          console.log(`[PUT /api/admin/clinic] ✅ INSERT succeeded`);
+        }
+        
+        if (!supabaseResult) {
+          console.error(`[PUT /api/admin/clinic] ❌ No result returned from Supabase!`);
+          throw new Error("No result returned from Supabase");
+        }
+        
+        console.log(`[PUT /api/admin/clinic] ✅ Supabase operation succeeded`);
+        console.log(`[PUT /api/admin/clinic] Returned data:`, {
+          clinic_code: supabaseResult.clinic_code,
+          name: supabaseResult.name || "empty",
+          address: supabaseResult.address || "empty",
+          phone: supabaseResult.phone || "empty",
+          logo_url: supabaseResult.logo_url || "empty",
+          website: supabaseResult.website || "empty",
+        });
+        console.log(`[PUT /api/admin/clinic] Full returned data (JSON):`, JSON.stringify(supabaseResult, null, 2));
+        console.log(`[PUT /api/admin/clinic] ========== END MANUAL UPDATE ==========`);
         if (supabaseResult) {
           console.log(`[PUT /api/admin/clinic] ✅ Successfully upserted clinic "${clinicCode}" in Supabase`);
           console.log(`[PUT /api/admin/clinic] Upserted clinic data from Supabase:`, {
