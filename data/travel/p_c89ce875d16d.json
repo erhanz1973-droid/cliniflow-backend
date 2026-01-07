@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767648618862,
+  "patientId": "p_c89ce875d16d",
+  "hotel": {
+    "name": "a hotel",
+    "checkIn": "2026-01-27",
+    "checkOut": "2026-02-07"
+  },
+  "flights": [],
+  "notes": "",
+  "airportPickup": null,
+  "editPolicy": {
+    "hotel": "ADMIN",
+    "flights": "ADMIN",
+    "notes": "ADMIN"
+  },
+  "events": []
+}

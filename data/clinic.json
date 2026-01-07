@@ -1,15 +1,15 @@
 {
-  "clinicCode": "MOON",
-  "name": "Moon Smile Dental Clinic",
-  "address": "Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya",
-  "phone": "+995514661161",
-  "email": "ferayzengin07@gmail.com",
-  "website": "https://moonsmileclinic.com/index",
-  "logoUrl": "https://moonsmileclinic.com/assets/img/logos/logo-dark.png",
-  "googleMapsUrl": "https://maps.app.goo.gl/kRmy4ZNCMkuMscxJ6",
-  "defaultInviterDiscountPercent": 5,
-  "defaultInvitedDiscountPercent": 5,
-  "googleReviews": [],
-  "trustpilotReviews": [],
-  "updatedAt": 1767617669087
+  "clinicCode": "ERHAN",
+  "name": "erhan",
+  "email": "farmershop.ge@gmail.com",
+  "password": "$2b$10$9kc3j3z0pyy1Yt2bpL/TXeY32JibquEFEd7TEOsPBcguEzgbY5/pW",
+  "address": "",
+  "phone": "",
+  "website": "",
+  "logoUrl": "",
+  "googleMapsUrl": "",
+  "defaultInviterDiscountPercent": null,
+  "defaultInvitedDiscountPercent": null,
+  "createdAt": 1767696629200,
+  "updatedAt": 1767696629200
 }

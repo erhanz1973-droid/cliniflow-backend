@@ -1,0 +1,34 @@
+{
+  "ERHAN": {
+    "clinicCode": "ERHAN",
+    "name": "erhan",
+    "email": "farmershop.ge@gmail.com",
+    "password": "$2b$10$9kc3j3z0pyy1Yt2bpL/TXeY32JibquEFEd7TEOsPBcguEzgbY5/pW",
+    "address": "",
+    "phone": "",
+    "website": "",
+    "logoUrl": "",
+    "googleMapsUrl": "",
+    "defaultInviterDiscountPercent": null,
+    "defaultInvitedDiscountPercent": null,
+    "createdAt": 1767696629200,
+    "updatedAt": 1767696629200
+  },
+  "KAKA": {
+    "clinicCode": "KAKA",
+    "name": "kaka",
+    "email": "affil.rexporta@gmail.com",
+    "password": "$2b$10$WUE53HS1wl8.0OkaG6Qojem/tqalMen8NDwRCLB7WS3IcPDrziHr.",
+    "address": "hghghfhgfhf",
+    "phone": "+995514661161",
+    "website": "",
+    "logoUrl": "",
+    "googleMapsUrl": "",
+    "defaultInviterDiscountPercent": null,
+    "defaultInvitedDiscountPercent": null,
+    "createdAt": 1767697009165,
+    "updatedAt": 1767697316583,
+    "googleReviews": [],
+    "trustpilotReviews": []
+  }
+}

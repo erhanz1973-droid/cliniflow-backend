@@ -49,10 +49,12 @@
       font-weight: 600;
       text-decoration: none;
       margin-bottom: 8px;
+      transition: all 0.2s;
     }
     .link-box a:hover {
       color: #8bb5ff;
       text-decoration: underline;
+      transform: translateX(4px);
     }
     .muted {
       font-size: 14px;
@@ -72,20 +74,62 @@
 </head>
 <body>
   <div class="container">
-    <h1>⚠️ Bu Sayfa Artık Kullanılmıyor</h1>
+    <h1>🏥 Clinicator Admin Panel</h1>
     <p>
-      Eski admin panel sayfası kaldırıldı. Lütfen yeni Next.js admin panelini kullanın.
+      Klinik yönetim sistemine hoş geldiniz. Yeni klinik kaydı oluşturabilir veya mevcut hesabınızla giriş yapabilirsiniz.
     </p>
 
     <div class="link-box">
-      <strong style="color: #e6eaf2; display: block; margin-bottom: 12px;">Yeni Admin Panel:</strong>
-      <a href="http://localhost:3000" target="_blank">http://localhost:3000</a>
-      <a href="http://localhost:3000/patients" target="_blank">http://localhost:3000/patients (Hasta Listesi)</a>
-      <div class="muted">Yukarıdaki linklere tıklayarak yeni admin panele gidebilirsiniz.</div>
-  </div>
+      <strong style="color: #e6eaf2; display: block; margin-bottom: 16px; font-size: 20px;">Admin Panel Erişimi:</strong>
+      
+      <div style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #2b3a58;">
+        <strong style="color: #8bb5ff; display: block; margin-bottom: 12px; font-size: 16px;">Yeni Klinik Kaydı:</strong>
+        <a id="register-link" href="#" target="_blank" style="background: #1a3a5a; padding: 12px 20px; border-radius: 8px; display: inline-block; margin-bottom: 8px;">
+          📝 Klinik Kaydı Oluştur
+        </a>
+        <div class="muted" style="margin-top: 8px;">Henüz hesabınız yoksa buradan yeni klinik kaydı oluşturabilirsiniz.</div>
+      </div>
+
+      <div style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #2b3a58;">
+        <strong style="color: #8bb5ff; display: block; margin-bottom: 12px; font-size: 16px;">Giriş Yap:</strong>
+        <a id="login-link" href="#" target="_blank" style="background: #1a3a5a; padding: 12px 20px; border-radius: 8px; display: inline-block; margin-bottom: 8px;">
+          🔐 Admin Girişi
+        </a>
+        <div class="muted" style="margin-top: 8px;">Mevcut hesabınızla giriş yapmak için buraya tıklayın.</div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <strong style="color: #8bb5ff; display: block; margin-bottom: 12px; font-size: 16px;">Yardımcı Linkler:</strong>
+        <a id="dashboard-link" href="#" target="_blank" style="display: block; margin-bottom: 8px;">🏠 Dashboard</a>
+        <a id="patients-link" href="#" target="_blank" style="display: block; margin-bottom: 8px;">👥 Hasta Listesi</a>
+        <a id="forgot-link" href="#" target="_blank" style="display: block; margin-bottom: 8px;">🔑 Şifremi Unuttum</a>
+      </div>
+      
+      <div class="muted" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #2b3a58;">
+        <strong>Not:</strong> Admin panel henüz deploy edilmediyse, lütfen önce deploy edin veya localhost:3000'de çalıştırın.
+      </div>
+    </div>
+
+    <script>
+      // Admin panel URL'ini belirle
+      // Önce environment variable'dan al, yoksa localhost kullan
+      const adminBaseUrl = window.ADMIN_PANEL_URL || 'http://localhost:3000';
+      
+      // Linkleri güncelle
+      document.getElementById('register-link').href = adminBaseUrl + '/admin/register';
+      document.getElementById('login-link').href = adminBaseUrl + '/admin/login';
+      document.getElementById('dashboard-link').href = adminBaseUrl;
+      document.getElementById('patients-link').href = adminBaseUrl + '/patients';
+      document.getElementById('forgot-link').href = adminBaseUrl + '/admin/forgot-password';
+    </script>
 
     <div class="warning">
-      <strong>Not:</strong> Eğer yeni admin panel açılmıyorsa, terminal'de <code>npm run dev</code> komutunun çalıştığından emin olun.
+      <strong>Önemli:</strong> Admin paneli kullanmak için:
+      <ul style="text-align: left; margin-top: 8px; padding-left: 20px;">
+        <li>Local development: <code>npm run dev</code> çalıştırın (localhost:3000)</li>
+        <li>Production: Admin paneli Vercel'e deploy edin</li>
+        <li>Deploy sonrası: Bu sayfadaki linkler otomatik çalışacak</li>
+      </ul>
     </div>
   </div>
 </body>
