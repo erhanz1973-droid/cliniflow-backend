@@ -1549,7 +1549,8 @@ app.get("/api/test/upload-route", (req, res) => {
 });
 
 // POST /api/patient/:patientId/upload
-// Upload file (requires token, but NOT requireApproved - PENDING patients can upload)
+// Upload file (ONLY patients can upload, NOT admins)
+// Requires patient token, but NOT requireApproved - PENDING patients can upload
 app.post("/api/patient/:patientId/upload", requireToken, (req, res, next) => {
   console.log(`[UPLOAD] ========== START ==========`);
   console.log(`[UPLOAD] Patient ID from URL: ${req.params.patientId}`);
@@ -1635,7 +1636,9 @@ app.post("/api/patient/:patientId/upload", requireToken, (req, res, next) => {
 });
 
 // GET /api/patient/:patientId/files/:filename
-// Secure file download (only that patient can download)
+// Secure file download (both patient and admin can download)
+// Patient: can download their own files
+// Admin: can download files of patients in their clinic
 // Supports both Authorization header and ?token= query parameter (for React Native Linking)
 app.get("/api/patient/:patientId/files/:filename", (req, res) => {
   try {
