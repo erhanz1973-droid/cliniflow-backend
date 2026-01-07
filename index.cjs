@@ -1677,47 +1677,43 @@ app.get("/api/patient/:patientId/files/:filename", (req, res) => {
     
     // If not authorized with patient token, try admin token
     if (!isAuthorized) {
+      console.log(`[DOWNLOAD] Patient token not authorized, trying admin token...`);
       try {
-        const adminTokens = readJson(ADMIN_TOKENS_FILE, {});
-        const adminTokenData = adminTokens[finalToken];
-        if (adminTokenData?.clinicCode) {
-          // Admin token: check if patient belongs to this clinic
-          const patients = readJson(PAT_FILE, {});
-          const patient = patients[patientId];
-          if (patient && patient.clinicCode && String(patient.clinicCode).toUpperCase() === String(adminTokenData.clinicCode).toUpperCase()) {
-            isAuthorized = true;
-            console.log(`[DOWNLOAD] Admin authorized for patient ${patientId} (clinic: ${adminTokenData.clinicCode})`);
-          } else {
-            // Also try JWT verification for admin
-            try {
-              const decoded = jwt.verify(finalToken, JWT_SECRET);
-              if (decoded.clinicCode) {
-                // Admin with JWT token - allow access to any patient in their clinic
-                const patients = readJson(PAT_FILE, {});
-                const patient = patients[patientId];
-                if (patient && patient.clinicCode && String(patient.clinicCode).toUpperCase() === String(decoded.clinicCode).toUpperCase()) {
-                  isAuthorized = true;
-                  console.log(`[DOWNLOAD] Admin authorized via JWT for patient ${patientId} (clinic: ${decoded.clinicCode})`);
-                }
-              }
-            } catch (jwtError) {
-              // Not a JWT token, continue
+        // First try JWT verification (most common for admin tokens)
+        try {
+          const decoded = jwt.verify(finalToken, JWT_SECRET);
+          console.log(`[DOWNLOAD] JWT decoded successfully:`, { clinicCode: decoded.clinicCode, clinicId: decoded.clinicId });
+          if (decoded.clinicCode) {
+            // Admin with JWT token - allow access to any patient in their clinic
+            const patients = readJson(PAT_FILE, {});
+            const patient = patients[patientId];
+            console.log(`[DOWNLOAD] Patient lookup:`, { patientId, patientClinicCode: patient?.clinicCode, adminClinicCode: decoded.clinicCode });
+            if (patient && patient.clinicCode && String(patient.clinicCode).toUpperCase() === String(decoded.clinicCode).toUpperCase()) {
+              isAuthorized = true;
+              console.log(`[DOWNLOAD] ✅ Admin authorized via JWT for patient ${patientId} (clinic: ${decoded.clinicCode})`);
+            } else {
+              console.log(`[DOWNLOAD] ❌ Clinic code mismatch: patient=${patient?.clinicCode}, admin=${decoded.clinicCode}`);
             }
           }
-        } else {
-          // Try JWT verification
-          try {
-            const decoded = jwt.verify(finalToken, JWT_SECRET);
-            if (decoded.clinicCode) {
-              const patients = readJson(PAT_FILE, {});
-              const patient = patients[patientId];
-              if (patient && patient.clinicCode && String(patient.clinicCode).toUpperCase() === String(decoded.clinicCode).toUpperCase()) {
-                isAuthorized = true;
-                console.log(`[DOWNLOAD] Admin authorized via JWT for patient ${patientId} (clinic: ${decoded.clinicCode})`);
-              }
+        } catch (jwtError) {
+          console.log(`[DOWNLOAD] JWT verification failed (not a JWT token or invalid):`, jwtError.message);
+          // Not a JWT token, try admin tokens file
+          const adminTokens = readJson(ADMIN_TOKENS_FILE, {});
+          const adminTokenData = adminTokens[finalToken];
+          if (adminTokenData?.clinicCode) {
+            console.log(`[DOWNLOAD] Found admin token in adminTokens.json:`, { clinicCode: adminTokenData.clinicCode });
+            // Admin token: check if patient belongs to this clinic
+            const patients = readJson(PAT_FILE, {});
+            const patient = patients[patientId];
+            console.log(`[DOWNLOAD] Patient lookup:`, { patientId, patientClinicCode: patient?.clinicCode, adminClinicCode: adminTokenData.clinicCode });
+            if (patient && patient.clinicCode && String(patient.clinicCode).toUpperCase() === String(adminTokenData.clinicCode).toUpperCase()) {
+              isAuthorized = true;
+              console.log(`[DOWNLOAD] ✅ Admin authorized for patient ${patientId} (clinic: ${adminTokenData.clinicCode})`);
+            } else {
+              console.log(`[DOWNLOAD] ❌ Clinic code mismatch: patient=${patient?.clinicCode}, admin=${adminTokenData.clinicCode}`);
             }
-          } catch (jwtError) {
-            // Not a valid JWT token
+          } else {
+            console.log(`[DOWNLOAD] ❌ Admin token not found in adminTokens.json`);
           }
         }
       } catch (adminError) {
