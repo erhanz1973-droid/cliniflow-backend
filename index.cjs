@@ -18,52 +18,100 @@ const multer = require("multer");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Multer configuration for file uploads
+// Multer configuration for general file uploads (legacy, kept for compatibility)
 const upload = multer({ 
-  storage: multer.memoryStorage(), // Store in memory, then upload to Supabase
+  storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit (Supabase Storage bucket limit ile uyumlu)
+    fileSize: 50 * 1024 * 1024, // 50MB limit
   },
   fileFilter: (req, file, cb) => {
     // İzin verilen dosya tipleri
     const allowedMimeTypes = [
-      // Images
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/heic',
-      'image/heif',
-      // Documents
+      'image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif',
       'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-      'application/msword', // .doc (eski format)
-      // Videos (opsiyonel)
-      'video/mp4',
-      'video/quicktime', // .mov
-      // Medical images (opsiyonel)
-      'application/dicom',
-      'application/x-dicom',
-      'image/dicom',
-      // Archives (ZIP ve RAR izin veriliyor)
-      'application/zip',
-      'application/x-rar-compressed',
-      'application/vnd.rar',
-      'application/x-rar',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+      'video/mp4', 'video/quicktime',
+      'application/dicom', 'application/x-dicom', 'image/dicom',
+      'application/zip', 'application/x-rar-compressed', 'application/vnd.rar', 'application/x-rar',
     ];
 
-    // Yasak dosya tipleri (güvenlik)
     const forbiddenExtensions = [
-      // Executables
+      '.exe', '.app', '.deb', '.rpm', '.msi', '.dmg', '.pkg',
+      '.bat', '.cmd', '.com', '.scr', '.vbs', '.ps1',
+      '.js', '.jsx', '.ts', '.tsx', '.py', '.pyc', '.pyo',
+      '.sh', '.bash', '.zsh', '.csh', '.fish',
+      '.php', '.asp', '.aspx', '.jsp', '.rb', '.pl', '.pm',
+      '.7z', '.tar', '.gz', '.bz2',
+      '.dll', '.so', '.dylib', '.sys', '.drv',
+    ];
+
+    const fileExt = path.extname(file.originalname || '').toLowerCase();
+    const mimeType = file.mimetype || '';
+
+    if (forbiddenExtensions.includes(fileExt)) {
+      console.error(`[Upload] Forbidden file extension: ${fileExt}`);
+      return cb(new Error(`Dosya tipi yasak: ${fileExt}. Güvenlik nedeniyle bu dosya tipi yüklenemez.`));
+    }
+
+    if (!allowedMimeTypes.includes(mimeType)) {
+      if (fileExt === '.dcm' || fileExt === '.dicom') {
+        console.log(`[Upload] Allowing DICOM file with extension ${fileExt} and MIME type ${mimeType}`);
+        return cb(null, true);
+      }
+      console.error(`[Upload] Unallowed MIME type: ${mimeType} for file ${file.originalname}`);
+      return cb(new Error(`Dosya tipi desteklenmiyor: ${mimeType}. İzin verilen tipler: JPG, PNG, HEIC, PDF, DOCX, MP4, ZIP, RAR, DICOM`));
+    }
+
+    console.log(`[Upload] File type approved: ${mimeType} (${fileExt})`);
+    cb(null, true);
+  }
+});
+
+// Multer configuration for CHAT file uploads (STRICT - medical chat only)
+const chatUpload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB max for PDF, 10MB for images (validated in endpoint)
+  },
+  fileFilter: (req, file, cb) => {
+    // CHAT ALLOWED FILE TYPES (STRICT)
+    const allowedMimeTypes = [
+      // Images (max 10 MB)
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/webp',
+      // Medical Images (treated as images)
+      // Dental x-ray, panoramic x-ray, intraoral photos - all use jpeg/png
+      // Documents (max 15 MB)
+      'application/pdf',
+      // Optional: .docx (only if size < limit)
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/zip', // .zip
+      'application/x-zip-compressed', // .zip (alternative MIME type)
+    ];
+
+    // CHAT DISALLOWED FILE TYPES
+    const forbiddenExtensions = [
+      // Video files
+      '.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm',
+      // Audio files
+      '.mp3', '.wav', '.ogg', '.aac', '.m4a', '.flac',
+      // Executable files
       '.exe', '.app', '.deb', '.rpm', '.msi', '.dmg', '.pkg',
       '.bat', '.cmd', '.com', '.scr', '.vbs', '.ps1',
       // Scripts
       '.js', '.jsx', '.ts', '.tsx', '.py', '.pyc', '.pyo',
       '.sh', '.bash', '.zsh', '.csh', '.fish',
       '.php', '.asp', '.aspx', '.jsp', '.rb', '.pl', '.pm',
-      // Archives with potential executables (ZIP ve RAR hariç - kullanıcı istedi)
-      '.7z', '.tar', '.gz', '.bz2',
+      // Compressed files (zip allowed, others not)
+      '.rar', '.7z', '.tar', '.gz', '.bz2',
+      // Spreadsheet files
+      '.xls', '.xlsx', '.csv',
       // System files
       '.dll', '.so', '.dylib', '.sys', '.drv',
     ];
@@ -71,25 +119,37 @@ const upload = multer({
     const fileExt = path.extname(file.originalname || '').toLowerCase();
     const mimeType = file.mimetype || '';
 
-    // Check forbidden extensions
+    // Check forbidden extensions FIRST (security)
     if (forbiddenExtensions.includes(fileExt)) {
-      console.error(`[Upload] Forbidden file extension: ${fileExt}`);
-      return cb(new Error(`Dosya tipi yasak: ${fileExt}. Güvenlik nedeniyle bu dosya tipi yüklenemez.`));
+      console.error(`[Chat Upload] Forbidden file extension: ${fileExt}`);
+      return cb(new Error(`INVALID_FILE_TYPE: Dosya tipi yasak: ${fileExt}`));
     }
 
     // Check allowed MIME types
     if (!allowedMimeTypes.includes(mimeType)) {
-      // Special case: DICOM files might have various MIME types
-      if (fileExt === '.dcm' || fileExt === '.dicom') {
-        console.log(`[Upload] Allowing DICOM file with extension ${fileExt} and MIME type ${mimeType}`);
-        return cb(null, true);
-      }
-      
-      console.error(`[Upload] Unallowed MIME type: ${mimeType} for file ${file.originalname}`);
-      return cb(new Error(`Dosya tipi desteklenmiyor: ${mimeType}. İzin verilen tipler: JPG, PNG, HEIC, PDF, DOCX, MP4, ZIP, RAR, DICOM`));
+      console.error(`[Chat Upload] Unallowed MIME type: ${mimeType} for file ${file.originalname}`);
+      return cb(new Error(`INVALID_FILE_TYPE: Dosya tipi desteklenmiyor: ${mimeType}. İzin verilen tipler: JPG, PNG, HEIC, PDF, DOCX, ZIP`));
     }
 
-    console.log(`[Upload] File type approved: ${mimeType} (${fileExt})`);
+    // Verify MIME type matches extension
+    const mimeToExt = {
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/jpg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/webp': ['.webp'],
+      'application/pdf': ['.pdf'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/zip': ['.zip'],
+      'application/x-zip-compressed': ['.zip'],
+    };
+
+    const expectedExts = mimeToExt[mimeType];
+    if (expectedExts && !expectedExts.includes(fileExt)) {
+      console.error(`[Chat Upload] MIME type/extension mismatch: ${mimeType} vs ${fileExt}`);
+      return cb(new Error(`INVALID_FILE_TYPE: Dosya uzantısı ve MIME tipi uyuşmuyor: ${fileExt} / ${mimeType}`));
+    }
+
+    console.log(`[Chat Upload] File type approved: ${mimeType} (${fileExt})`);
     cb(null, true);
   }
 });
@@ -128,27 +188,139 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 
 // admin.html ve admin-travel.html route'larını static serving'den önce tanımla
 app.get("/admin.html", (req, res) => {
-  const filePath = path.join(__dirname, "admin.html");
-  if (!fs.existsSync(filePath)) return res.status(404).send("admin.html not found");
-  res.sendFile(filePath);
+  try {
+    // Önce public klasöründeki admin.html'i kontrol et
+    const publicPath = path.join(PUBLIC_DIR, "admin.html");
+    const rootPath = path.join(__dirname, "admin.html");
+    
+    if (fs.existsSync(publicPath)) {
+      res.sendFile(path.resolve(publicPath));
+    } else if (fs.existsSync(rootPath)) {
+      res.sendFile(path.resolve(rootPath));
+    } else {
+      res.status(404).send("admin.html not found");
+    }
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
 });
 
 app.get("/admin-travel.html", (req, res) => {
-  // Next.js travel sayfasını iframe içinde gösteren wrapper sayfa
-  const filePath = path.join(PUBLIC_DIR, "admin-travel.html");
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).send(`
-      <html>
-        <head><title>Admin Travel - Not Found</title></head>
-        <body style="font-family: system-ui; padding: 40px; text-align: center;">
-          <h1>Admin Travel Sayfası Bulunamadı</h1>
-          <p>admin-travel.html dosyası bulunamadı.</p>
-          <p><a href="http://localhost:3000/admin/patients">Next.js Admin Panelini Kullanın</a></p>
-        </body>
-      </html>
-    `);
+  try {
+    console.log("[ROUTE] /admin-travel.html requested");
+    const filePath = path.join(PUBLIC_DIR, "admin-travel.html");
+    console.log("[ROUTE] Looking for file at:", filePath);
+    console.log("[ROUTE] PUBLIC_DIR:", PUBLIC_DIR);
+    console.log("[ROUTE] __dirname:", __dirname);
+    
+    if (!fs.existsSync(filePath)) {
+      console.error("[ROUTE] File not found:", filePath);
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Travel - Not Found</title></head>
+          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+            <h1>Admin Travel Sayfası Bulunamadı</h1>
+            <p>admin-travel.html dosyası bulunamadı.</p>
+            <p>File path: ${filePath}</p>
+            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
+            <p>__dirname: ${__dirname}</p>
+          </body>
+        </html>
+      `);
+    }
+    console.log("[ROUTE] File found, sending:", filePath);
+    const absolutePath = path.resolve(filePath);
+    console.log("[ROUTE] Absolute path:", absolutePath);
+    res.sendFile(absolutePath);
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-travel.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
   }
-  res.sendFile(filePath);
+});
+
+app.get("/admin-patients.html", (req, res) => {
+  try {
+    const filePath = path.join(PUBLIC_DIR, "admin-patients.html");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Patients - Not Found</title></head>
+          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+            <h1>Admin Patients Sayfası Bulunamadı</h1>
+            <p>admin-patients.html dosyası bulunamadı.</p>
+          </body>
+        </html>
+      `);
+    }
+    res.sendFile(path.resolve(filePath));
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-patients.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+app.get("/admin-treatment.html", (req, res) => {
+  try {
+    const filePath = path.join(PUBLIC_DIR, "admin-treatment.html");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Treatment - Not Found</title></head>
+          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+            <h1>Admin Treatment Sayfası Bulunamadı</h1>
+            <p>admin-treatment.html dosyası bulunamadı.</p>
+          </body>
+        </html>
+      `);
+    }
+    res.sendFile(path.resolve(filePath));
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-treatment.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+app.get("/admin-register.html", (req, res) => {
+  try {
+    const filePath = path.join(PUBLIC_DIR, "admin-register.html");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Register - Not Found</title></head>
+          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+            <h1>Admin Register Sayfası Bulunamadı</h1>
+            <p>admin-register.html dosyası bulunamadı.</p>
+          </body>
+        </html>
+      `);
+    }
+    res.sendFile(path.resolve(filePath));
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-register.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+app.get("/admin-referrals.html", (req, res) => {
+  try {
+    const filePath = path.join(PUBLIC_DIR, "admin-referrals.html");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Referrals - Not Found</title></head>
+          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+            <h1>Admin Referrals Sayfası Bulunamadı</h1>
+            <p>admin-referrals.html dosyası bulunamadı.</p>
+          </body>
+        </html>
+      `);
+    }
+    res.sendFile(path.resolve(filePath));
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-referrals.html:", error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
 });
 
 app.use(express.static(PUBLIC_DIR));
@@ -199,26 +371,86 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
   if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
   try {
-    // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
-    const { data: patientData, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .single();
+    // Check if admin or patient token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
 
-    if (patientError || !patientData) {
-      console.error("Treatments GET - Patient not found:", patientError);
-      // Fallback: Boş treatments data döndür
-      const fallback = {
-        schemaVersion: 1,
-        updatedAt: now(),
-        patientId,
-        teeth: [],
-      };
-      return res.json(fallback);
+    if (!authToken) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const patientUuid = patientData.id;
+    let decoded;
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Admin token check: if actor header is "admin" OR token has clinicCode/clinicId but NO patientId
+    const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId).trim() !== "";
+    const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+    const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+    
+    const isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
+    
+    let clinicId;
+    let patientUuid;
+
+    if (isAdmin) {
+      // Admin token - verify admin has access to this clinic
+      if (!decoded.clinicId || !decoded.clinicCode) {
+        return res.status(401).json({ ok: false, error: "invalid_admin_token" });
+      }
+      clinicId = decoded.clinicId;
+
+      // Find patient UUID by patient_id
+      const { data: patientData, error: patientError } = await supabase
+        .from("patients")
+        .select("id, status, clinic_id")
+        .eq("patient_id", patientId)
+        .eq("clinic_id", clinicId)
+        .maybeSingle();
+
+      if (patientError || !patientData) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+
+      // Admin can access any patient in their clinic (even if not approved)
+      patientUuid = patientData.id;
+    } else {
+      // Patient token - verify patient ID matches and status is APPROVED
+      if (!decoded.patientId) {
+        return res.status(401).json({ ok: false, error: "invalid_token", message: "Token missing patientId" });
+      }
+      
+      clinicId = decoded.clinicId;
+      const requestPatientId = decoded.patientId;
+
+      if (requestPatientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+      }
+
+      // Check patient status - must be APPROVED
+      const statusCheck = await checkPatientApproved(patientId, clinicId);
+      if (!statusCheck.approved) {
+        if (statusCheck.error === "patient_not_found") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(403).json({ 
+          ok: false, 
+          error: "patient_not_approved",
+          message: "Patient status is not APPROVED. Please wait for clinic approval.",
+          status: statusCheck.status || "PENDING"
+        });
+      }
+
+      patientUuid = statusCheck.patient.id;
+    }
 
     // 2. patient_treatments tablosundan treatments_data'yı çek
     const { data: treatmentsData, error: treatmentsError } = await supabase
@@ -270,19 +502,182 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   }
 
   try {
-    // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
-    const { data: patientData, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .single();
+    // Check if admin or patient token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
 
-    if (patientError || !patientData) {
-      console.error("Treatments POST - Patient not found:", patientError);
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    if (!authToken) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const patientUuid = patientData.id;
+    let decoded;
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Admin token check: if actor header is "admin" OR token has clinicCode/clinicId but NO patientId
+    // Simplified check: admin token has clinicCode/clinicId but NO patientId
+    const decodedPatientId = decoded.patientId;
+    const decodedClinicCode = decoded.clinicCode;
+    const decodedClinicId = decoded.clinicId;
+    
+    const hasPatientId = decodedPatientId !== null && decodedPatientId !== undefined && String(decodedPatientId || "").trim() !== "";
+    const hasClinicCode = decodedClinicCode !== null && decodedClinicCode !== undefined;
+    const hasClinicId = decodedClinicId !== null && decodedClinicId !== undefined;
+    
+    // Check if actor header is "admin" (case-insensitive and trimmed)
+    const isAdminByActor = String(actor || "").toLowerCase().trim() === "admin";
+    // Check if token is admin token (has clinicCode/clinicId but NO patientId)
+    const isAdminByToken = hasClinicCode && hasClinicId && !hasPatientId;
+    const isAdmin = isAdminByActor || isAdminByToken;
+    
+    console.log("[TREATMENTS POST] Auth check:", {
+      actor,
+      actorHeader,
+      actorType: typeof actorHeader,
+      isAdminByActor,
+      isAdminByToken,
+      hasPatientId,
+      hasClinicCode,
+      hasClinicId,
+      isAdmin,
+      decodedPatientId: decodedPatientId,
+      decodedClinicCode: decodedClinicCode,
+      decodedClinicId: decodedClinicId,
+      patientId: patientId,
+    });
+    
+    let clinicId;
+    let patientUuid;
+
+    if (isAdmin) {
+      // Admin token - verify admin has access to this clinic
+      if (!decodedClinicId || !decodedClinicCode) {
+        console.error("[TREATMENTS POST] Invalid admin token: missing clinicId or clinicCode");
+        return res.status(401).json({ ok: false, error: "invalid_admin_token" });
+      }
+      clinicId = decodedClinicId;
+
+      console.log("[TREATMENTS POST] Looking up patient:", { 
+        patientId, 
+        clinicId, 
+        patientIdType: typeof patientId,
+        clinicIdType: typeof clinicId,
+        patientIdTrimmed: String(patientId || "").trim(),
+        clinicIdTrimmed: String(clinicId || "").trim()
+      });
+
+      // First, try to find patient by patient_id and clinic_id
+      let { data: patientData, error: patientError } = await supabase
+        .from("patients")
+        .select("id, status, clinic_id, patient_id, name")
+        .eq("patient_id", String(patientId).trim())
+        .eq("clinic_id", String(clinicId).trim())
+        .maybeSingle();
+
+      // If not found, try without clinic_id filter (for debugging)
+      if (patientError || !patientData) {
+        console.log("[TREATMENTS POST] Patient not found with clinic_id filter. Trying without clinic_id filter...");
+        const { data: allPatients, error: allError } = await supabase
+          .from("patients")
+          .select("id, status, clinic_id, patient_id, name")
+          .eq("patient_id", String(patientId).trim());
+        
+        console.log("[TREATMENTS POST] All patients with patient_id:", {
+          patientId: String(patientId).trim(),
+          foundCount: allPatients?.length || 0,
+          patients: allPatients?.map(p => ({
+            id: p.id,
+            patient_id: p.patient_id,
+            clinic_id: p.clinic_id,
+            name: p.name
+          })) || [],
+          error: allError
+        });
+
+        if (allPatients && allPatients.length > 0) {
+          const matchingClinic = allPatients.find(p => String(p.clinic_id).trim() === String(clinicId).trim());
+          if (matchingClinic) {
+            console.log("[TREATMENTS POST] Found patient in different clinic. Using it anyway:", matchingClinic);
+            patientData = matchingClinic;
+            patientError = null;
+          } else {
+            console.error("[TREATMENTS POST] Patient found but clinic_id mismatch:", {
+              requestedClinicId: clinicId,
+              foundClinicIds: allPatients.map(p => p.clinic_id)
+            });
+          }
+        }
+      }
+
+      if (patientError || !patientData) {
+        console.error("[TREATMENTS POST] Patient not found after all attempts:", { 
+          patientId: String(patientId).trim(), 
+          clinicId: String(clinicId).trim(), 
+          error: patientError,
+          errorCode: patientError?.code,
+          errorMessage: patientError?.message,
+          errorDetails: patientError?.details,
+          errorHint: patientError?.hint
+        });
+        return res.status(404).json({ 
+          ok: false, 
+          error: "patient_not_found",
+          details: {
+            patientId: String(patientId).trim(),
+            clinicId: String(clinicId).trim(),
+            error: patientError?.message || "Patient not found"
+          }
+        });
+      }
+
+      // Admin can access any patient in their clinic (even if not approved)
+      patientUuid = patientData.id;
+      console.log("[TREATMENTS POST] Admin access granted:", { 
+        patientId, 
+        patientUuid, 
+        clinicId,
+        patientName: patientData.name,
+        patientStatus: patientData.status
+      });
+    } else {
+      // Patient token - verify patient ID matches and status is APPROVED
+      if (!decodedPatientId) {
+        console.error("[TREATMENTS POST] Patient token missing patientId, but isAdmin is false. This should not happen.");
+        return res.status(401).json({ ok: false, error: "invalid_token", message: "Token missing patientId and not admin token" });
+      }
+      
+      clinicId = decodedClinicId;
+      const requestPatientId = decodedPatientId;
+
+      if (requestPatientId !== patientId) {
+        console.error("[TREATMENTS POST] Patient ID mismatch:", { requestPatientId, patientId, isAdmin });
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+      }
+
+      // Check patient status - must be APPROVED
+      const statusCheck = await checkPatientApproved(patientId, clinicId);
+      if (!statusCheck.approved) {
+        if (statusCheck.error === "patient_not_found") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(403).json({ 
+          ok: false, 
+          error: "patient_not_approved",
+          message: "Patient status is not APPROVED. Please wait for clinic approval.",
+          status: statusCheck.status || "PENDING"
+        });
+      }
+
+      patientUuid = statusCheck.patient.id;
+    }
 
     // 2. Mevcut treatments_data'yı çek (varsa)
     const { data: existingTreatments, error: fetchError } = await supabase
@@ -381,19 +776,86 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
   }
 
   try {
-    // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
-    const { data: patientData, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .single();
+    // Check if admin or patient token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
 
-    if (patientError || !patientData) {
-      console.error("Treatments DELETE - Patient not found:", patientError);
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    if (!authToken) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const patientUuid = patientData.id;
+    let decoded;
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Admin token check: if actor header is "admin" OR token has clinicCode/clinicId but NO patientId
+    const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId).trim() !== "";
+    const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+    const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+    
+    const isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
+    
+    let clinicId;
+    let patientUuid;
+
+    if (isAdmin) {
+      // Admin token - verify admin has access to this clinic
+      if (!decoded.clinicId || !decoded.clinicCode) {
+        return res.status(401).json({ ok: false, error: "invalid_admin_token" });
+      }
+      clinicId = decoded.clinicId;
+
+      // Find patient UUID by patient_id
+      const { data: patientData, error: patientError } = await supabase
+        .from("patients")
+        .select("id, status, clinic_id")
+        .eq("patient_id", patientId)
+        .eq("clinic_id", clinicId)
+        .maybeSingle();
+
+      if (patientError || !patientData) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+
+      // Admin can access any patient in their clinic (even if not approved)
+      patientUuid = patientData.id;
+    } else {
+      // Patient token - verify patient ID matches and status is APPROVED
+      if (!decoded.patientId) {
+        return res.status(401).json({ ok: false, error: "invalid_token", message: "Token missing patientId" });
+      }
+      
+      clinicId = decoded.clinicId;
+      const requestPatientId = decoded.patientId;
+
+      if (requestPatientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+      }
+
+      // Check patient status - must be APPROVED
+      const statusCheck = await checkPatientApproved(patientId, clinicId);
+      if (!statusCheck.approved) {
+        if (statusCheck.error === "patient_not_found") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(403).json({ 
+          ok: false, 
+          error: "patient_not_approved",
+          message: "Patient status is not APPROVED. Please wait for clinic approval.",
+          status: statusCheck.status || "PENDING"
+        });
+      }
+
+      patientUuid = statusCheck.patient.id;
+    }
 
     // 2. Mevcut treatments_data'yı çek
     const { data: existingTreatments, error: fetchError } = await supabase
@@ -481,36 +943,144 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
   if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
   try {
-    // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
-    const { data: patientData, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .single();
+    console.log("Travel GET - Request:", { patientId, headers: req.headers });
+    
+    // Check if admin or patient token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
 
-    if (patientError || !patientData) {
-      console.error("Travel GET - Patient not found:", patientError);
-      // Fallback: Boş travel data döndür
-  const fallback = {
-    schemaVersion: 1,
-    updatedAt: now(),
-    patientId,
-    hotel: null,
-    flights: [],
-    notes: "",
-        airportPickup: null,
-        editPolicy: {
-          hotel: "ADMIN",
-          flights: "ADMIN",
-          notes: "ADMIN",
-        },
-    editMode: "PATIENT",
-    lockedByAdmin: false,
-  };
-      return res.json(fallback);
+    console.log("Travel GET - Auth check:", { 
+      hasAuthHeader: !!authHeader, 
+      hasTokenHeader: !!tokenHeader, 
+      actorHeader,
+      actor,
+      hasAuthToken: !!authToken 
+    });
+
+    if (!authToken) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const patientUuid = patientData.id;
+    let decoded;
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+      console.log("Travel GET - Decoded token:", { 
+        hasPatientId: !!decoded.patientId, 
+        hasClinicId: !!decoded.clinicId, 
+        hasClinicCode: !!decoded.clinicCode,
+        clinicId: decoded.clinicId,
+        clinicCode: decoded.clinicCode,
+        patientId: decoded.patientId
+      });
+    } catch (error) {
+      console.error("Travel GET - Token verification failed:", error.message);
+      return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
+    }
+
+    // Admin token check: if actor header is "admin" OR token has clinicCode/clinicId but NO patientId
+    // patientId check: property must exist and have a non-empty string value
+    const decodedPatientId = decoded.patientId;
+    const hasPatientId = decodedPatientId !== null && 
+                         decodedPatientId !== undefined && 
+                         decodedPatientId !== "" && 
+                         String(decodedPatientId).trim() !== "";
+    const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+    const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+    
+    // Admin check: explicit actor header OR (has clinic info AND no patientId)
+    const isAdminByActor = actor === "admin";
+    const isAdminByToken = hasClinicCode && hasClinicId && !hasPatientId;
+    const isAdmin = isAdminByActor || isAdminByToken;
+    
+    console.log("Travel GET - Admin check:", { 
+      actor, 
+      actorHeader: actorHeader,
+      decodedPatientId,
+      hasPatientId, 
+      hasClinicCode, 
+      hasClinicId,
+      clinicId: decoded.clinicId,
+      clinicCode: decoded.clinicCode,
+      isAdminByActor,
+      isAdminByToken,
+      isAdmin 
+    });
+    
+    let clinicId;
+    let patientUuid;
+
+    if (isAdmin) {
+      // Admin token - verify admin has access to this clinic
+      if (!decoded.clinicId || !decoded.clinicCode) {
+        console.error("Travel GET - Invalid admin token: missing clinicId or clinicCode");
+        return res.status(401).json({ ok: false, error: "invalid_admin_token", message: "Admin token missing clinicId or clinicCode" });
+      }
+      clinicId = decoded.clinicId;
+
+      console.log("Travel GET - Finding patient:", { patientId, clinicId });
+      
+      // Find patient UUID by patient_id
+      const { data: patientData, error: patientError } = await supabase
+        .from("patients")
+        .select("id, status, clinic_id, patient_id, name")
+        .eq("patient_id", patientId)
+        .eq("clinic_id", clinicId)
+        .maybeSingle();
+
+      console.log("Travel GET - Patient query result:", { 
+        hasData: !!patientData, 
+        hasError: !!patientError,
+        error: patientError,
+        patientData: patientData ? { id: patientData.id, patient_id: patientData.patient_id, name: patientData.name, status: patientData.status } : null
+      });
+
+      if (patientError) {
+        console.error("Travel GET - Patient query error:", patientError);
+        return res.status(500).json({ ok: false, error: "database_error", details: patientError.message });
+      }
+      
+      if (!patientData) {
+        console.error("Travel GET - Patient not found:", { patientId, clinicId });
+        return res.status(404).json({ ok: false, error: "patient_not_found", patientId, clinicId });
+      }
+
+      // Admin can access any patient in their clinic (even if not approved)
+      patientUuid = patientData.id;
+    } else {
+      // Patient token - verify patient ID matches and status is APPROVED
+      if (!decoded.patientId) {
+        return res.status(401).json({ ok: false, error: "invalid_token", message: "Token missing patientId" });
+      }
+      
+      clinicId = decoded.clinicId;
+      const requestPatientId = decoded.patientId;
+
+      // Verify patient ID matches token
+      if (requestPatientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+      }
+
+      // Check patient status - must be APPROVED
+      const statusCheck = await checkPatientApproved(patientId, clinicId);
+      if (!statusCheck.approved) {
+        if (statusCheck.error === "patient_not_found") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(403).json({ 
+          ok: false, 
+          error: "patient_not_approved",
+          message: "Patient status is not APPROVED. Please wait for clinic approval.",
+          status: statusCheck.status || "PENDING"
+        });
+      }
+
+      patientUuid = statusCheck.patient.id;
+    }
     console.log("Travel GET - Found patient:", { patientId, patientUuid });
 
     // 2. patient_travel tablosundan travel_data'yı çek
@@ -530,22 +1100,22 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
     if (travelError) {
       console.error("Travel GET - Supabase query error:", travelError);
       // Fallback: Boş travel data döndür
-      const fallback = {
-        schemaVersion: 1,
-        updatedAt: now(),
-        patientId,
-        hotel: null,
-        flights: [],
-        notes: "",
+  const fallback = {
+    schemaVersion: 1,
+    updatedAt: now(),
+    patientId,
+    hotel: null,
+    flights: [],
+    notes: "",
         airportPickup: null,
         editPolicy: {
           hotel: "ADMIN",
           flights: "ADMIN",
           notes: "ADMIN",
         },
-        editMode: "PATIENT",
-        lockedByAdmin: false,
-      };
+    editMode: "PATIENT",
+    lockedByAdmin: false,
+  };
       return res.json(fallback);
     }
 
@@ -573,14 +1143,63 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
 
     // 3. JSONB'den gelen data'yı parse et ve patientId ekle
     const travelJson = travelData.travel_data || {};
+    
+    console.log("Travel GET - travelJson (full):", JSON.stringify(travelJson, null, 2));
+    console.log("Travel GET - travelJson.flights (raw):", JSON.stringify(travelJson.flights, null, 2));
+    
+    // Hotel bilgisini debug et ve validate et
+    let hotelData = travelJson.hotel;
+    
+    // Null check
+    if (hotelData === null) {
+      console.log("Travel GET - Hotel is null");
+      hotelData = null;
+    } else if (hotelData === undefined) {
+      console.log("Travel GET - Hotel is undefined, setting to null");
+      hotelData = null;
+    } else if (typeof hotelData === "string") {
+      // Legacy format: hotel is a string
+      const hotelName = String(hotelData).trim();
+      hotelData = hotelName ? { name: hotelName } : null;
+      console.log("Travel GET - Hotel was string, converted to:", JSON.stringify(hotelData, null, 2));
+    } else if (typeof hotelData === "object") {
+      // Modern format: hotel is an object
+      const hotelName = String(hotelData?.name || "").trim();
+      if (hotelName) {
+        hotelData = {
+          name: hotelName,
+          address: hotelData?.address ? String(hotelData.address).trim() : undefined,
+          checkIn: hotelData?.checkIn ? String(hotelData.checkIn).trim() : undefined,
+          checkOut: hotelData?.checkOut ? String(hotelData.checkOut).trim() : undefined,
+          googleMapsUrl: hotelData?.googleMapsUrl ? String(hotelData.googleMapsUrl).trim() : undefined,
+        };
+        console.log("Travel GET - Hotel object validated, name:", hotelName);
+      } else {
+        console.log("Travel GET - Hotel object exists but name is empty, setting to null");
+        hotelData = null;
+      }
+    } else {
+      console.log("Travel GET - Hotel has unexpected type:", typeof hotelData, "setting to null");
+      hotelData = null;
+    }
+    
+    console.log("Travel GET - travelJson.hotel (raw from DB):", JSON.stringify(travelJson.hotel, null, 2));
+    console.log("Travel GET - Processed hotelData:", JSON.stringify(hotelData, null, 2));
+    
+    // Result objesini oluştururken hotel'i açıkça set et
+    // Flights bilgisini validate et
+    const flightsArray = Array.isArray(travelJson.flights) ? travelJson.flights : [];
+    console.log("Travel GET - Processed flights array:", JSON.stringify(flightsArray, null, 2));
+    console.log("Travel GET - Flights count:", flightsArray.length);
+    
+    // Result objesini oluştururken travelJson'dan sadece gerekli alanları al, hotel'i ayrı set et
     const result = {
-      ...travelJson,
-      schemaVersion: travelData.schema_version || 1,
-      updatedAt: travelData.updated_at ? new Date(travelData.updated_at).getTime() : now(),
-      patientId,
-      // Eksik alanları fallback ile tamamla
-      hotel: travelJson.hotel || null,
-      flights: Array.isArray(travelJson.flights) ? travelJson.flights : [],
+      schemaVersion: travelData.schema_version || travelJson.schemaVersion || 1,
+      updatedAt: travelData.updated_at ? new Date(travelData.updated_at).getTime() : (travelJson.updatedAt || now()),
+      patientId: patientId,
+      // Hotel bilgisini validate edilmiş haliyle kullan - null veya object olabilir, undefined değil
+      hotel: hotelData, // hotelData zaten null veya object olarak validate edildi
+      flights: flightsArray, // Flights array'i validate edildi
       notes: travelJson.notes || "",
       airportPickup: travelJson.airportPickup || null,
       editPolicy: travelJson.editPolicy || {
@@ -592,6 +1211,9 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
       lockedByAdmin: travelJson.lockedByAdmin || false,
     };
 
+    console.log("Travel GET - Final result object:", JSON.stringify(result, null, 2));
+    console.log("Travel GET - Final result.hotel:", JSON.stringify(result.hotel, null, 2));
+    console.log("Travel GET - Final result.flights:", JSON.stringify(result.flights, null, 2));
     res.json(result);
   } catch (error) {
     console.error("Travel GET error:", error);
@@ -606,18 +1228,103 @@ async function saveTravel(req, res) {
 
   const body = req.body || {};
   const actor = String(req.headers["x-actor"] || "patient").toLowerCase();
+  const authHeader = req.headers.authorization;
+  const isAdminHeader = actor === "admin" || authHeader?.startsWith("Bearer ");
+  
+  let isAdmin = false;
+  let adminClinicId = null;
+  let adminClinicCode = null;
+
+  // Admin token doğrulaması
+  if (isAdminHeader) {
+    try {
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ ok: false, error: "missing_token" });
+      }
+
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, JWT_SECRET);
+      
+      if (!decoded.clinicId || !decoded.clinicCode) {
+        return res.status(401).json({ ok: false, error: "invalid_token_format" });
+      }
+      
+      isAdmin = true;
+      adminClinicId = decoded.clinicId;
+      adminClinicCode = decoded.clinicCode;
+      console.log("[TRAVEL SAVE] Admin token verified:", { clinicId: adminClinicId, clinicCode: adminClinicCode });
+    } catch (error) {
+      console.error("[TRAVEL SAVE] Admin token verification failed:", error.message);
+      return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
+    }
+  }
 
   try {
+    // If patient (not admin), check token and approval status
+    if (!isAdmin) {
+      // Get token from Authorization header or x-patient-token
+      const authHeader = req.headers.authorization;
+      const tokenHeader = req.headers["x-patient-token"];
+      const token = authHeader?.startsWith("Bearer ") 
+        ? authHeader.substring(7) 
+        : tokenHeader;
+
+      if (!token) {
+        return res.status(401).json({ ok: false, error: "missing_token" });
+      }
+
+      let decoded;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch (error) {
+        return res.status(401).json({ ok: false, error: "invalid_token" });
+      }
+
+      const clinicId = decoded.clinicId;
+      const requestPatientId = decoded.patientId;
+
+      // Verify patient ID matches token
+      if (requestPatientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+      }
+
+      // Check patient status - must be APPROVED
+      const statusCheck = await checkPatientApproved(patientId, clinicId);
+      if (!statusCheck.approved) {
+        if (statusCheck.error === "patient_not_found") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(403).json({ 
+          ok: false, 
+          error: "patient_not_approved",
+          message: "Patient status is not APPROVED. Please wait for clinic approval.",
+          status: statusCheck.status || "PENDING"
+        });
+      }
+    }
+
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
-    const { data: patientData, error: patientError } = await supabase
+    let query = supabase
       .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .single();
+      .select("id, clinic_id")
+      .eq("patient_id", patientId);
+    
+    // Admin ise sadece kendi clinic'ine ait patient'ları görebilir
+    if (isAdmin && adminClinicId) {
+      query = query.eq("clinic_id", adminClinicId);
+    }
+    
+    const { data: patientData, error: patientError } = await query.single();
 
     if (patientError || !patientData) {
       console.error("Travel SAVE - Patient not found:", patientError);
       return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+    
+    // Admin ise patient'ın clinic_id'sini kontrol et
+    if (isAdmin && adminClinicId && patientData.clinic_id !== adminClinicId) {
+      console.error("Travel SAVE - Admin cannot access patient from other clinic");
+      return res.status(403).json({ ok: false, error: "access_denied" });
     }
 
     const patientUuid = patientData.id;
@@ -633,7 +1340,7 @@ async function saveTravel(req, res) {
     schemaVersion: 1,
     updatedAt: now(),
     patientId,
-    hotel: null,
+    hotel: null, // hotel: { name, checkIn, checkOut, googleMapsUrl, address }
     flights: [],
     notes: "",
       airportPickup: null,
@@ -647,7 +1354,7 @@ async function saveTravel(req, res) {
     };
 
   // 🔒 Admin kilitlediyse hasta yazamasın
-  if (current.lockedByAdmin && actor !== "admin") {
+  if (current.lockedByAdmin && !isAdmin) {
     return res.status(403).json({
       ok: false,
       error: "travel_locked_by_admin",
@@ -655,12 +1362,39 @@ async function saveTravel(req, res) {
   }
 
     // 🧠 MERGE-SAFE - Tüm alanları birleştir
+    console.log("Travel SAVE - Body:", JSON.stringify(body, null, 2));
+    console.log("Travel SAVE - Body hotel:", JSON.stringify(body.hotel, null, 2));
+    console.log("Travel SAVE - Current hotel:", JSON.stringify(current.hotel, null, 2));
+    
+    // Hotel bilgisini merge et - body'den gelen hotel bilgisini kullan, yoksa current'tan al
+    let mergedHotel = current.hotel;
+    if (body.hotel !== undefined) {
+      // body.hotel null ise, null yap
+      if (body.hotel === null) {
+        mergedHotel = null;
+      } else if (typeof body.hotel === "object" && body.hotel !== null) {
+        // body.hotel object ise, name varsa kullan
+        if (body.hotel.name && String(body.hotel.name).trim() !== "") {
+          mergedHotel = {
+            name: String(body.hotel.name).trim(),
+            address: body.hotel.address ? String(body.hotel.address).trim() : undefined,
+            checkIn: body.hotel.checkIn ? String(body.hotel.checkIn).trim() : undefined,
+            checkOut: body.hotel.checkOut ? String(body.hotel.checkOut).trim() : undefined,
+            googleMapsUrl: body.hotel.googleMapsUrl ? String(body.hotel.googleMapsUrl).trim() : undefined,
+          };
+        } else {
+          // name yoksa null yap
+          mergedHotel = null;
+        }
+      }
+    }
+    
   const next = {
-    ...current,
+      schemaVersion: body.schemaVersion || current.schemaVersion || 1,
     updatedAt: now(),
       patientId,
-      // Hotel
-    hotel: body.hotel !== undefined ? body.hotel : current.hotel,
+      // Hotel - merge edilmiş hotel bilgisini kullan
+      hotel: mergedHotel,
       // Flights - array gelirse güncelle
       flights: Array.isArray(body.flights) ? body.flights : (current.flights || []),
       // Notes
@@ -678,6 +1412,9 @@ async function saveTravel(req, res) {
       // Locked by Admin
       lockedByAdmin: body.lockedByAdmin !== undefined ? !!body.lockedByAdmin : (current.lockedByAdmin || false),
     };
+    
+    console.log("Travel SAVE - Next hotel (before save):", JSON.stringify(next.hotel, null, 2));
+    console.log("Travel SAVE - Next object (full):", JSON.stringify(next, null, 2));
 
     // 3. Supabase'e kaydet (UPSERT)
     const travelDataToSave = {
@@ -690,6 +1427,8 @@ async function saveTravel(req, res) {
     console.log("Travel SAVE - Attempting to save:", {
       patientId,
       patientUuid,
+      hasHotel: !!next.hotel,
+      hotelData: JSON.stringify(next.hotel, null, 2),
       hasAirportPickup: !!next.airportPickup,
     });
 
@@ -711,15 +1450,25 @@ async function saveTravel(req, res) {
       return res.status(500).json({ ok: false, error: "travel_save_failed", details: "No data returned" });
     }
 
+    // Supabase'den dönen veriyi kontrol et - bu gerçekte kaydedilen veri
+    const savedTravelData = savedData.travel_data || {};
+    console.log("Travel SAVE - Saved travel_data from Supabase:", JSON.stringify(savedTravelData, null, 2));
+    console.log("Travel SAVE - Saved travel_data.hotel:", JSON.stringify(savedTravelData.hotel, null, 2));
+    
+    // Supabase'den dönen veriyi kullan (gerçekte kaydedilen)
+    const finalTravelData = savedTravelData.hotel !== undefined ? savedTravelData : next;
+    
     console.log("Travel SAVE - Success:", {
       patientId,
       patientUuid,
       savedPatientUuid: savedData.patient_id,
-      hasAirportPickup: !!next.airportPickup,
-      airportPickupData: next.airportPickup,
+      hasHotel: !!finalTravelData.hotel,
+      hotelData: JSON.stringify(finalTravelData.hotel, null, 2),
+      hasAirportPickup: !!finalTravelData.airportPickup,
+      airportPickupData: finalTravelData.airportPickup,
     });
 
-    res.json({ ok: true, saved: true, travel: next });
+    res.json({ ok: true, saved: true, travel: finalTravelData });
   } catch (error) {
     console.error("Travel SAVE - Exception:", error);
     res.status(500).json({ ok: false, error: "travel_save_exception", details: error.message });
@@ -787,6 +1536,34 @@ function verifyAdminToken(req, res, next) {
   }
 }
 
+/* ================= PATIENT STATUS CHECK HELPER ================= */
+// Patient status kontrolü - APPROVED olmalı
+async function checkPatientApproved(patientId, clinicId) {
+  try {
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select("id, patient_id, status, clinic_id")
+      .eq("patient_id", String(patientId))
+      .eq("clinic_id", clinicId)
+      .maybeSingle();
+
+    if (error || !patient) {
+      console.error("[CHECK STATUS] Patient not found:", error);
+      return { approved: false, error: "patient_not_found" };
+    }
+
+    if (patient.status !== "APPROVED") {
+      console.log(`[CHECK STATUS] Patient ${patientId} status is ${patient.status}, not APPROVED`);
+      return { approved: false, error: "patient_not_approved", status: patient.status };
+    }
+
+    return { approved: true, patient };
+  } catch (error) {
+    console.error("[CHECK STATUS] Error checking patient status:", error);
+    return { approved: false, error: "status_check_failed", details: error.message };
+  }
+}
+
 /* ================= ADMIN REGISTER ================= */
 app.post("/api/admin/register", async (req, res) => {
   try {
@@ -845,22 +1622,14 @@ app.post("/api/admin/register", async (req, res) => {
     console.log("[REGISTER] requestClinicType is undefined?", requestClinicType === undefined);
     console.log("[REGISTER] requestClinicType is null?", requestClinicType === null);
     
+    // Clinic type: Only DENTAL supported
     const clinicType = String(requestClinicType || "DENTAL").trim().toUpperCase();
-    console.log("[REGISTER] After String() conversion:", clinicType);
-    
-    const validClinicTypes = ["DENTAL", "HAIR"];
-    const finalClinicType = validClinicTypes.includes(clinicType) ? clinicType : "DENTAL";
+    const finalClinicType = clinicType === "DENTAL" ? "DENTAL" : "DENTAL"; // Always DENTAL
     
     console.log("[REGISTER] Final clinicType:", finalClinicType);
-    console.log("[REGISTER] Was requestClinicType valid?", validClinicTypes.includes(clinicType));
     
-    // Default enabled modules based on clinic type
-    let defaultModules = [];
-    if (finalClinicType === "DENTAL") {
-      defaultModules = ["UPLOADS", "TRAVEL", "REFERRALS", "CHAT", "PATIENTS", "DENTAL_TREATMENTS", "DENTAL_TEETH_CHART"];
-    } else if (finalClinicType === "HAIR") {
-      defaultModules = ["UPLOADS", "TRAVEL", "REFERRALS", "CHAT", "PATIENTS", "HAIR_GRAFTS", "HAIR_SCALP", "HAIR_CHECKLISTS", "HAIR_PHOTO_TIMELINE"];
-    }
+    // Default enabled modules for DENTAL clinics
+    const defaultModules = ["UPLOADS", "TRAVEL", "REFERRALS", "CHAT", "PATIENTS", "DENTAL_TREATMENTS", "DENTAL_TEETH_CHART"];
     
     console.log("[REGISTER] Default modules for", finalClinicType, ":", defaultModules);
     
@@ -1025,6 +1794,76 @@ app.post("/api/admin/login", async (req, res) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= PATIENT LOGIN ================= */
+app.post("/api/patient/login", async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+
+    if (!phone || !String(phone).trim()) {
+      return res.status(400).json({ ok: false, error: "phone_required", message: "Phone number is required" });
+    }
+
+    const trimmedPhone = String(phone).trim();
+
+    // Hasta bul (telefon numarası ile)
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select("id, patient_id, name, phone, status, clinic_id, clinic_code")
+      .eq("phone", trimmedPhone)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[PATIENT LOGIN] Database error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error", message: "Database error occurred" });
+    }
+
+    if (!patient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found", 
+        message: "No patient found with this phone number. Please register first." 
+      });
+    }
+
+    // Klinik bilgilerini al
+    const { data: clinic, error: clinicError } = await supabase
+      .from("clinics")
+      .select("id, clinic_code, name")
+      .eq("id", patient.clinic_id)
+      .single();
+
+    if (clinicError || !clinic) {
+      console.error("[PATIENT LOGIN] Clinic lookup error:", clinicError);
+      return res.status(500).json({ ok: false, error: "internal_error", message: "Clinic lookup failed" });
+    }
+
+    // JWT token oluştur (register endpoint ile aynı format)
+    const token = jwt.sign(
+      { 
+        patientId: patient.patient_id, 
+        clinicId: patient.clinic_id,
+        clinicCode: clinic.clinic_code || patient.clinic_code || "",
+        role: "patient"
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    res.json({
+      ok: true,
+      token,
+      patientId: patient.patient_id,
+      name: patient.name || "",
+      phone: patient.phone || "",
+      status: patient.status || "PENDING",
+      clinicCode: clinic.clinic_code || "",
+    });
+  } catch (error) {
+    console.error("[PATIENT LOGIN] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error.message });
   }
 });
 
@@ -1220,6 +2059,9 @@ app.get("/api/admin/clinic", verifyAdminToken, async (req, res) => {
         title: brandingTitle,
         logoUrl: brandingLogoUrl,
         showPoweredBy: showPoweredBy,
+        primaryColor: isPro ? (branding.primaryColor || "") : "",
+        secondaryColor: isPro ? (branding.secondaryColor || "") : "",
+        welcomeMessage: isPro ? (branding.welcomeMessage || "") : "",
       },
       updatedAt: clinic.updated_at ? new Date(clinic.updated_at).getTime() : null,
     });
@@ -1236,6 +2078,21 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
     console.log("[UPDATE CLINIC] Received body:", JSON.stringify(body, null, 2));
     console.log("[UPDATE CLINIC] Clinic ID:", req.clinicId);
 
+    // Get current clinic to check plan
+    const { data: currentClinic, error: currentClinicError } = await supabase
+      .from("clinics")
+      .select("plan, branding")
+      .eq("id", req.clinicId)
+      .single();
+
+    if (currentClinicError || !currentClinic) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+
+    const currentPlan = String(currentClinic.plan || "FREE").trim().toUpperCase();
+    const isPro = currentPlan === "PRO";
+    const currentBranding = currentClinic.branding || {};
+
     const updateData = {
       name: body.name,
       address: body.address,
@@ -1248,12 +2105,13 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
       default_invited_discount_percent: body.defaultInvitedDiscountPercent,
     };
     
-    // Add clinicType and enabledModules if provided
+    // Add clinicType and enabledModules if provided (only DENTAL supported)
     if (body.clinicType) {
-      const validTypes = ["DENTAL", "HAIR"];
-      if (validTypes.includes(String(body.clinicType).toUpperCase())) {
-        updateData.clinic_type = String(body.clinicType).toUpperCase();
+      const requestedType = String(body.clinicType).toUpperCase();
+      if (requestedType === "DENTAL") {
+        updateData.clinic_type = "DENTAL";
       }
+      // HAIR type is no longer supported, ignore if provided
     }
     if (Array.isArray(body.enabledModules)) {
       updateData.enabled_modules = body.enabledModules;
@@ -1279,38 +2137,73 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
         }
       }
     }
-    
-    // Add branding if provided (only allowed for Pro plan)
-    if (body.branding && typeof body.branding === "object") {
-      // Get current plan to check if branding is allowed
-      const { data: currentClinic } = await supabase
-        .from("clinics")
-        .select("plan")
-        .eq("id", req.clinicId)
-        .single();
-      
-      const currentPlan = currentClinic?.plan || updateData.plan || "FREE";
-      
-      // Only allow branding customization for Pro plan
-      if (currentPlan === "PRO" || updateData.plan === "PRO") {
-        const branding = {
-          title: body.branding.title || "",
-          logoUrl: body.branding.logoUrl || "",
-          showPoweredBy: body.branding.showPoweredBy !== undefined ? body.branding.showPoweredBy : false,
-        };
-        updateData.branding = branding;
-        // Also update logo_url if branding.logoUrl is provided (for backward compatibility)
-        if (body.branding.logoUrl !== undefined) {
-          updateData.logo_url = body.branding.logoUrl;
-        }
-      } else {
-        // For Free/Basic, enforce standard branding
-        updateData.branding = {
-          title: "",
-          logoUrl: "",
-          showPoweredBy: true,
-        };
+
+    // Branding update: Only PRO clinics can set branding
+    if (body.branding !== undefined || body.clinicName !== undefined || body.clinicLogoUrl !== undefined) {
+      if (!isPro) {
+        return res.status(403).json({
+          ok: false,
+          error: "BRANDING_NOT_ALLOWED",
+          plan: currentPlan,
+          message: "Branding customization is only available for PRO plan clinics. Please upgrade to PRO to customize branding."
+        });
       }
+
+      // Update branding for PRO clinics
+      const newBranding = {
+        ...currentBranding,
+        title: body.clinicName !== undefined ? String(body.clinicName || "").trim() : (body.branding?.title !== undefined ? String(body.branding.title || "").trim() : currentBranding.title || ""),
+        logoUrl: body.clinicLogoUrl !== undefined ? String(body.clinicLogoUrl || "").trim() : (body.branding?.logoUrl !== undefined ? String(body.branding.logoUrl || "").trim() : currentBranding.logoUrl || ""),
+        showPoweredBy: body.branding?.showPoweredBy !== undefined ? !!body.branding.showPoweredBy : (currentBranding.showPoweredBy !== undefined ? currentBranding.showPoweredBy : false),
+        primaryColor: body.branding?.primaryColor !== undefined ? String(body.branding.primaryColor || "").trim() : (currentBranding.primaryColor || ""),
+        secondaryColor: body.branding?.secondaryColor !== undefined ? String(body.branding.secondaryColor || "").trim() : (currentBranding.secondaryColor || ""),
+        welcomeMessage: body.branding?.welcomeMessage !== undefined ? String(body.branding.welcomeMessage || "").trim() : (currentBranding.welcomeMessage || ""),
+      };
+
+      updateData.branding = newBranding;
+      console.log("[UPDATE CLINIC] Updating branding for PRO clinic:", newBranding);
+    }
+    
+    // Get current clinic to check plan before updating
+    const { data: currentClinicForBranding, error: currentClinicErrorForBranding } = await supabase
+      .from("clinics")
+      .select("plan, branding")
+      .eq("id", req.clinicId)
+      .single();
+
+    const currentPlanForBranding = (updateData.plan || currentClinicForBranding?.plan || "FREE").toUpperCase();
+    const isProForBranding = currentPlanForBranding === "PRO";
+    const currentBrandingData = currentClinicForBranding?.branding || {};
+
+    // Branding update: Only PRO clinics can set branding
+    // Support both body.branding object and direct clinicName/clinicLogoUrl fields
+    if (body.branding !== undefined || body.clinicName !== undefined || body.clinicLogoUrl !== undefined) {
+      if (!isProForBranding) {
+        return res.status(403).json({
+          ok: false,
+          error: "BRANDING_NOT_ALLOWED",
+          plan: currentPlanForBranding,
+          message: "Branding customization is only available for PRO plan clinics. Please upgrade to PRO to customize branding."
+        });
+      }
+
+      // Update branding for PRO clinics
+      const newBranding = {
+        ...currentBrandingData,
+        title: body.clinicName !== undefined ? String(body.clinicName || "").trim() : (body.branding?.title !== undefined ? String(body.branding.title || "").trim() : currentBrandingData.title || ""),
+        logoUrl: body.clinicLogoUrl !== undefined ? String(body.clinicLogoUrl || "").trim() : (body.branding?.logoUrl !== undefined ? String(body.branding.logoUrl || "").trim() : currentBrandingData.logoUrl || ""),
+        showPoweredBy: body.branding?.showPoweredBy !== undefined ? !!body.branding.showPoweredBy : (currentBrandingData.showPoweredBy !== undefined ? currentBrandingData.showPoweredBy : false),
+        primaryColor: body.branding?.primaryColor !== undefined ? String(body.branding.primaryColor || "").trim() : (currentBrandingData.primaryColor || ""),
+        secondaryColor: body.branding?.secondaryColor !== undefined ? String(body.branding.secondaryColor || "").trim() : (currentBrandingData.secondaryColor || ""),
+        welcomeMessage: body.branding?.welcomeMessage !== undefined ? String(body.branding.welcomeMessage || "").trim() : (currentBrandingData.welcomeMessage || ""),
+      };
+
+      updateData.branding = newBranding;
+      // Also update logo_url if clinicLogoUrl is provided (for backward compatibility)
+      if (body.clinicLogoUrl !== undefined || body.branding?.logoUrl !== undefined) {
+        updateData.logo_url = newBranding.logoUrl;
+      }
+      console.log("[UPDATE CLINIC] Updating branding for PRO clinic:", newBranding);
     }
 
     // Null değerleri temizle
@@ -1341,17 +2234,17 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
       .eq("clinic_id", req.clinicId);
 
     const currentPatientCount = patientCount || 0;
-    const plan = updatedClinic.plan || "FREE";
+    const finalPlan = String(updatedClinic.plan || "FREE").trim().toUpperCase();
     
     // Calculate maxPatients based on plan if not set in database
     // Free: 3, Basic: 10, Pro: unlimited (null)
     let maxPatients = updatedClinic.max_patients;
     if (maxPatients === null || maxPatients === undefined) {
-      if (plan === "FREE") {
+      if (finalPlan === "FREE") {
         maxPatients = 3;
-      } else if (plan === "BASIC") {
+      } else if (finalPlan === "BASIC") {
         maxPatients = 10;
-      } else if (plan === "PRO") {
+      } else if (finalPlan === "PRO") {
         maxPatients = null; // Unlimited
       } else {
         maxPatients = 3; // Default to FREE plan limit
@@ -1361,10 +2254,10 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
     // Branding bilgilerini parse et (JSONB)
     // Only Pro plan can customize branding
     const branding = updatedClinic.branding || {};
-    const isPro = plan === "PRO";
-    const brandingTitle = isPro ? (branding.title || updatedClinic.name || "") : "";
-    const brandingLogoUrl = isPro ? (branding.logoUrl || updatedClinic.logo_url || "") : "";
-    const showPoweredBy = !isPro; // Free and Basic always show "Powered by Clinicator"
+    const responseIsPro = finalPlan === "PRO";
+    const brandingTitle = responseIsPro ? (branding.title || updatedClinic.name || "") : "";
+    const brandingLogoUrl = responseIsPro ? (branding.logoUrl || updatedClinic.logo_url || "") : "";
+    const showPoweredBy = !responseIsPro; // Free and Basic always show "Powered by Clinicator"
 
     const { password_hash, ...clinicData } = updatedClinic;
 
@@ -1383,13 +2276,16 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
         defaultInvitedDiscountPercent: updatedClinic.default_invited_discount_percent,
         clinicType: updatedClinic.clinic_type || "DENTAL",
         enabledModules: updatedClinic.enabled_modules || [],
-        plan: plan,
+        plan: finalPlan,
         maxPatients: maxPatients,
         currentPatientCount: currentPatientCount,
         branding: {
           title: brandingTitle,
           logoUrl: brandingLogoUrl,
           showPoweredBy: showPoweredBy,
+          primaryColor: responseIsPro ? (branding.primaryColor || "") : "",
+          secondaryColor: responseIsPro ? (branding.secondaryColor || "") : "",
+          welcomeMessage: responseIsPro ? (branding.welcomeMessage || "") : "",
         },
         updatedAt: updatedClinic.updated_at ? new Date(updatedClinic.updated_at).getTime() : null,
       },
@@ -1403,6 +2299,15 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
 /* ================= ADMIN PATIENTS (GET) ================= */
 app.get("/api/admin/patients", verifyAdminToken, async (req, res) => {
   try {
+    // Get clinic code first
+    const { data: clinic, error: clinicError } = await supabase
+      .from("clinics")
+      .select("clinic_code")
+      .eq("id", req.clinicId)
+      .single();
+
+    const clinicCode = clinic?.clinic_code || "";
+
     // Tüm hastaları getir (hem PENDING hem APPROVED)
     const { data: patients, error } = await supabase
       .from("patients")
@@ -1421,7 +2326,8 @@ app.get("/api/admin/patients", verifyAdminToken, async (req, res) => {
       referralCode: p.referral_code || null,
       name: p.name || "",
       phone: p.phone || "",
-      status: p.status,
+      status: p.status || "PENDING",
+      clinicCode: clinicCode,
       createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
       updatedAt: p.updated_at ? new Date(p.updated_at).getTime() : Date.now(),
       treatmentStartDate: p.treatment_start_date ? new Date(p.treatment_start_date).getTime() : null,
@@ -1591,14 +2497,21 @@ app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
 /* ================= PATIENT REGISTER ================= */
 app.post("/api/register", async (req, res) => {
   try {
-    const { name, phone, clinicCode, referralCode: inviterReferralCode } = req.body || {};
+    const { name, fullName, phone, clinicCode, referralCode: inviterReferralCode } = req.body || {};
 
+    // fullName veya name kabul et (backward compatibility için)
+    const patientName = fullName || name;
+    
     if (!clinicCode || !String(clinicCode).trim()) {
       return res.status(400).json({ ok: false, error: "clinic_code_required" });
     }
 
     if (!phone || !String(phone).trim()) {
       return res.status(400).json({ ok: false, error: "phone_required" });
+    }
+
+    if (!patientName || !String(patientName).trim()) {
+      return res.status(400).json({ ok: false, error: "full_name_required", message: "Full name is required" });
     }
 
     const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
@@ -1640,56 +2553,121 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
-    console.log(`[REGISTER] Clinic found: ${clinic.name} (${clinic.clinic_code}), ID: ${clinic.id}`);
+    console.log(`[REGISTER] Clinic found: ${clinic.name} (${clinic.clinic_code}), ID: ${clinic.id}, Plan: ${clinic.plan || "FREE"}`);
 
-    // 5 haneli patient ID ve referral code oluştur (aynı kod)
-    async function generatePatientCode() {
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // I, O, 0, 1 harfleri karışıklık yaratmaması için çıkarıldı
-      let attempts = 0;
-      const maxAttempts = 100;
+    // Check plan limits
+    const plan = String(clinic.plan || "FREE").trim().toUpperCase();
+    let maxPatients = clinic.max_patients;
+    
+    // Calculate maxPatients based on plan if not set in database
+    if (maxPatients === null || maxPatients === undefined) {
+      if (plan === "FREE") {
+        maxPatients = 3;
+      } else if (plan === "BASIC") {
+        maxPatients = 10;
+      } else if (plan === "PRO") {
+        maxPatients = null; // Unlimited for PRO
+      } else {
+        maxPatients = 3; // Default to FREE plan limit
+      }
+    }
+
+    // Check patient limit (PRO has unlimited, so skip check)
+    if (maxPatients !== null && maxPatients !== undefined && plan !== "PRO") {
+      const { count, error: countError } = await supabase
+        .from("patients")
+        .select("*", { count: "exact", head: true })
+        .eq("clinic_id", clinic.id);
       
-      while (attempts < maxAttempts) {
+      if (!countError) {
+        const currentPatientCount = count || 0;
+        console.log(`[REGISTER] Current patient count: ${currentPatientCount} / ${maxPatients} (Plan: ${plan})`);
+        
+        if (currentPatientCount >= maxPatients) {
+          return res.status(403).json({
+            ok: false,
+            error: "PLAN_LIMIT_REACHED",
+            plan: plan,
+            maxPatients: maxPatients,
+            currentCount: currentPatientCount,
+            message: `Clinic has reached the patient limit for ${plan} plan (${maxPatients} patients). Please upgrade to add more patients.`
+          });
+        }
+      } else {
+        console.warn("[REGISTER] Error counting patients, continuing anyway:", countError);
+      }
+    } else if (plan === "PRO") {
+      console.log("[REGISTER] PRO plan - unlimited patients, skipping limit check");
+    }
+
+    // Hasta isminden patient ID oluştur
+    async function generatePatientIdFromName(patientName) {
+      if (!patientName || !String(patientName).trim()) {
+        // İsim yoksa fallback: random kod
+        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         let code = "";
         for (let i = 0; i < 5; i++) {
           code += chars[Math.floor(Math.random() * chars.length)];
         }
-        
-        // Unique kontrolü (hem patient_id hem referral_code için)
-        const { data: existingById } = await supabase
+        return code;
+      }
+      
+      // Türkçe karakterleri dönüştür
+      const turkishMap = {
+        'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
+        'ü': 'u', 'Ü': 'U', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
+      };
+      
+      let slug = String(patientName).trim();
+      // Türkçe karakterleri değiştir
+      for (const [turkish, latin] of Object.entries(turkishMap)) {
+        slug = slug.replace(new RegExp(turkish, 'g'), latin);
+      }
+      
+      // Özel karakterleri ve boşlukları temizle, büyük harfe çevir
+      slug = slug
+        .replace(/[^a-zA-Z0-9\s]/g, '') // Özel karakterleri kaldır
+        .replace(/\s+/g, '_') // Boşlukları underscore ile değiştir
+        .toUpperCase()
+        .substring(0, 50); // Maksimum 50 karakter
+      
+      if (!slug) {
+        // Slug boşsa fallback
+        slug = "PATIENT_" + Date.now().toString().slice(-8);
+      }
+      
+      // Unique kontrolü ve gerekirse sayı ekle
+      let finalId = slug;
+      let counter = 1;
+      let attempts = 0;
+      const maxAttempts = 100;
+      
+      while (attempts < maxAttempts) {
+        // Unique kontrolü
+        const { data: existing } = await supabase
           .from("patients")
           .select("patient_id")
-          .eq("patient_id", code)
+          .eq("patient_id", finalId)
+          .eq("clinic_id", clinic.id) // Aynı clinic içinde unique olmalı
           .maybeSingle();
         
-        // Referral code kontrolü (eğer kolon varsa)
-        let existingByCode = null;
-        try {
-          const { data } = await supabase
-            .from("patients")
-            .select("referral_code")
-            .eq("referral_code", code)
-            .maybeSingle();
-          existingByCode = data;
-        } catch (err) {
-          // referral_code kolonu yoksa bu hatayı görmezden gel
-          console.warn("[REGISTER] referral_code column may not exist yet, skipping check:", err?.message);
+        if (!existing) {
+          return finalId; // Unique ID bulundu
         }
         
-        if (!existingById && !existingByCode) {
-          return code; // Unique code bulundu
-        }
+        // Aynı ID varsa sonuna sayı ekle
+        counter++;
+        finalId = `${slug}_${counter}`;
         attempts++;
       }
       
-      // Fallback: timestamp + random (5 haneli)
-      const fallbackCode = Date.now().toString().slice(-5);
-      return fallbackCode.padStart(5, '0');
+      // Fallback: timestamp ekle
+      return `${slug}_${Date.now().toString().slice(-6)}`;
     }
     
-    const patientCode = await generatePatientCode();
-    const nextPatientId = patientCode; // Patient ID = Referral Code (5 haneli)
-    const referralCode = patientCode; // Referral Code = Patient ID (aynı kod)
-    console.log(`[REGISTER] Generated patient ID and referral code: ${patientCode}`);
+    const nextPatientId = await generatePatientIdFromName(patientName);
+    const referralCode = nextPatientId; // Referral Code = Patient ID (aynı)
+    console.log(`[REGISTER] Generated patient ID from name "${patientName}": ${nextPatientId}`);
 
     // Hasta kaydı oluştur (patient_id = referral_code = 5 haneli kod)
     // referral_code kolonu varsa ekle, yoksa sadece patient_id kullan
@@ -1701,11 +2679,11 @@ app.post("/api/register", async (req, res) => {
       .from("patients")
       .insert({
         clinic_id: clinic.id,
-        patient_id: nextPatientId, // 5 haneli kod
-        referral_code: referralCode, // 5 haneli kod (patient ID ile aynı)
-        name: name || "",
+        patient_id: nextPatientId, // Patient ID from name
+        referral_code: referralCode, // Referral Code = Patient ID (aynı)
+        name: String(patientName).trim(), // fullName veya name
         phone: String(phone).trim(),
-        status: "PENDING",
+        status: "PENDING", // Default status
       })
       .select()
       .single();
@@ -1717,10 +2695,10 @@ app.post("/api/register", async (req, res) => {
         .from("patients")
         .insert({
           clinic_id: clinic.id,
-          patient_id: nextPatientId, // 5 haneli kod
-          name: name || "",
+          patient_id: nextPatientId, // Patient ID from name
+          name: String(patientName).trim(), // fullName veya name
           phone: String(phone).trim(),
-          status: "PENDING",
+          status: "PENDING", // Default status
         })
         .select()
         .single();
@@ -1875,15 +2853,19 @@ app.post("/api/register", async (req, res) => {
       { expiresIn: "30d" }
     );
 
+    // Response'ta name field'ını düzgün döndür - patientName endpoint başında tanımlı
+    const finalName = String(patientName || newPatient.name || "").trim();
+    console.log(`[REGISTER] Response name: "${finalName}" (from patientName: "${patientName}", newPatient.name: "${newPatient.name}")`);
+
     res.json({
       ok: true,
       token: patientToken, // Frontend token bekliyor
       patientId: newPatient.patient_id,
       referralCode: newPatient.referral_code || null,
       requestId: newPatient.patient_id, // Backward compatibility
-      name: newPatient.name || "",
-      phone: newPatient.phone || "",
-      status: newPatient.status,
+      name: finalName, // Name from request (patientName)
+      phone: String(newPatient.phone || phone || "").trim(),
+      status: newPatient.status || "PENDING",
     });
   } catch (error) {
     console.error("[REGISTER] Unexpected error:", error);
@@ -1991,6 +2973,26 @@ app.get("/api/patient/me", async (req, res) => {
         });
       }
 
+      // Get clinic info for branding
+      const { data: clinicInfo, error: clinicInfoError } = await supabase
+        .from("clinics")
+        .select("plan, branding, name, logo_url")
+        .eq("id", clinicId)
+        .single();
+
+      const clinicPlan = clinicInfo?.plan || "FREE";
+      const isPro = String(clinicPlan).trim().toUpperCase() === "PRO";
+      const clinicBranding = clinicInfo?.branding || {};
+      
+      // Only return branding for PRO clinics
+      const branding = isPro ? {
+        clinicName: clinicBranding.title || clinicInfo?.name || "",
+        clinicLogoUrl: clinicBranding.logoUrl || clinicInfo?.logo_url || "",
+      } : {
+        clinicName: "",
+        clinicLogoUrl: "",
+      };
+
       const response = {
         ok: true,
         patientId: patient.patient_id,
@@ -1999,11 +3001,13 @@ app.get("/api/patient/me", async (req, res) => {
         phone: patient.phone || "",
         status: patient.status || "PENDING",
         clinicCode: decoded.clinicCode || null,
+        clinicPlan: clinicPlan,
+        branding: branding,
         createdAt: patient.created_at ? new Date(patient.created_at).getTime() : null,
       };
       
       console.log("[PATIENT ME] Response:", JSON.stringify(response, null, 2));
-      console.log("[PATIENT ME] Decoded clinicCode:", decoded.clinicCode);
+      console.log("[PATIENT ME] Decoded clinicCode:", decoded.clinicCode, "Plan:", clinicPlan, "IsPro:", isPro);
       res.json(response);
     } catch (jwtError) {
       return res.status(401).json({ ok: false, error: "invalid_token" });
@@ -2139,22 +3143,73 @@ app.post("/api/events", async (req, res) => {
 });
 
 /* ================= PATIENT MESSAGES (GET) ================= */
-// Hasta mesajlarını getir
+// Hasta mesajlarını getir - APPROVED kontrolü ile
 app.get("/api/patient/:patientId/messages", async (req, res) => {
   const patientId = String(req.params.patientId || "").trim();
   if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
   try {
+    // Check if admin or patient token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
+
+    let decoded;
+    let isAdmin = false;
+    let clinicId;
+
+    if (authToken) {
+      try {
+        decoded = jwt.verify(authToken, JWT_SECRET);
+        const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId || "").trim() !== "";
+        const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+        const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+        isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
+        clinicId = decoded.clinicId;
+      } catch (error) {
+        console.log("Messages GET - Token verification failed:", error.message);
+        // Token invalid, continue without auth (might be public endpoint)
+      }
+    } else {
+      console.log("Messages GET - No auth token provided");
+    }
+
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
-      .select("id")
+      .select("id, status, clinic_id")
       .eq("patient_id", patientId)
-      .single();
+      .maybeSingle();
 
     if (patientError || !patientData) {
       console.log("Messages GET - Patient not found:", patientError?.message);
       return res.json({ ok: true, messages: [] }); // Boş mesaj listesi döndür (404 yerine)
+    }
+
+    // 2. Token kontrolü - Patient için token zorunlu
+    if (!isAdmin && !decoded) {
+      console.log("Messages GET - No valid token for patient access");
+      return res.status(401).json({ ok: false, error: "unauthorized", message: "Authentication required" });
+    }
+
+    // 3. APPROVED kontrolü - Admin için bypass, patient için zorunlu
+    if (!isAdmin && patientData.status !== "APPROVED") {
+      return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
+    }
+
+    // 4. Admin ise clinic kontrolü yap
+    if (isAdmin && clinicId && patientData.clinic_id !== clinicId) {
+      return res.status(403).json({ ok: false, error: "access_denied", message: "Cannot access chat from different clinic" });
+    }
+
+    // 5. Patient ise token'daki patientId ile eşleşmeli
+    if (!isAdmin && decoded && decoded.patientId && decoded.patientId !== patientId) {
+      console.log("Messages GET - Patient ID mismatch:", { tokenPatientId: decoded.patientId, requestPatientId: patientId });
+      return res.status(403).json({ ok: false, error: "access_denied", message: "Cannot access other patient's chat" });
     }
 
     const patientUuid = patientData.id;
@@ -2490,10 +3545,10 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
 
     console.log(`[Messages POST] Patient ${patientId} sending message in clinic ${clinicId}`);
 
-    // 4. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
+    // 4. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini ve status'unu al
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
-      .select("id")
+      .select("id, status")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId) // Aynı clinic'ten olmalı
       .single();
@@ -2503,9 +3558,14 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
+    // 5. APPROVED kontrolü - Chat sadece APPROVED hastalar için
+    if (patientData.status !== "APPROVED") {
+      return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
+    }
+
     const patientUuid = patientData.id;
 
-    // 5. Mesaj oluştur
+    // 6. Mesaj oluştur
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const { data: newMessage, error: insertError } = await supabase
       .from("patient_messages")
@@ -2538,12 +3598,295 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
       },
     };
 
-    console.log("Messages POST - Success:", { patientId, messageId });
+    console.log("Messages POST - Success (Admin):", { patientId, messageId });
     res.json(response);
   } catch (error) {
-    console.error("Messages POST error:", error);
+    console.error("Messages POST error (Admin):", error);
     res.status(500).json({ ok: false, error: "message_send_exception", details: error.message });
   }
+});
+
+/* ================= CHAT FILE UPLOAD (POST) ================= */
+// Chat için dosya yükleme endpoint'i (Patient veya Admin)
+// POST /api/chat/upload
+app.post("/api/chat/upload", chatUpload.array("files", 5), async (req, res) => {
+  // Multer hatalarını yakala
+  if (req.fileFilterError) {
+    console.error("[Chat Upload] File filter error:", req.fileFilterError);
+    const errorMsg = req.fileFilterError.message || "";
+    if (errorMsg.includes("INVALID_FILE_TYPE")) {
+      return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: errorMsg });
+    }
+    return res.status(400).json({ ok: false, error: "file_validation_failed", message: errorMsg });
+  }
+
+  const patientId = String(req.body.patientId || "").trim();
+  if (!patientId) {
+    return res.status(400).json({ ok: false, error: "patient_id_required" });
+  }
+
+  try {
+    // 1. Auth token'ını doğrula (Patient veya Admin)
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const actorHeader = req.headers["x-actor"];
+    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+    const authToken = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
+
+    if (!authToken) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    let isAdmin = false;
+    let clinicId;
+    let tokenPatientId;
+
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+      const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId || "").trim() !== "";
+      const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+      const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+      isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
+      clinicId = decoded.clinicId;
+      tokenPatientId = decoded.patientId;
+    } catch (jwtError) {
+      console.error("[Chat Upload] JWT verification error:", jwtError);
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // 2. Patient kontrolü ve APPROVED kontrolü
+    const { data: patientData, error: patientError } = await supabase
+      .from("patients")
+      .select("id, status, clinic_id")
+      .eq("patient_id", patientId)
+      .maybeSingle();
+
+    if (patientError || !patientData) {
+      console.error("[Chat Upload] Patient not found:", patientError);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // 3. APPROVED kontrolü - Chat sadece APPROVED hastalar için
+    if (patientData.status !== "APPROVED") {
+      return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
+    }
+
+    // 4. Auth kontrolü
+    if (isAdmin) {
+      // Admin ise clinic kontrolü
+      if (patientData.clinic_id !== clinicId) {
+        return res.status(403).json({ ok: false, error: "access_denied", message: "Cannot upload files to chat from different clinic" });
+      }
+    } else {
+      // Patient ise patientId kontrolü
+      if (tokenPatientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "access_denied", message: "Cannot upload files to other patient's chat" });
+      }
+    }
+
+    // 5. Dosya kontrolü
+    const files = req.files || [];
+    if (files.length === 0) {
+      return res.status(400).json({ ok: false, error: "files_required", message: "At least one file is required" });
+    }
+
+    if (files.length > 5) {
+      return res.status(400).json({ ok: false, error: "too_many_files", message: "Maximum 5 files allowed per upload" });
+    }
+
+    const patientUuid = patientData.id;
+    const uploadedFiles = [];
+
+    // 6. Her dosyayı işle
+    for (const file of files) {
+      const fileExt = path.extname(file.originalname || '').toLowerCase();
+      const isImageUpload = req.body.isImage === "true" || req.body.isImage === true;
+      
+      // Görsel upload için özel kurallar
+      if (isImageUpload) {
+        // Görsel format kontrolleri
+        const allowedImageMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
+        const allowedImageExts = ['.jpg', '.jpeg', '.png', '.heic', '.heif'];
+        const forbiddenImageMimes = ['image/svg+xml', 'image/gif', 'image/bmp', 'image/tiff', 'image/tif', 'image/x-raw', 'image/raw'];
+        const forbiddenImageExts = ['.svg', '.gif', '.bmp', '.tiff', '.tif', '.raw', '.cr2', '.nef', '.orf', '.sr2'];
+        
+        // SVG kesinlikle engelle
+        if (file.mimetype === 'image/svg+xml' || fileExt === '.svg') {
+          return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: "SVG formatı desteklenmiyor. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB" });
+        }
+        
+        // Reddedilen formatları kontrol et
+        if (forbiddenImageMimes.includes(file.mimetype) || forbiddenImageExts.includes(fileExt)) {
+          return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: "Format desteklenmiyor. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB" });
+        }
+        
+        // Kabul edilen format kontrolü
+        if (!allowedImageMimes.includes(file.mimetype) || !allowedImageExts.includes(fileExt)) {
+          return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: "Format desteklenmiyor. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB" });
+        }
+        
+        // MIME type ve uzantı uyumu kontrolü
+        const mimeToExt = {
+          'image/jpeg': ['.jpg', '.jpeg'],
+          'image/jpg': ['.jpg', '.jpeg'],
+          'image/png': ['.png'],
+          'image/heic': ['.heic'],
+          'image/heif': ['.heif'],
+        };
+        
+        const expectedExts = mimeToExt[file.mimetype];
+        if (!expectedExts || !expectedExts.includes(fileExt)) {
+          return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: `Dosya uzantısı MIME tipiyle uyuşmuyor. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB` });
+        }
+        
+        // Dosya boyutu kontrolü (5MB max, 10MB üstü kesin reddet)
+        const maxSizeImage = 5 * 1024 * 1024; // 5MB
+        const hardLimit = 10 * 1024 * 1024; // 10MB
+        
+        if (file.size > hardLimit) {
+          return res.status(400).json({ ok: false, error: "FILE_TOO_LARGE", message: `Fotoğraf boyutu çok büyük: ${file.originalname}. Maksimum boyut: 5MB. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB` });
+        }
+        
+        if (file.size > maxSizeImage) {
+          return res.status(400).json({ ok: false, error: "FILE_TOO_LARGE", message: `Fotoğraf boyutu 5MB'dan küçük olmalıdır. Desteklenen formatlar: JPG, PNG, HEIC – Max 5MB` });
+        }
+        
+        // Görsel işleme burada yapılacak (resize, normalize, EXIF temizleme - sharp gerektirir)
+        // Şimdilik orijinal dosyayı kullanıyoruz, sharp eklendiğinde burada işlenecek
+        // TODO: Sharp eklendiğinde:
+        // 1. Resize (max uzun kenar 2000-2500px)
+        // 2. JPEG'e normalize et (quality 80-85%)
+        // 3. EXIF/konum bilgileri temizle
+        // file.buffer = processedImageBuffer; // İşlenmiş görsel buffer'ı kullan
+      }
+      
+      // Doküman upload için mevcut kontroller
+      const maxSizeDocument = 15 * 1024 * 1024; // 15MB
+      const isPDF = file.mimetype === "application/pdf";
+      const isDOCX = file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const isZIP = file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed";
+
+      if ((isPDF || isDOCX || isZIP) && file.size > maxSizeDocument) {
+        return res.status(400).json({ ok: false, error: "FILE_TOO_LARGE", message: `Document file too large: ${file.originalname}. Maximum size: 15MB` });
+      }
+
+      // Doküman uzantı kontrolü
+      const docMimeToExt = {
+        'application/pdf': ['.pdf'],
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+        'application/zip': ['.zip'],
+        'application/x-zip-compressed': ['.zip'],
+      };
+
+      const expectedDocExts = docMimeToExt[file.mimetype];
+      if (expectedDocExts && !expectedDocExts.includes(fileExt)) {
+        console.error(`[Chat Upload] MIME type/extension mismatch: ${file.mimetype} vs ${fileExt}`);
+        return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: `File extension does not match MIME type: ${fileExt} / ${file.mimetype}` });
+      }
+
+      // UUID-based filename oluştur
+      const fileId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const fileName = `${fileId}${fileExt}`;
+      const filePath = `chat-files/${clinicId}/${patientId}/${fileName}`;
+
+      // 7. Supabase Storage'a yükle (private bucket)
+      console.log(`[Chat Upload] Uploading file to Supabase Storage: ${filePath}`);
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error("[Chat Upload] Supabase storage error:", uploadError);
+        return res.status(500).json({ ok: false, error: "upload_failed", message: uploadError.message });
+      }
+
+      // 8. Signed URL oluştur (private file için)
+      const { data: urlData, error: urlError } = await supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .createSignedUrl(filePath, 31536000); // 1 year expiry
+
+      let fileUrl;
+      if (urlError) {
+        console.error("[Chat Upload] Signed URL creation error:", urlError);
+        // Fallback: public URL oluşturmayı dene
+        fileUrl = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${filePath}`;
+      } else {
+        fileUrl = urlData?.signedUrl || `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${filePath}`;
+      }
+
+      const fileType = isImageUpload ? "image" : "pdf";
+
+      // 9. Mesaj oluştur (dosya mesajı)
+      // Note: Database constraint may require 'text' for type field
+      // File type is stored in attachment.fileType
+      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const { data: newMessage, error: insertError } = await supabase
+        .from("patient_messages")
+        .insert({
+          patient_id: patientUuid,
+          message_id: messageId,
+          chat_id: patientId,
+          from_role: isAdmin ? "admin" : "patient",
+          text: null,
+          type: "text", // Database constraint requires 'text' - file type is stored in attachment.fileType
+          attachment: {
+            name: file.originalname,
+            size: file.size,
+            url: fileUrl,
+            mimeType: file.mimetype,
+            fileType: fileType,
+          },
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("[Chat Upload] Message insert error:", insertError);
+        return res.status(500).json({ ok: false, error: "message_send_failed", details: insertError.message });
+      }
+
+      uploadedFiles.push({
+        id: newMessage.message_id || newMessage.id,
+        name: file.originalname,
+        size: file.size,
+        url: fileUrl,
+        mimeType: file.mimetype,
+        fileType: fileType,
+        messageId: messageId,
+      });
+    }
+
+    console.log(`[Chat Upload] Success: ${uploadedFiles.length} file(s) uploaded for patient ${patientId}`);
+    res.json({ 
+      ok: true, 
+      files: uploadedFiles,
+      message: uploadedFiles.length === 1 
+        ? "File uploaded successfully" 
+        : `${uploadedFiles.length} files uploaded successfully`
+    });
+  } catch (error) {
+    console.error("[Chat Upload] Exception:", error);
+    res.status(500).json({ ok: false, error: "upload_exception", details: error.message });
+  }
+}, (err, req, res, next) => {
+  // Multer error handler middleware for chat upload
+  if (err) {
+    console.error("[Chat Upload] Multer error:", err);
+    if (err.message && err.message.includes("INVALID_FILE_TYPE")) {
+      return res.status(400).json({ ok: false, error: "INVALID_FILE_TYPE", message: err.message });
+    }
+    if (err.message && err.message.includes("FILE_TOO_LARGE")) {
+      return res.status(400).json({ ok: false, error: "FILE_TOO_LARGE", message: err.message });
+    }
+    return res.status(400).json({ ok: false, error: "upload_failed", message: err.message || "Upload failed" });
+  }
+  next();
 });
 
 /* ================= PATIENT MESSAGES (POST - Admin Reply) ================= */
@@ -2554,23 +3897,30 @@ app.post("/api/patient/:patientId/messages/admin", verifyAdminToken, async (req,
 
   const body = req.body || {};
   const text = String(body.text || "").trim();
+  const type = String(body.type || "text").trim();
+  const attachment = body.attachment || undefined;
   
-  if (!text) {
-    return res.status(400).json({ ok: false, error: "text_required" });
+  if (!text && !attachment) {
+    return res.status(400).json({ ok: false, error: "text_or_attachment_required" });
   }
 
   try {
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
-      .select("id")
+      .select("id, status")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId) // Aynı clinic'ten olmalı
-      .single();
+      .maybeSingle();
 
     if (patientError || !patientData) {
       console.error("Messages POST - Patient not found:", patientError);
       return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Admin için APPROVED kontrolü yap (admin bile olsa hasta APPROVED olmalı - chat sadece APPROVED için)
+    if (patientData.status !== "APPROVED") {
+      return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
     const patientUuid = patientData.id;
@@ -2584,8 +3934,9 @@ app.post("/api/patient/:patientId/messages/admin", verifyAdminToken, async (req,
         message_id: messageId,
         chat_id: patientId,
         from_role: "admin",
-        text: text,
-        type: "text",
+        text: text || null,
+        type: type || "text",
+        attachment: attachment || null,
       })
       .select()
       .single();
@@ -2600,8 +3951,9 @@ app.post("/api/patient/:patientId/messages/admin", verifyAdminToken, async (req,
       message: {
         id: newMessage.message_id || newMessage.id,
         from: "CLINIC",
-        text: newMessage.text,
-        type: newMessage.type,
+        text: newMessage.text || "",
+        type: newMessage.type || "text",
+        attachment: newMessage.attachment || undefined,
         createdAt: newMessage.created_at ? new Date(newMessage.created_at).getTime() : Date.now(),
       },
     };
@@ -2719,6 +4071,346 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
   } catch (error) {
     console.error("Patient Referrals GET error:", error);
     res.status(500).json({ ok: false, error: "referrals_fetch_exception", details: error.message });
+  }
+});
+
+/* ================= PATIENT HEALTH FORM ================= */
+// GET health form
+app.get("/api/patient/:patientId/health", async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    // Verify token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const token = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (jwtError) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const tokenPatientId = decoded.patientId;
+    const clinicCode = decoded.clinicCode;
+
+    if (tokenPatientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    // Get health form data
+    const { data: healthForm, error } = await supabase
+      .from("patient_health_forms")
+      .select("*")
+      .eq("patient_id", patientId)
+      .eq("clinic_code", clinicCode)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Health Form GET - Supabase error:", error);
+      return res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
+    }
+
+    if (!healthForm) {
+      return res.json({ ok: true, formData: null, isComplete: false });
+    }
+
+    res.json({ 
+      ok: true, 
+      formData: healthForm.form_data || {},
+      isComplete: healthForm.is_complete || false,
+      completedAt: healthForm.completed_at || null,
+      updatedAt: healthForm.updated_at || null
+    });
+  } catch (error) {
+    console.error("Health Form GET - Error:", error);
+    res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
+  }
+});
+
+// POST/PUT health form
+app.post("/api/patient/:patientId/health", async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    // Verify token
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const token = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (jwtError) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const tokenPatientId = decoded.patientId;
+    const clinicCode = decoded.clinicCode;
+
+    if (tokenPatientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    const formData = req.body.formData || {};
+    const isComplete = req.body.isComplete === true;
+
+    const now = Date.now();
+
+    // Check if form exists
+    const { data: existingForm, error: checkError } = await supabase
+      .from("patient_health_forms")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_code", clinicCode)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error("Health Form POST - Check error:", checkError);
+      return res.status(500).json({ ok: false, error: "health_form_save_failed", details: checkError.message });
+    }
+
+    const formRecord = {
+      patient_id: patientId,
+      clinic_code: clinicCode,
+      form_data: formData,
+      is_complete: isComplete,
+      updated_at: now,
+    };
+
+    if (isComplete && !existingForm) {
+      formRecord.completed_at = now;
+      formRecord.created_at = now;
+    } else if (isComplete && existingForm && !existingForm.completed_at) {
+      formRecord.completed_at = now;
+    }
+
+    let result;
+    if (existingForm) {
+      // Update existing form
+      const { data, error } = await supabase
+        .from("patient_health_forms")
+        .update(formRecord)
+        .eq("id", existingForm.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Health Form POST - Update error:", error);
+        return res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+      }
+      result = data;
+    } else {
+      // Create new form
+      formRecord.created_at = now;
+      const { data, error } = await supabase
+        .from("patient_health_forms")
+        .insert(formRecord)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Health Form POST - Insert error:", error);
+        return res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+      }
+      result = data;
+    }
+
+    res.json({ 
+      ok: true, 
+      formData: result.form_data || {},
+      isComplete: result.is_complete || false,
+      completedAt: result.completed_at || null,
+      updatedAt: result.updated_at || null
+    });
+  } catch (error) {
+    console.error("Health Form POST - Error:", error);
+    res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+  }
+});
+
+app.put("/api/patient/:patientId/health", async (req, res) => {
+  // Same as POST
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    const authHeader = req.headers.authorization;
+    const tokenHeader = req.headers["x-patient-token"];
+    const token = authHeader?.startsWith("Bearer ") 
+      ? authHeader.substring(7) 
+      : tokenHeader;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (jwtError) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const tokenPatientId = decoded.patientId;
+    const clinicCode = decoded.clinicCode;
+
+    if (tokenPatientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    const formData = req.body.formData || {};
+    const isComplete = req.body.isComplete === true;
+
+    const now = Date.now();
+
+    const { data: existingForm, error: checkError } = await supabase
+      .from("patient_health_forms")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_code", clinicCode)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error("Health Form PUT - Check error:", checkError);
+      return res.status(500).json({ ok: false, error: "health_form_save_failed", details: checkError.message });
+    }
+
+    const formRecord = {
+      patient_id: patientId,
+      clinic_code: clinicCode,
+      form_data: formData,
+      is_complete: isComplete,
+      updated_at: now,
+    };
+
+    if (isComplete && !existingForm) {
+      formRecord.completed_at = now;
+      formRecord.created_at = now;
+    } else if (isComplete && existingForm && !existingForm.completed_at) {
+      formRecord.completed_at = now;
+    }
+
+    let result;
+    if (existingForm) {
+      const { data, error } = await supabase
+        .from("patient_health_forms")
+        .update(formRecord)
+        .eq("id", existingForm.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Health Form PUT - Update error:", error);
+        return res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+      }
+      result = data;
+    } else {
+      formRecord.created_at = now;
+      const { data, error } = await supabase
+        .from("patient_health_forms")
+        .insert(formRecord)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Health Form PUT - Insert error:", error);
+        return res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+      }
+      result = data;
+    }
+
+    res.json({ 
+      ok: true, 
+      formData: result.form_data || {},
+      isComplete: result.is_complete || false,
+      completedAt: result.completed_at || null,
+      updatedAt: result.updated_at || null
+    });
+  } catch (error) {
+    console.error("Health Form PUT - Error:", error);
+    res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+  }
+});
+
+/* ================= ADMIN HEALTH FORM ================= */
+// GET health form (admin)
+app.get("/api/admin/patients/:patientId/health", verifyAdminToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    const clinicId = req.clinicId;
+    const clinicCode = req.clinicCode;
+
+    // Verify patient belongs to clinic
+    const { data: patientData, error: patientError } = await supabase
+      .from("patients")
+      .select("id, patient_id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .maybeSingle();
+
+    if (patientError) {
+      console.error("Admin Health Form GET - Patient query error:", patientError);
+      return res.status(500).json({ ok: false, error: "database_error", details: patientError.message });
+    }
+
+    if (!patientData) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get health form data
+    const { data: healthForm, error } = await supabase
+      .from("patient_health_forms")
+      .select("*")
+      .eq("patient_id", patientId)
+      .eq("clinic_code", clinicCode)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Admin Health Form GET - Supabase error:", error);
+      return res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
+    }
+
+    if (!healthForm) {
+      return res.json({ ok: true, formData: null, isComplete: false });
+    }
+
+    res.json({ 
+      ok: true, 
+      formData: healthForm.form_data || {},
+      isComplete: healthForm.is_complete || false,
+      completedAt: healthForm.completed_at || null,
+      updatedAt: healthForm.updated_at || null,
+      createdAt: healthForm.created_at || null
+    });
+  } catch (error) {
+    console.error("Admin Health Form GET - Error:", error);
+    res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
   }
 });
 
@@ -3036,8 +4728,79 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, port: String(PORT) });
 });
 
-/* ================= HAIR TRANSPLANT MODULE ================= */
+/* ================= TEST CLINIC CREATE ================= */
+// Test için basit clinic oluşturma endpoint'i
+app.post("/api/test/create-clinic", async (req, res) => {
+  try {
+    const { clinicCode = "TEST01", clinicName = "Test Clinic" } = req.body || {};
+    
+    const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
+    
+    // Mevcut clinic var mı kontrol et
+    const { data: existing } = await supabase
+      .from("clinics")
+      .select("id, clinic_code, name")
+      .eq("clinic_code", trimmedClinicCode)
+      .maybeSingle();
+    
+    if (existing) {
+      return res.json({ 
+        ok: true, 
+        message: "Clinic already exists", 
+        clinicCode: existing.clinic_code,
+        clinicName: existing.name,
+        clinicId: existing.id 
+      });
+    }
+    
+    // Test clinic oluştur
+    const passwordHash = await bcrypt.hash("Test123!", 10);
+    
+    const { data: newClinic, error } = await supabase
+      .from("clinics")
+      .insert({
+        clinic_code: trimmedClinicCode,
+        name: String(clinicName).trim(),
+        email: `test_${trimmedClinicCode.toLowerCase()}@example.com`,
+        password_hash: passwordHash,
+        clinic_type: "DENTAL",
+        enabled_modules: ["UPLOADS", "TRAVEL", "REFERRALS", "CHAT", "PATIENTS", "DENTAL_TREATMENTS", "DENTAL_TEETH_CHART"],
+        plan: "FREE",
+        max_patients: 10,
+        address: "",
+        phone: "",
+        website: "",
+        logo_url: "",
+        google_maps_url: "",
+        default_inviter_discount_percent: null,
+        default_invited_discount_percent: null,
+        branding: { showPoweredBy: true }
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error("[TEST CREATE CLINIC] Error:", error);
+      return res.status(500).json({ ok: false, error: error.message, details: error });
+    }
+    
+    res.json({ 
+      ok: true, 
+      message: "Test clinic created successfully",
+      clinicCode: newClinic.clinic_code,
+      clinicId: newClinic.id,
+      clinicName: newClinic.name
+    });
+  } catch (error) {
+    console.error("[TEST CREATE CLINIC] Exception:", error);
+    res.status(500).json({ ok: false, error: error?.message || "Unknown error" });
+  }
+});
 
+/* ================= HAIR TRANSPLANT MODULE (DISABLED - DENTAL ONLY) ================= */
+// Hair transplant endpoints are disabled - only DENTAL clinics are supported
+// All HAIR-related endpoints and functions are commented out below
+/*
 // Zone definitions (Clinicator Hair Mapping Standard)
 const HAIR_ZONES = {
   RECIPIENT: ["F2", "F3", "F4", "F5", "F6"],
@@ -3059,8 +4822,6 @@ const ZONE_LABELS = {
 // Default graft density options (grafts/cm²)
 const DEFAULT_GRAFT_DENSITIES = [20, 25, 30, 35, 40];
 
-/* ================= HAIR ZONES (GET) ================= */
-// Get all zones for a patient
 app.get("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
   try {
     const patientId = req.params.patientId;
@@ -3105,7 +4866,7 @@ app.get("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
   }
 });
 
-/* ================= HAIR ZONES (POST/PUT) ================= */
+// ================= HAIR ZONES (POST/PUT) =================
 // Create or update a zone
 app.post("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
   try {
@@ -3230,7 +4991,7 @@ app.post("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
   }
 });
 
-/* ================= HAIR GRAFTS SUMMARY ================= */
+// ================= HAIR GRAFTS SUMMARY =================
 // Get graft planning summary for a patient
 app.get("/api/hair/summary/:patientId", verifyAdminToken, async (req, res) => {
   try {
@@ -3282,7 +5043,7 @@ app.get("/api/hair/summary/:patientId", verifyAdminToken, async (req, res) => {
   }
 });
 
-/* ================= HAIR DONOR ZONES ================= */
+// ================= HAIR DONOR ZONES =================
 // Get donor zone information
 app.get("/api/hair/donor/:patientId", verifyAdminToken, async (req, res) => {
   try {
@@ -3381,6 +5142,8 @@ async function updateHairGraftsSummary(patientUuid) {
     console.error("[updateHairGraftsSummary] Error:", error);
   }
 }
+*/
+/* ================= END HAIR TRANSPLANT MODULE (DISABLED) ================= */
 
 /* ================= START ================= */
 app.listen(PORT, "0.0.0.0", () => {
