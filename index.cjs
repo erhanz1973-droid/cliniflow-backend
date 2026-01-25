@@ -2792,7 +2792,7 @@ app.post("/api/register", async (req, res) => {
           inviter_patient_name: inviterPatient.name || "",
           invited_patient_id: newPatient.id, // UUID
           invited_patient_name: newPatient.name || "",
-          status: "PENDING", // Explicitly set to PENDING
+          status: "pending", // Default pending (DB expects lowercase)
         };
         
         console.log(`[REGISTER] Creating referral record:`, {
@@ -2800,7 +2800,7 @@ app.post("/api/register", async (req, res) => {
           clinicId: clinic.id,
           inviterPatientId: inviterPatient.patient_id,
           invitedPatientId: newPatient.patient_id,
-          status: "PENDING",
+          status: "pending",
         });
         
         const { data: createdReferral, error: referralError } = await supabase
@@ -4618,7 +4618,7 @@ app.patch("/api/admin/referrals/:referralId/approve", verifyAdminToken, async (r
 
     // Referral'ı güncelle
     const updateData = {
-      status: "APPROVED",
+      status: "approved",
       approved_at: new Date().toISOString(),
     };
 
@@ -4683,11 +4683,11 @@ app.patch("/api/admin/referrals/:referralId/reject", verifyAdminToken, async (re
       return res.status(404).json({ ok: false, error: "referral_not_found" });
     }
 
-    // Referral'ı REJECTED olarak güncelle
+    // Referral'ı rejected olarak güncelle
     const { data: updatedReferral, error: updateError } = await supabase
       .from("referrals")
       .update({
-        status: "REJECTED",
+        status: "rejected",
         approved_at: null, // Approve date'i temizle
       })
       .eq("referral_id", referralId)
