@@ -193,6 +193,47 @@ function getMissingColumnFromError(error) {
   return m?.[1] || null;
 }
 
+function getMissingColumnFromErrorForTable(tableName, error) {
+  const table = String(tableName || "").trim();
+  const msg = String(error?.message || "");
+  if (!table) return null;
+
+  // Pattern 1: column <table>.<col> does not exist
+  const re1 = new RegExp(`column\\s+${table}\\.([a-zA-Z0-9_]+)\\s+does\\s+not\\s+exist`, "i");
+  const m1 = msg.match(re1);
+  if (m1?.[1]) return m1[1];
+
+  // Pattern 2: Could not find the 'col' column of '<table>' in the schema cache
+  // (PostgREST / Supabase schema cache error style)
+  const re2 = new RegExp(`Could not find the '([^']+)' column of '${table}'`, "i");
+  const m2 = msg.match(re2);
+  if (m2?.[1]) return m2[1];
+
+  return null;
+}
+
+async function insertWithColumnPruning(tableName, payload) {
+  const table = String(tableName || "").trim();
+  let current = { ...(payload || {}) };
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { data, error } = await supabase.from(table).insert(current).select().single();
+    if (!error) return { data, error: null };
+
+    lastError = error;
+    if (!isMissingColumnError(error)) return { data: null, error };
+
+    const missing = getMissingColumnFromErrorForTable(table, error);
+    if (!missing || !(missing in current)) return { data: null, error };
+
+    console.warn(`[${table}] Missing column on insert, pruning:`, missing);
+    delete current[missing];
+  }
+
+  return { data: null, error: lastError || new Error("insert_failed") };
+}
+
 async function insertReferralWithColumnPruning(payload) {
   let current = { ...(payload || {}) };
   let lastError = null;
@@ -1726,11 +1767,7 @@ app.post("/api/admin/register", async (req, res) => {
       password_hash: "***",
     });
     
-    const { data: newClinic, error } = await supabase
-      .from("clinics")
-      .insert(insertData)
-      .select()
-      .single();
+    const { data: newClinic, error } = await insertWithColumnPruning("clinics", insertData);
 
     if (error) {
       console.error("[REGISTER] Supabase insert error:", error);
