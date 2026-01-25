@@ -2071,6 +2071,11 @@ app.get("/api/admin/clinic", verifyAdminToken, async (req, res) => {
   }
 });
 
+/* ================= ADMIN EVENTS (GET) ================= */
+app.get("/api/admin/events", verifyAdminToken, (req, res) => {
+  res.json({ ok: true, events: [] });
+});
+
 /* ================= ADMIN CLINIC (PUT) ================= */
 app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
   try {
