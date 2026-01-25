@@ -4433,23 +4433,56 @@ app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
       if (raw === "CANCELLED") return "REJECTED";
       return raw;
     };
+
+    const isMissingClinicCodeColumn = (error) =>
+      String(error?.code || "") === "42703" &&
+      String(error?.message || "").toLowerCase().includes("clinic_code");
+
+    const fetchReferralsByClinic = async () => {
+      const { data: byId, error: byIdError } = await supabase
+        .from("referrals")
+        .select("*")
+        .eq("clinic_id", req.clinicId)
+        .order("created_at", { ascending: false });
+
+      if (byIdError) {
+        return { data: null, error: byIdError, source: "clinic_id" };
+      }
+
+      if (Array.isArray(byId) && byId.length > 0) {
+        return { data: byId, error: null, source: "clinic_id" };
+      }
+
+      if (!req.clinicCode) {
+        return { data: byId || [], error: null, source: "clinic_id" };
+      }
+
+      const { data: byCode, error: byCodeError } = await supabase
+        .from("referrals")
+        .select("*")
+        .eq("clinic_code", req.clinicCode)
+        .order("created_at", { ascending: false });
+
+      if (byCodeError) {
+        if (isMissingClinicCodeColumn(byCodeError)) {
+          console.warn("[ADMIN REFERRALS] clinic_code column missing; using clinic_id only");
+          return { data: byId || [], error: null, source: "clinic_id" };
+        }
+        return { data: null, error: byCodeError, source: "clinic_code" };
+      }
+
+      return { data: byCode || [], error: null, source: "clinic_code" };
+    };
     
     // Önce tüm referral'ları çek (debug için)
-    let baseAllQuery = supabase.from("referrals").select("*");
-    if (req.clinicId && req.clinicCode) {
-      baseAllQuery = baseAllQuery.or(`clinic_id.eq.${req.clinicId},clinic_code.eq.${req.clinicCode}`);
-    } else if (req.clinicId) {
-      baseAllQuery = baseAllQuery.eq("clinic_id", req.clinicId);
-    } else if (req.clinicCode) {
-      baseAllQuery = baseAllQuery.eq("clinic_code", req.clinicCode);
-    }
-
-    const { data: allReferrals, error: allError } = await baseAllQuery.order("created_at", { ascending: false });
+    const { data: allReferrals, error: allError, source } = await fetchReferralsByClinic();
     
     if (allError) {
       console.error("[ADMIN REFERRALS] Supabase error (all):", allError);
+      return res.status(500).json({ ok: false, error: "referrals_fetch_failed", details: allError.message });
     } else {
       console.log(`[ADMIN REFERRALS] Total referrals in DB: ${allReferrals?.length || 0}`);
+      console.log(`[ADMIN REFERRALS] Source: ${source}`);
       if (allReferrals && allReferrals.length > 0) {
       console.log(`[ADMIN REFERRALS] Status breakdown:`, {
         PENDING: allReferrals.filter(r => normalizeReferralStatus(r.status) === "PENDING").length,
@@ -4469,26 +4502,10 @@ app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
       }
     }
     
-    let query = supabase.from("referrals").select("*");
-    if (req.clinicId && req.clinicCode) {
-      query = query.or(`clinic_id.eq.${req.clinicId},clinic_code.eq.${req.clinicCode}`);
-    } else if (req.clinicId) {
-      query = query.eq("clinic_id", req.clinicId);
-    } else if (req.clinicCode) {
-      query = query.eq("clinic_code", req.clinicCode);
-    }
-
-    const { data: referrals, error } = await query.order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("[ADMIN REFERRALS] Supabase error:", error);
-      return res.status(500).json({ ok: false, error: "referrals_fetch_failed", details: error.message });
-    }
-    
-    let filteredReferrals = referrals || [];
+    let filteredReferrals = allReferrals || [];
     if (status && ["PENDING", "APPROVED", "REJECTED"].includes(status)) {
-      filteredReferrals = (referrals || []).filter(ref => normalizeReferralStatus(ref.status) === status);
-      console.log(`[ADMIN REFERRALS] Status filter ${status}: ${referrals?.length || 0} total, ${filteredReferrals.length} after filter`);
+      filteredReferrals = (allReferrals || []).filter(ref => normalizeReferralStatus(ref.status) === status);
+      console.log(`[ADMIN REFERRALS] Status filter ${status}: ${allReferrals?.length || 0} total, ${filteredReferrals.length} after filter`);
     }
 
     filteredReferrals.forEach(ref => {
