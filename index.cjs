@@ -17,6 +17,9 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 
 const app = express();
+// Prevent 304 Not Modified responses for dynamic APIs (Render/CF caching + ETag).
+// We explicitly disable ETag generation globally; admin endpoints are always dynamic.
+app.set("etag", false);
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -4422,6 +4425,15 @@ app.get("/api/admin/patients/:patientId/health", verifyAdminToken, async (req, r
 /* ================= ADMIN REFERRALS (GET) ================= */
 app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
   try {
+    // This endpoint is dynamic and must never be cached (prevents 304/empty stale lists in admin).
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store",
+    });
+    res.removeHeader("ETag");
+
     const status = String(req.query.status || "").trim().toUpperCase();
     console.log(`[ADMIN REFERRALS] Fetching referrals for clinic_id: ${req.clinicId}, clinic_code: ${req.clinicCode}, status filter: ${status || "ALL"}`);
 
