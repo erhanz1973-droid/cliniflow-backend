@@ -178,6 +178,42 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 console.log("✅ Supabase client initialized");
 
+/* ================= SUPABASE HELPERS ================= */
+function isMissingColumnError(error) {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "");
+  // PostgREST missing column codes commonly show as 42703
+  return code === "42703" || msg.toLowerCase().includes("does not exist");
+}
+
+function getMissingColumnFromError(error) {
+  const msg = String(error?.message || "");
+  // Example: 'column referrals.invited_patient_name does not exist'
+  const m = msg.match(/column\s+referrals\.([a-zA-Z0-9_]+)\s+does\s+not\s+exist/i);
+  return m?.[1] || null;
+}
+
+async function insertReferralWithColumnPruning(payload) {
+  let current = { ...(payload || {}) };
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const { data, error } = await supabase.from("referrals").insert(current).select().single();
+    if (!error) return { data, error: null };
+
+    lastError = error;
+    if (!isMissingColumnError(error)) return { data: null, error };
+
+    const missing = getMissingColumnFromError(error);
+    if (!missing || !(missing in current)) return { data: null, error };
+
+    console.warn("[REFERRALS] Missing column on insert, pruning:", missing);
+    delete current[missing];
+  }
+
+  return { data: null, error: lastError || new Error("referral_insert_failed") };
+}
+
 /* ================= JWT SECRET ================= */
 const JWT_SECRET = process.env.JWT_SECRET || "cliniflow-secret-key-change-in-production";
 
@@ -2870,24 +2906,34 @@ app.post("/api/register", async (req, res) => {
           status: "pending",
         });
         
-        const { data: createdReferral, error: referralError } = await supabase
-          .from("referrals")
-          .insert(referralData)
-          .select()
-          .single();
-        
+        const { data: createdReferral, error: referralError } = await insertReferralWithColumnPruning(referralData);
+
         if (referralError) {
           console.error("[REGISTER] Failed to create referral record:", referralError);
           console.error("[REGISTER] Referral data:", referralData);
-          // Referral kaydı oluşturulamadı ama hasta kaydı başarılı, devam et
-        } else {
-          console.log(`[REGISTER] Referral record created successfully:`, {
-            referralId: createdReferral.referral_id || createdReferral.id,
-            status: createdReferral.status || "NULL",
-            inviter: inviterPatient.patient_id,
-            invited: newPatient.patient_id,
+
+          // Referral kaydı kritik: rollback patient (referralCode ile kayıt yapılan akışta sessizce geçmeyelim)
+          try {
+            await supabase.from("patients").delete().eq("id", newPatient.id);
+            console.log("[REGISTER] Patient rolled back due to referral insert failure:", newPatient.patient_id);
+          } catch (rbErr) {
+            console.error("[REGISTER] Failed to rollback patient after referral insert failure:", rbErr?.message || rbErr);
+          }
+
+          return res.status(500).json({
+            ok: false,
+            error: "referral_create_failed",
+            message: "Referral could not be created. Please try again.",
+            details: referralError.message,
           });
         }
+
+        console.log(`[REGISTER] Referral record created successfully:`, {
+          referralId: createdReferral.referral_id || createdReferral.id,
+          status: createdReferral.status || "NULL",
+          inviter: inviterPatient.patient_id,
+          invited: newPatient.patient_id,
+        });
       } else {
         // Referral code geçersiz - hasta kaydını iptal et
         console.error(`[REGISTER] Invalid referral code: ${trimmedReferralCode}`);
