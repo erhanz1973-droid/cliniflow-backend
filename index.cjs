@@ -4423,26 +4423,40 @@ app.get("/api/admin/patients/:patientId/health", verifyAdminToken, async (req, r
 app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
   try {
     const status = String(req.query.status || "").trim().toUpperCase();
-    console.log(`[ADMIN REFERRALS] Fetching referrals for clinic_id: ${req.clinicId}, status filter: ${status || "ALL"}`);
+    console.log(`[ADMIN REFERRALS] Fetching referrals for clinic_id: ${req.clinicId}, clinic_code: ${req.clinicCode}, status filter: ${status || "ALL"}`);
+
+    const normalizeReferralStatus = (value) => {
+      const raw = String(value || "").trim().toUpperCase();
+      if (!raw) return "PENDING";
+      if (["INVITED", "REGISTERED", "CREATED", "SENT"].includes(raw)) return "PENDING";
+      if (raw === "COMPLETED") return "APPROVED";
+      if (raw === "CANCELLED") return "REJECTED";
+      return raw;
+    };
     
     // Önce tüm referral'ları çek (debug için)
-    const { data: allReferrals, error: allError } = await supabase
-      .from("referrals")
-      .select("*")
-      .eq("clinic_id", req.clinicId)
-      .order("created_at", { ascending: false });
+    let baseAllQuery = supabase.from("referrals").select("*");
+    if (req.clinicId && req.clinicCode) {
+      baseAllQuery = baseAllQuery.or(`clinic_id.eq.${req.clinicId},clinic_code.eq.${req.clinicCode}`);
+    } else if (req.clinicId) {
+      baseAllQuery = baseAllQuery.eq("clinic_id", req.clinicId);
+    } else if (req.clinicCode) {
+      baseAllQuery = baseAllQuery.eq("clinic_code", req.clinicCode);
+    }
+
+    const { data: allReferrals, error: allError } = await baseAllQuery.order("created_at", { ascending: false });
     
     if (allError) {
       console.error("[ADMIN REFERRALS] Supabase error (all):", allError);
     } else {
       console.log(`[ADMIN REFERRALS] Total referrals in DB: ${allReferrals?.length || 0}`);
       if (allReferrals && allReferrals.length > 0) {
-        console.log(`[ADMIN REFERRALS] Status breakdown:`, {
-          PENDING: allReferrals.filter(r => (r.status || "").toUpperCase() === "PENDING").length,
-          APPROVED: allReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED").length,
-          REJECTED: allReferrals.filter(r => (r.status || "").toUpperCase() === "REJECTED").length,
-          NULL: allReferrals.filter(r => !r.status).length,
-        });
+      console.log(`[ADMIN REFERRALS] Status breakdown:`, {
+        PENDING: allReferrals.filter(r => normalizeReferralStatus(r.status) === "PENDING").length,
+        APPROVED: allReferrals.filter(r => normalizeReferralStatus(r.status) === "APPROVED").length,
+        REJECTED: allReferrals.filter(r => normalizeReferralStatus(r.status) === "REJECTED").length,
+        NULL: allReferrals.filter(r => !r.status).length,
+      });
         // İlk birkaç referral'ın detaylarını logla
         allReferrals.slice(0, 3).forEach((r, i) => {
           console.log(`[ADMIN REFERRALS] Referral ${i + 1}:`, {
@@ -4455,21 +4469,13 @@ app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
       }
     }
     
-    let query = supabase
-      .from("referrals")
-      .select("*")
-      .eq("clinic_id", req.clinicId);
-
-    // Status filter uygula
-    if (status && ["PENDING", "APPROVED", "REJECTED"].includes(status)) {
-      if (status === "PENDING") {
-        // PENDING için: status = 'PENDING' VEYA status IS NULL
-        // Önce tüm referral'ları çek, sonra JavaScript'te filtrele
-        // Çünkü Supabase'de OR query karmaşık olabilir
-        console.log(`[ADMIN REFERRALS] PENDING filter: Will filter in JavaScript after fetch`);
-      } else {
-        query = query.eq("status", status);
-      }
+    let query = supabase.from("referrals").select("*");
+    if (req.clinicId && req.clinicCode) {
+      query = query.or(`clinic_id.eq.${req.clinicId},clinic_code.eq.${req.clinicCode}`);
+    } else if (req.clinicId) {
+      query = query.eq("clinic_id", req.clinicId);
+    } else if (req.clinicCode) {
+      query = query.eq("clinic_code", req.clinicCode);
     }
 
     const { data: referrals, error } = await query.order("created_at", { ascending: false });
@@ -4479,50 +4485,14 @@ app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
       return res.status(500).json({ ok: false, error: "referrals_fetch_failed", details: error.message });
     }
     
-    // PENDING filter için JavaScript'te filtrele
     let filteredReferrals = referrals || [];
-    if (status === "PENDING") {
-      console.log(`[ADMIN REFERRALS] Before PENDING filter: ${referrals?.length || 0} referrals`);
-      if (referrals && referrals.length > 0) {
-        console.log(`[ADMIN REFERRALS] Referral statuses:`, referrals.map(r => ({
-          id: r.referral_id || r.id,
-          status: r.status || "NULL",
-          statusType: typeof r.status,
-        })));
-      }
-      
-      filteredReferrals = (referrals || []).filter(ref => {
-        const refStatus = ref.status ? String(ref.status).toUpperCase().trim() : "";
-        const isPending = refStatus === "PENDING" || refStatus === "" || !ref.status || ref.status === null || ref.status === undefined;
-        if (isPending) {
-          console.log(`[ADMIN REFERRALS] Found PENDING referral:`, {
-            id: ref.referral_id || ref.id,
-            status: ref.status || "NULL",
-            isPending: true,
-          });
-        }
-        return isPending;
-      });
-      
-      console.log(`[ADMIN REFERRALS] PENDING filter: ${referrals?.length || 0} total, ${filteredReferrals.length} after filter`);
-      if (filteredReferrals.length > 0) {
-        console.log(`[ADMIN REFERRALS] PENDING referrals:`, filteredReferrals.map(r => ({
-          id: r.referral_id || r.id,
-          status: r.status || "NULL",
-          inviter: r.inviter_patient_name || r.inviter_patient_id,
-          invited: r.invited_patient_name || r.invited_patient_id,
-        })));
-      } else {
-        console.log(`[ADMIN REFERRALS] No PENDING referrals found after filter`);
-      }
+    if (status && ["PENDING", "APPROVED", "REJECTED"].includes(status)) {
+      filteredReferrals = (referrals || []).filter(ref => normalizeReferralStatus(ref.status) === status);
+      console.log(`[ADMIN REFERRALS] Status filter ${status}: ${referrals?.length || 0} total, ${filteredReferrals.length} after filter`);
     }
-    
-    // Status NULL olan referral'ları PENDING olarak işaretle
+
     filteredReferrals.forEach(ref => {
-      if (!ref.status || ref.status === null || ref.status === undefined) {
-        ref.status = "PENDING";
-        console.log(`[ADMIN REFERRALS] Set NULL status to PENDING for referral:`, ref.referral_id || ref.id);
-      }
+      ref.status = normalizeReferralStatus(ref.status);
     });
     
     console.log(`[ADMIN REFERRALS] Found ${filteredReferrals?.length || 0} referral(s) after filter for clinic_id: ${req.clinicId}`);
