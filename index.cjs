@@ -2351,7 +2351,7 @@ app.get("/api/admin/patients", verifyAdminToken, async (req, res) => {
 /* ================= ADMIN PATIENTS (POST - Create Patient) ================= */
 app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
   try {
-    const { name, phone } = req.body || {};
+    const { name, phone, referralCode: inviterReferralCodeRaw } = req.body || {};
 
     if (!phone || !String(phone).trim()) {
       return res.status(400).json({ ok: false, error: "phone_required", message: "Phone number is required" });
@@ -2486,6 +2486,70 @@ app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
     }
 
     console.log(`[ADMIN CREATE PATIENT] Patient created: ${newPatient.patient_id} for clinic ${clinic.clinic_code}`);
+
+    // Optional: create referral record if admin provided a referral code (inviter patientId).
+    // This makes new "pending" referrals show up in admin referrals list.
+    const inviterReferralCode = String(inviterReferralCodeRaw || "").trim();
+    if (inviterReferralCode) {
+      const code = inviterReferralCode.toUpperCase();
+      console.log(`[ADMIN CREATE PATIENT] Referral code provided: ${code}. Looking up inviter in clinic ${clinic.clinic_code}`);
+
+      const { data: inviterPatient, error: inviterErr } = await supabase
+        .from("patients")
+        .select("id, patient_id, name, clinic_id")
+        .eq("patient_id", code)
+        .eq("clinic_id", clinic.id)
+        .maybeSingle();
+
+      if (inviterErr || !inviterPatient) {
+        console.error("[ADMIN CREATE PATIENT] Invalid referral code (inviter not found):", { code, inviterErr });
+        // Rollback created patient to avoid silently creating without intended referral link
+        try {
+          await supabase.from("patients").delete().eq("id", newPatient.id);
+          console.log("[ADMIN CREATE PATIENT] Rolled back patient due to invalid referral code:", newPatient.patient_id);
+        } catch (rbErr) {
+          console.error("[ADMIN CREATE PATIENT] Rollback failed:", rbErr?.message || rbErr);
+        }
+        return res.status(400).json({
+          ok: false,
+          error: "invalid_referral_code",
+          message: `Referral code "${code}" is invalid for this clinic.`,
+        });
+      }
+
+      const referralId = `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const referralData = {
+        referral_id: referralId,
+        clinic_id: clinic.id,
+        inviter_patient_id: inviterPatient.id,
+        inviter_patient_name: inviterPatient.name || "",
+        invited_patient_id: newPatient.id,
+        invited_patient_name: newPatient.name || "",
+        status: "pending",
+      };
+
+      const { error: refErr } = await supabase
+        .from("referrals")
+        .insert(referralData);
+
+      if (refErr) {
+        console.error("[ADMIN CREATE PATIENT] Failed to create referral:", refErr);
+        // Rollback patient to keep data consistent
+        try {
+          await supabase.from("patients").delete().eq("id", newPatient.id);
+          console.log("[ADMIN CREATE PATIENT] Rolled back patient due to referral insert failure:", newPatient.patient_id);
+        } catch (rbErr) {
+          console.error("[ADMIN CREATE PATIENT] Rollback failed:", rbErr?.message || rbErr);
+        }
+        return res.status(500).json({
+          ok: false,
+          error: "referral_create_failed",
+          details: refErr.message,
+        });
+      }
+
+      console.log(`[ADMIN CREATE PATIENT] Referral created: ${referralId} (pending)`);
+    }
 
     res.json({
       ok: true,
