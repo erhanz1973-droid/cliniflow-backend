@@ -5146,10 +5146,10 @@ async function updateHairGraftsSummary(patientUuid) {
 /* ================= END HAIR TRANSPLANT MODULE (DISABLED) ================= */
 
 /* ================= START ================= */
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, () => {
   ensureDirs();
-  console.log(`✅ Server running: http://127.0.0.1:${PORT}`);
-  console.log(`🔧 Admin:        http://127.0.0.1:${PORT}/admin.html`);
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🔧 Admin:        /admin.html`);
   console.log(`📁 Data dir:     ${DATA_DIR}`);
   console.log(`💡 Next.js Admin Travel: http://localhost:3000/admin/patients/[patientId]/travel`);
 });
