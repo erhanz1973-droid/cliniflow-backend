@@ -4766,7 +4766,7 @@ app.patch("/api/admin/referrals/:referralId/approve", verifyAdminToken, async (r
     const { data: referral, error: findError } = await supabase
       .from("referrals")
       .select("*")
-      .eq("referral_id", referralId)
+      .eq("id", referralId)
       .eq("clinic_id", req.clinicId)
       .single();
 
@@ -4792,7 +4792,7 @@ app.patch("/api/admin/referrals/:referralId/approve", verifyAdminToken, async (r
     const { data: updatedReferral, error: updateError } = await supabase
       .from("referrals")
       .update(updateData)
-      .eq("referral_id", referralId)
+      .eq("id", referralId)
       .eq("clinic_id", req.clinicId)
       .select()
       .single();
@@ -4833,7 +4833,7 @@ app.patch("/api/admin/referrals/:referralId/reject", verifyAdminToken, async (re
     const { data: referral, error: findError } = await supabase
       .from("referrals")
       .select("*")
-      .eq("referral_id", referralId)
+      .eq("id", referralId)
       .eq("clinic_id", req.clinicId)
       .single();
 
@@ -4849,7 +4849,7 @@ app.patch("/api/admin/referrals/:referralId/reject", verifyAdminToken, async (re
         status: "rejected",
         approved_at: null, // Approve date'i temizle
       })
-      .eq("referral_id", referralId)
+      .eq("id", referralId)
       .eq("clinic_id", req.clinicId)
       .select()
       .single();
