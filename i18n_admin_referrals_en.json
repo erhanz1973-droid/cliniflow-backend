@@ -1,0 +1,61 @@
+{
+  "referrals": {
+    "title": "Referrals",
+    "subtitle": "Manage patient referral requests and approve discounts",
+    
+    "inviteCode": {
+      "title": "Invite Code",
+      "helper": "Share this code with your friend. They should use it during registration."
+    },
+    
+    "copy": "Copy",
+    "share": "Share",
+    
+    "shareMessage": "Join Clinifly and get a discount!\nUse my invite code and we'll both earn a discount.\nInvite code: {{code}}",
+    
+    "howItWorks": {
+      "title": "How it works?",
+      "steps": [
+        "Share your invite code",
+        "Your friend registers using the code", 
+        "The clinic approves the request",
+        "You both earn a discount"
+      ]
+    },
+    
+    "note": "Discount rates are determined by the clinic.",
+    
+    "status": {
+      "title": "Referral Status",
+      "pending": "Pending",
+      "approved": "Approved", 
+      "rejected": "Rejected",
+      "pendingDesc": "Waiting for clinic approval",
+      "approvedDesc": "Discount earned",
+      "rejectedDesc": "Referral was not approved"
+    },
+    
+    "inviter": "Inviter",
+    "invited": "Invited",
+    "createdAt": "Created At",
+    "inviterDiscount": "Inviter Discount",
+    "invitedDiscount": "Invited Discount",
+    "discount": "Discount",
+    
+    "approve": "Approve",
+    "reject": "Reject",
+    
+    "defaultDiscounts": "Default discounts: Inviter %{inviter}%, Invited %{invited}%",
+    "copySuccess": "Invite code copied to clipboard!",
+    "copyError": "Failed to copy invite code",
+    "shareFailed": "Failed to share invite code",
+    
+    "noReferrals": "No referrals found",
+    "loading": "Loading referrals...",
+    
+    "approveSuccess": "Referral approved successfully!",
+    "approveError": "Failed to approve referral",
+    "rejectSuccess": "Referral rejected successfully!", 
+    "rejectError": "Failed to reject referral"
+  }
+}

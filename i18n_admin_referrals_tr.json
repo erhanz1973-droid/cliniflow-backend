@@ -1,0 +1,61 @@
+{
+  "referrals": {
+    "title": "Referral'lar",
+    "subtitle": "Hasta referral isteklerini yönet ve indirimleri onayla",
+    
+    "inviteCode": {
+      "title": "Davet Kodu",
+      "helper": "Bu kodu arkadaşınla paylaş. Kayıt olurken kullansın."
+    },
+    
+    "copy": "Kopyala",
+    "share": "Paylaş",
+    
+    "shareMessage": "Clinifly'de indirim kazanalım!\nBu davet kodunu kullan, ikimiz de indirim kazanalım.\nDavet kodum: {{code}}",
+    
+    "howItWorks": {
+      "title": "Nasıl çalışır?",
+      "steps": [
+        "Davet kodunu arkadaşınla paylaş",
+        "Arkadaşın bu kodla kayıt olur",
+        "Klinik başvuruyu onaylar",
+        "İkiniz de indirim kazanırsınız"
+      ]
+    },
+    
+    "note": "İndirim oranları kliniğe göre değişiklik gösterebilir.",
+    
+    "status": {
+      "title": "Referral Durumu",
+      "pending": "Beklemede",
+      "approved": "Onaylandı",
+      "rejected": "Reddedildi", 
+      "pendingDesc": "Klinik onayı bekleniyor",
+      "approvedDesc": "İndirim kazanıldı",
+      "rejectedDesc": "Referral onaylanmadı"
+    },
+    
+    "inviter": "Davet Eden",
+    "invited": "Davet Edilen",
+    "createdAt": "Oluşturulma",
+    "inviterDiscount": "Davet Eden İndirim",
+    "invitedDiscount": "Davet Edilen İndirim", 
+    "discount": "İndirim",
+    
+    "approve": "Onayla",
+    "reject": "Reddet",
+    
+    "defaultDiscounts": "Varsayılan indirimler: Davet Eden %{inviter}%, Davet Edilen %{invited}%",
+    "copySuccess": "Davet kodu panoya kopyalandı!",
+    "copyError": "Davet kodu kopyalanamadı",
+    "shareFailed": "Davet kodu paylaşılamadı",
+    
+    "noReferrals": "Referral bulunamadı",
+    "loading": "Referral'lar yükleniyor...",
+    
+    "approveSuccess": "Referral başarıyla onaylandı!",
+    "approveError": "Referral onaylanamadı",
+    "rejectSuccess": "Referral başarıyla reddedildi!",
+    "rejectError": "Referral reddedilemedi"
+  }
+}

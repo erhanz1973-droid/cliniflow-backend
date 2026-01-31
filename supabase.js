@@ -163,16 +163,19 @@ async function createClinic(clinicData) {
 async function updateClinic(clinicCode, updates) {
   if (!isSupabaseAvailable()) return null;
   try {
+    // 🔒 UPDATE sırasında unique alanları koru
+    const { clinic_code, ...safeUpdates } = updates;
+    
     console.log(`[SUPABASE] Updating clinic "${clinicCode}" with data:`, {
-      name: updates.name,
-      address: updates.address || "empty",
-      phone: updates.phone || "empty",
-      logo_url: updates.logo_url || "empty",
-      website: updates.website || "empty",
+      name: safeUpdates.name,
+      address: safeUpdates.address || "empty",
+      phone: safeUpdates.phone || "empty",
+      logo_url: safeUpdates.logo_url || "empty",
+      website: safeUpdates.website || "empty",
     });
     const { data, error } = await supabase
       .from("clinics")
-      .update(updates)
+      .update(safeUpdates)
       .eq("clinic_code", clinicCode.toUpperCase())
       .select()
       .single();
