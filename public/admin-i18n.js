@@ -228,8 +228,8 @@
       
       // Register (admin-register.html)
       register: {
-        title: "Yeni Klinik Kaydı",
-        subtitle: "Yeni bir klinik hesabı oluşturun",
+        title: "Create Your Clinic",
+        subtitle: "Get started in minutes — it's free.",
         clinicCode: "Clinic Code",
         clinicCodeRequired: "*",
         clinicCodePlaceholder: "e.g. MOON, CLINIC01, ISTANBUL",
@@ -663,8 +663,8 @@
       
       // Register (admin-register.html)
       register: {
-        title: "New Clinic Registration",
-        subtitle: "Create a new clinic account",
+        title: "Create Your Clinic",
+        subtitle: "Get started in minutes — it's free.",
         clinicCode: "Clinic Code",
         clinicCodeRequired: "*",
         clinicCodePlaceholder: "e.g. MOON, CLINIC01, ISTANBUL",
