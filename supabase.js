@@ -435,6 +435,43 @@ async function getPatientsByClinicCode(clinicCode) {
   }
 }
 
+async function getPatientsByClinic(clinicId) {
+  if (!isSupabaseAvailable()) return [];
+  try {
+    const { data, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("clinic_id", clinicId);
+    if (error) {
+      console.error("[SUPABASE] Error getting patients by clinic ID:", error);
+      return [];
+    }
+    
+    // Add name field mapping for frontend compatibility
+    return (data || []).map(patient => {
+      // If full_name exists, use it. Otherwise construct from first_name + last_name
+      let fullName = patient.full_name;
+      let name = patient.name;
+      
+      if (!fullName && patient.first_name && patient.last_name) {
+        fullName = `${patient.first_name} ${patient.last_name}`;
+      }
+      if (!name && fullName) {
+        name = fullName;
+      }
+      
+      return {
+        ...patient,
+        fullName: fullName || patient.patient_id,
+        name: name || patient.patient_id
+      };
+    });
+  } catch (error) {
+    console.error("[SUPABASE] Exception getting patients by clinic ID:", error);
+    return [];
+  }
+}
+
 async function createPatient(patientData) {
   if (!isSupabaseAvailable()) {
     console.log("[SUPABASE] createPatient: Supabase not available");
@@ -610,6 +647,7 @@ module.exports = {
   upsertClinic,
   getPatientById,
   getPatientsByClinicCode,
+  getPatientsByClinic,
   createPatient,
   updatePatient,
   getPatientToken,
