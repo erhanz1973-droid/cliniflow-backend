@@ -2642,10 +2642,13 @@ app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
 /* ================= PATIENT REGISTER ================= */
 app.post("/api/register", async (req, res) => {
   try {
-    const { name, fullName, phone, clinicCode, referralCode: inviterReferralCode } = req.body || {};
+    const { name, fullName, phone, clinicCode, referralCode: inviterReferralCode, userType } = req.body || {};
 
     // fullName veya name kabul et (backward compatibility için)
     const patientName = fullName || name;
+    
+    // Determine role based on userType
+    const role = userType === "doctor" ? "DOCTOR" : "PATIENT";
     
     if (!clinicCode || !String(clinicCode).trim()) {
       return res.status(400).json({ ok: false, error: "clinic_code_required" });
@@ -2829,6 +2832,7 @@ app.post("/api/register", async (req, res) => {
         name: String(patientName).trim(), // fullName veya name
         phone: String(phone).trim(),
         status: "PENDING", // Default status
+        role: role, // Add role information
       })
       .select()
       .single();
@@ -2844,6 +2848,7 @@ app.post("/api/register", async (req, res) => {
           name: String(patientName).trim(), // fullName veya name
           phone: String(phone).trim(),
           status: "PENDING", // Default status
+          role: role, // Add role information
         })
         .select()
         .single();
@@ -3002,7 +3007,8 @@ app.post("/api/register", async (req, res) => {
         patientId: newPatient.patient_id, 
         clinicId: clinic.id,
         clinicCode: trimmedClinicCode,
-        role: "patient"
+        role: role, // Add role to JWT
+        roleType: "PATIENT" // For backward compatibility
       },
       JWT_SECRET,
       { expiresIn: "30d" }
@@ -3021,6 +3027,7 @@ app.post("/api/register", async (req, res) => {
       name: finalName, // Name from request (patientName)
       phone: String(newPatient.phone || phone || "").trim(),
       status: newPatient.status || "PENDING",
+      role: role, // Add role to response
     });
   } catch (error) {
     console.error("[REGISTER] Unexpected error:", error);
@@ -3108,7 +3115,7 @@ app.get("/api/patient/me", async (req, res) => {
       // patientId token'da TEXT formatında (örn: "p1"), Supabase'de patient_id kolonunda
       const { data: patient, error } = await supabase
         .from("patients")
-        .select("*")
+        .select("*, role")
         .eq("patient_id", String(patientId))
         .eq("clinic_id", clinicId)
         .single();
@@ -3155,6 +3162,7 @@ app.get("/api/patient/me", async (req, res) => {
         name: patient.name || "",
         phone: patient.phone || "",
         status: patient.status || "PENDING",
+        role: patient.role || "PATIENT", // Add role information
         clinicCode: decoded.clinicCode || null,
         clinicPlan: clinicPlan,
         branding: branding,
@@ -3169,6 +3177,966 @@ app.get("/api/patient/me", async (req, res) => {
     }
   } catch (error) {
     console.error("Patient me error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR AUTH MIDDLEWARE ================= */
+function verifyDoctorToken(req) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+  if (!token) {
+    return { ok: false, code: "missing_token" };
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Check if user has DOCTOR role
+    if (decoded.role !== "DOCTOR") {
+      return { ok: false, code: "insufficient_permissions" };
+    }
+
+    return { 
+      ok: true, 
+      decoded: {
+        patientId: decoded.patientId,
+        clinicId: decoded.clinicId,
+        clinicCode: decoded.clinicCode,
+        role: decoded.role
+      }
+    };
+  } catch (error) {
+    return { ok: false, code: "invalid_token" };
+  }
+}
+
+/* ================= PATIENT AUTH MIDDLEWARE ================= */
+function verifyPatientToken(req) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+  if (!token) {
+    return { ok: false, code: "missing_token" };
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Check if user has PATIENT role
+    if (decoded.role !== "PATIENT") {
+      return { ok: false, code: "insufficient_permissions" };
+    }
+
+    return { 
+      ok: true, 
+      decoded: {
+        patientId: decoded.patientId,
+        clinicId: decoded.clinicId,
+        clinicCode: decoded.clinicCode,
+        role: decoded.role
+      }
+    };
+  } catch (error) {
+    return { ok: false, code: "invalid_token" };
+  }
+}
+
+/* ================= ROLE-BASED ACCESS CONTROL ================= */
+function checkDoctorSelfAccess(doctorId, targetPatientId) {
+  // Doctor cannot access their own treatment data as a patient
+  return doctorId === targetPatientId;
+}
+
+/* ================= DOCTOR DASHBOARD STATS ================= */
+app.get("/api/doctor/dashboard/stats", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+
+    // Get today's appointments count
+    const today = new Date().toISOString().split('T')[0];
+    const { count: todayAppointments } = await supabase
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .eq("date", today)
+      .neq("status", "cancelled");
+
+    // Get pending procedures count
+    const { count: pendingProcedures } = await supabase
+      .from("treatment_plans")
+      .select("*", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .eq("status", "planned")
+      .lt("planned_date", today);
+
+    // Get waiting patients count
+    const { count: waitingPatients } = await supabase
+      .from("patients")
+      .select("*", { count: "exact", head: true })
+      .eq("clinic_id", clinicId)
+      .eq("status", "PENDING");
+
+    // Get total patients count
+    const { count: totalPatients } = await supabase
+      .from("patients")
+      .select("*", { count: "exact", head: true })
+      .eq("clinic_id", clinicId);
+
+    res.json({
+      ok: true,
+      stats: {
+        todayAppointments: todayAppointments || 0,
+        pendingProcedures: pendingProcedures || 0,
+        waitingPatients: waitingPatients || 0,
+        totalPatients: totalPatients || 0,
+      }
+    });
+  } catch (error) {
+    console.error("[DOCTOR DASHBOARD STATS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR DASHBOARD APPOINTMENTS ================= */
+app.get("/api/doctor/dashboard/appointments", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get today's appointments with patient info
+    const { data: appointments, error } = await supabase
+      .from("appointments")
+      .select(`
+        *,
+        patients!inner(
+          patient_id,
+          name
+        )
+      `)
+      .eq("clinic_id", clinicId)
+      .eq("date", today)
+      .neq("status", "cancelled")
+      .order("time", { ascending: true });
+
+    if (error) {
+      console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedAppointments = appointments.map(apt => ({
+      id: apt.id,
+      patientName: apt.patients.name,
+      time: apt.time,
+      procedure: apt.procedure || "Genel Kontrol",
+      status: apt.status,
+    }));
+
+    res.json({
+      ok: true,
+      appointments: formattedAppointments
+    });
+  } catch (error) {
+    console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR PATIENTS ================= */
+app.get("/api/doctor/patients", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+
+    // Get all patients for this clinic
+    const { data: patients, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        patient_id,
+        name,
+        phone,
+        email,
+        status,
+        created_at
+      `)
+      .eq("clinic_id", clinicId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR PATIENTS] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedPatients = patients.map(patient => ({
+      id: patient.id,
+      patientId: patient.patient_id,
+      name: patient.name,
+      phone: patient.phone,
+      email: patient.email,
+      status: patient.status,
+      createdAt: new Date(patient.created_at).getTime(),
+    }));
+
+    res.json({
+      ok: true,
+      patients: formattedPatients
+    });
+  } catch (error) {
+    console.error("[DOCTOR PATIENTS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR TREATMENT PLANS ================= */
+app.get("/api/doctor/treatment-plans", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+
+    // Get all treatment plans with patient info
+    const { data: treatmentPlans, error } = await supabase
+      .from("treatment_plans")
+      .select(`
+        *,
+        patients!inner(
+          patient_id,
+          name
+        )
+      `)
+      .eq("clinic_id", clinicId)
+      .order("planned_date", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR TREATMENT PLANS] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedPlans = treatmentPlans.map(plan => ({
+      id: plan.id,
+      patientId: plan.patients.patient_id,
+      patientName: plan.patients.name,
+      toothNumber: plan.tooth_number,
+      diagnosis: plan.diagnosis,
+      procedure: plan.procedure,
+      price: plan.price,
+      status: plan.status,
+      plannedDate: plan.planned_date,
+      completedDate: plan.completed_date,
+      notes: plan.notes,
+    }));
+
+    res.json({
+      ok: true,
+      treatmentPlans: formattedPlans
+    });
+  } catch (error) {
+    console.error("[DOCTOR TREATMENT PLANS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR CREATE TREATMENT PLAN ================= */
+app.post("/api/doctor/treatment-plans", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+    const { patientId, toothNumber, diagnosis, procedure, price, plannedDate, notes } = req.body || {};
+
+    // Validation
+    if (!patientId || !toothNumber || !diagnosis || !procedure || !price || !plannedDate) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Get patient info to verify they belong to this clinic
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Create treatment plan
+    const { data: treatmentPlan, error: treatmentError } = await supabase
+      .from("treatment_plans")
+      .insert({
+        clinic_id: clinicId,
+        patient_id: patient.id,
+        tooth_number: toothNumber,
+        diagnosis: diagnosis,
+        procedure: procedure,
+        price: price,
+        planned_date: plannedDate,
+        notes: notes,
+        status: "planned",
+      })
+      .select()
+      .single();
+
+    if (treatmentError) {
+      console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", treatmentError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      treatmentPlan: treatmentPlan
+    });
+  } catch (error) {
+    console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR TREATMENT ENDPOINTS ================= */
+
+// Get patient info for doctor
+app.get("/api/doctor/patient/:patientId", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId: doctorId } = v.decoded;
+    const { patientId } = req.params;
+
+    // Doctor cannot access their own treatment data
+    if (checkDoctorSelfAccess(doctorId, patientId)) {
+      return res.status(403).json({ ok: false, error: "self_access_denied" });
+    }
+
+    // Get patient info
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        patient_id,
+        name,
+        status,
+        created_at,
+        last_visit
+      `)
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (error || !patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      patient: {
+        id: patient.id,
+        patientId: patient.patient_id,
+        name: patient.name,
+        status: patient.status === "APPROVED" ? "Active" : "Pending",
+        lastVisit: patient.last_visit,
+      }
+    });
+  } catch (error) {
+    console.error("[DOCTOR PATIENT INFO] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Get patient teeth data
+app.get("/api/doctor/treatment/:patientId/teeth", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId: doctorId } = v.decoded;
+    const { patientId } = req.params;
+
+    // Doctor cannot access their own treatment data
+    if (checkDoctorSelfAccess(doctorId, patientId)) {
+      return res.status(403).json({ ok: false, error: "self_access_denied" });
+    }
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get teeth data
+    const { data: teeth, error } = await supabase
+      .from("teeth")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("fdi_number");
+
+    if (error) {
+      console.error("[DOCTOR TEETH] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedTeeth = teeth.map(tooth => ({
+      fdiNumber: tooth.fdi_number,
+      status: tooth.status,
+      diagnosis: tooth.diagnosis || [],
+      procedures: tooth.procedures || [],
+      notes: tooth.notes,
+      plannedDate: tooth.planned_date,
+      price: tooth.price,
+    }));
+
+    res.json({
+      ok: true,
+      teeth: formattedTeeth
+    });
+  } catch (error) {
+    console.error("[DOCTOR TEETH] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Get treatment records
+app.get("/api/doctor/treatment/:patientId/records", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+    const { patientId } = req.params;
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get treatment records
+    const { data: records, error } = await supabase
+      .from("treatment_records")
+      .select(`
+        *,
+        users!inner(
+          name
+        )
+      `)
+      .eq("patient_id", patient.id)
+      .order("date", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR RECORDS] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedRecords = records.map(record => ({
+      id: record.id,
+      date: record.date,
+      tooth: record.tooth_number,
+      procedure: record.procedure,
+      status: record.status,
+      doctorName: record.users.name,
+    }));
+
+    res.json({
+      ok: true,
+      records: formattedRecords
+    });
+  } catch (error) {
+    console.error("[DOCTOR RECORDS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Get patient photos
+app.get("/api/doctor/treatment/:patientId/photos", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+    const { patientId } = req.params;
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get photos
+    const { data: photos, error } = await supabase
+      .from("patient_photos")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("date", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR PHOTOS] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const formattedPhotos = photos.map(photo => ({
+      id: photo.id,
+      url: photo.url,
+      type: photo.type,
+      date: photo.date,
+      notes: photo.notes,
+      quality: photo.quality,
+      linkedTooth: photo.linked_tooth,
+    }));
+
+    res.json({
+      ok: true,
+      photos: formattedPhotos
+    });
+  } catch (error) {
+    console.error("[DOCTOR PHOTOS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Complete procedure
+app.put("/api/doctor/treatment/procedure/:procedureId/complete", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId } = v.decoded;
+    const { procedureId } = req.params;
+
+    // Get procedure info to verify access
+    const { data: procedure, error: procError } = await supabase
+      .from("teeth")
+      .select(`
+        *,
+        patients!inner(
+          clinic_id
+        )
+      `)
+      .eq("id", procedureId)
+      .single();
+
+    if (procError || !procedure) {
+      return res.status(404).json({ ok: false, error: "procedure_not_found" });
+    }
+
+    if (procedure.patients.clinic_id !== clinicId) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    // Update procedure status to completed
+    const { error: updateError } = await supabase
+      .from("teeth")
+      .update({
+        status: "COMPLETED",
+        completed_date: new Date().toISOString(),
+      })
+      .eq("id", procedureId);
+
+    if (updateError) {
+      console.error("[COMPLETE PROCEDURE] Error:", updateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    // Add treatment record
+    const { error: recordError } = await supabase
+      .from("treatment_records")
+      .insert({
+        patient_id: procedure.patient_id,
+        tooth_number: procedure.fdi_number,
+        procedure: procedure.procedures?.[0]?.type || "İşlem",
+        status: "COMPLETED",
+        date: new Date().toISOString(),
+        doctor_id: v.decoded.patientId, // Using patientId as doctor ID
+      });
+
+    if (recordError) {
+      console.error("[COMPLETE PROCEDURE] Record error:", recordError);
+      // Don't fail the request if record creation fails
+    }
+
+    res.json({
+      ok: true,
+      message: "Procedure completed successfully"
+    });
+  } catch (error) {
+    console.error("[COMPLETE PROCEDURE] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ICD-10 DIAGNOSIS CRUD (DOCTOR ONLY) ================= */
+
+// Add diagnosis to tooth
+app.post("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId: doctorId } = v.decoded;
+    const { patientId, toothNumber } = req.params;
+    const { diagnosisCode, description } = req.body || {};
+
+    // Doctor cannot access their own treatment data
+    if (checkDoctorSelfAccess(doctorId, patientId)) {
+      return res.status(403).json({ ok: false, error: "self_access_denied" });
+    }
+
+    // Validation
+    if (!diagnosisCode || !description) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get or create tooth record
+    let { data: tooth, error: toothError } = await supabase
+      .from("teeth")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .eq("fdi_number", toothNumber)
+      .single();
+
+    if (toothError && toothError.code === 'PGRST116') {
+      // Tooth doesn't exist, create it
+      const { data: newTooth, error: createError } = await supabase
+        .from("teeth")
+        .insert({
+          patient_id: patient.id,
+          fdi_number: toothNumber,
+          status: "PLANNED",
+          diagnosis: [{ code: diagnosisCode, description }],
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error("[ADD DIAGNOSIS] Error:", createError);
+        return res.status(500).json({ ok: false, error: "internal_error" });
+      }
+
+      return res.json({
+        ok: true,
+        message: "Diagnosis added successfully",
+        tooth: newTooth
+      });
+    }
+
+    if (toothError) {
+      console.error("[ADD DIAGNOSIS] Error:", toothError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    // Add diagnosis to existing tooth
+    const currentDiagnosis = tooth.diagnosis || [];
+    const updatedDiagnosis = [...currentDiagnosis, { code: diagnosisCode, description }];
+
+    const { data: updatedTooth, error: updateError } = await supabase
+      .from("teeth")
+      .update({
+        diagnosis: updatedDiagnosis,
+        status: "PLANNED", // Update status if diagnosis added
+      })
+      .eq("id", tooth.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[ADD DIAGNOSIS] Error:", updateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      message: "Diagnosis added successfully",
+      tooth: updatedTooth
+    });
+  } catch (error) {
+    console.error("[ADD DIAGNOSIS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Update diagnosis
+app.put("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosisIndex", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId: doctorId } = v.decoded;
+    const { patientId, toothNumber, diagnosisIndex } = req.params;
+    const { diagnosisCode, description } = req.body || {};
+
+    // Doctor cannot access their own treatment data
+    if (checkDoctorSelfAccess(doctorId, patientId)) {
+      return res.status(403).json({ ok: false, error: "self_access_denied" });
+    }
+
+    // Validation
+    if (!diagnosisCode || !description) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get tooth record
+    const { data: tooth, error: toothError } = await supabase
+      .from("teeth")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .eq("fdi_number", toothNumber)
+      .single();
+
+    if (toothError || !tooth) {
+      return res.status(404).json({ ok: false, error: "tooth_not_found" });
+    }
+
+    const currentDiagnosis = tooth.diagnosis || [];
+    const index = parseInt(diagnosisIndex);
+
+    if (index < 0 || index >= currentDiagnosis.length) {
+      return res.status(400).json({ ok: false, error: "invalid_diagnosis_index" });
+    }
+
+    // Update diagnosis
+    currentDiagnosis[index] = { code: diagnosisCode, description };
+
+    const { data: updatedTooth, error: updateError } = await supabase
+      .from("teeth")
+      .update({ diagnosis: currentDiagnosis })
+      .eq("id", tooth.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[UPDATE DIAGNOSIS] Error:", updateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      message: "Diagnosis updated successfully",
+      tooth: updatedTooth
+    });
+  } catch (error) {
+    console.error("[UPDATE DIAGNOSIS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Delete diagnosis
+app.delete("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosisIndex", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId: doctorId } = v.decoded;
+    const { patientId, toothNumber, diagnosisIndex } = req.params;
+
+    // Doctor cannot access their own treatment data
+    if (checkDoctorSelfAccess(doctorId, patientId)) {
+      return res.status(403).json({ ok: false, error: "self_access_denied" });
+    }
+
+    // Get patient info first to verify access
+    const { data: patient } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Get tooth record
+    const { data: tooth, error: toothError } = await supabase
+      .from("teeth")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .eq("fdi_number", toothNumber)
+      .single();
+
+    if (toothError || !tooth) {
+      return res.status(404).json({ ok: false, error: "tooth_not_found" });
+    }
+
+    const currentDiagnosis = tooth.diagnosis || [];
+    const index = parseInt(diagnosisIndex);
+
+    if (index < 0 || index >= currentDiagnosis.length) {
+      return res.status(400).json({ ok: false, error: "invalid_diagnosis_index" });
+    }
+
+    // Remove diagnosis
+    currentDiagnosis.splice(index, 1);
+
+    const { data: updatedTooth, error: updateError } = await supabase
+      .from("teeth")
+      .update({ diagnosis: currentDiagnosis })
+      .eq("id", tooth.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[DELETE DIAGNOSIS] Error:", updateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      message: "Diagnosis deleted successfully",
+      tooth: updatedTooth
+    });
+  } catch (error) {
+    console.error("[DELETE DIAGNOSIS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= UPDATE PATIENT ROLE ================= */
+app.put("/api/patient/role", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const { patientId, clinicId } = decoded;
+    const { newRole } = req.body || {};
+
+    // Validate role
+    if (!newRole || !["PATIENT", "DOCTOR", "ADMIN"].includes(newRole)) {
+      return res.status(400).json({ ok: false, error: "invalid_role" });
+    }
+
+    // Update patient role
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .update({ role: newRole })
+      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[UPDATE ROLE] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Create new token with updated role
+    const updatedToken = jwt.sign(
+      { 
+        patientId: patient.patient_id, 
+        clinicId: clinicId,
+        clinicCode: patient.clinic_code || "",
+        role: newRole,
+        roleType: newRole
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    res.json({
+      ok: true,
+      message: "Role updated successfully",
+      patientId: patient.patient_id,
+      name: patient.name,
+      role: newRole,
+      status: patient.status,
+      token: updatedToken,
+    });
+  } catch (error) {
+    console.error("[UPDATE ROLE] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
