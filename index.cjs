@@ -4141,6 +4141,453 @@ app.put("/api/patient/role", async (req, res) => {
   }
 });
 
+/* ================= DOCTOR REGISTRATION ================= */
+app.post("/api/register/doctor", async (req, res) => {
+  try {
+    const {
+      clinicCode,
+      phone,
+      patientName,
+      email,
+      userType = "DOCTOR", // Force to DOCTOR
+      inviterReferralCode,
+    } = req.body || {};
+
+    console.log("[DOCTOR REGISTER] Request received:", {
+      clinicCode,
+      phone,
+      patientName,
+      email,
+      userType,
+      inviterReferralCode,
+    });
+
+    // Validation
+    if (!clinicCode || !phone || !patientName) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Check clinic
+    const { data: clinic, error: clinicError } = await supabase
+      .from("clinics")
+      .select("*")
+      .eq("clinic_code", clinicCode.trim())
+      .single();
+
+    if (clinicError || !clinic) {
+      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
+    }
+
+    // Check clinic limits
+    const { data: existingPatients, error: countError } = await supabase
+      .from("patients")
+      .select("patient_id")
+      .eq("clinic_id", clinic.id);
+
+    if (countError) {
+      console.error("[DOCTOR REGISTER] Count error:", countError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const patientCount = existingPatients?.length || 0;
+    const maxPatients = clinic.max_patients || 10;
+
+    if (patientCount >= maxPatients) {
+      return res.status(400).json({ ok: false, error: "clinic_full" });
+    }
+
+    // Generate patient ID
+    const patient_id = generatePatientIdFromName(patientName);
+    const referral_code = generateReferralCode();
+
+    // Create doctor with PENDING status
+    const newPatient = {
+      patient_id,
+      name: patientName,
+      phone: phone.trim(),
+      email: email?.trim() || null,
+      clinic_id: clinic.id,
+      clinic_code: clinicCode.trim(),
+      referral_code,
+      status: "PENDING", // Doctors start as PENDING
+      role: "DOCTOR", // Explicitly DOCTOR
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: insertedPatient, error: insertError } = await supabase
+      .from("patients")
+      .insert(newPatient)
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("[DOCTOR REGISTER] Insert error:", insertError);
+      return res.status(500).json({ ok: false, error: "registration_failed" });
+    }
+
+    // Handle referrals
+    if (inviterReferralCode) {
+      try {
+        const { data: referrer } = await supabase
+          .from("patients")
+          .select("patient_id")
+          .eq("referral_code", inviterReferralCode)
+          .single();
+
+        if (referrer) {
+          await supabase.from("referrals").insert({
+            referrer_id: referrer.patient_id,
+            referred_id: patient_id,
+            referral_code: inviterReferralCode,
+            status: "pending",
+          });
+        }
+      } catch (referralError) {
+        console.error("[DOCTOR REGISTER] Referral error:", referralError);
+      }
+    }
+
+    // Create JWT token for doctor
+    const doctorToken = jwt.sign(
+      { 
+        patientId: patient_id, 
+        clinicId: clinic.id,
+        clinicCode: clinicCode.trim(),
+        role: "DOCTOR",
+        roleType: "DOCTOR"
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    console.log("[DOCTOR REGISTER] Doctor registered successfully:", {
+      patient_id,
+      name: patientName,
+      role: "DOCTOR",
+      status: "PENDING"
+    });
+
+    res.json({
+      ok: true,
+      message: "Doctor registration successful. Awaiting admin approval.",
+      patientId: patient_id,
+      referralCode: referral_code,
+      name: patientName,
+      phone: phone,
+      email: email,
+      status: "PENDING",
+      role: "DOCTOR",
+      token: doctorToken,
+    });
+  } catch (error) {
+    console.error("[DOCTOR REGISTER] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= PATIENT REGISTRATION ================= */
+app.post("/api/register/patient", async (req, res) => {
+  try {
+    const {
+      clinicCode,
+      phone,
+      patientName,
+      email,
+      userType = "PATIENT", // Force to PATIENT
+      inviterReferralCode,
+    } = req.body || {};
+
+    console.log("[PATIENT REGISTER] Request received:", {
+      clinicCode,
+      phone,
+      patientName,
+      email,
+      userType,
+      inviterReferralCode,
+    });
+
+    // Validation
+    if (!clinicCode || !phone || !patientName) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Check clinic
+    const { data: clinic, error: clinicError } = await supabase
+      .from("clinics")
+      .select("*")
+      .eq("clinic_code", clinicCode.trim())
+      .single();
+
+    if (clinicError || !clinic) {
+      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
+    }
+
+    // Check clinic limits
+    const { data: existingPatients, error: countError } = await supabase
+      .from("patients")
+      .select("patient_id")
+      .eq("clinic_id", clinic.id);
+
+    if (countError) {
+      console.error("[PATIENT REGISTER] Count error:", countError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const patientCount = existingPatients?.length || 0;
+    const maxPatients = clinic.max_patients || 10;
+
+    if (patientCount >= maxPatients) {
+      return res.status(400).json({ ok: false, error: "clinic_full" });
+    }
+
+    // Generate patient ID
+    const patient_id = generatePatientIdFromName(patientName);
+    const referral_code = generateReferralCode();
+
+    // Create patient with ACTIVE status
+    const newPatient = {
+      patient_id,
+      name: patientName,
+      phone: phone.trim(),
+      email: email?.trim() || null,
+      clinic_id: clinic.id,
+      clinic_code: clinicCode.trim(),
+      referral_code,
+      status: "ACTIVE", // Patients are immediately ACTIVE
+      role: "PATIENT", // Explicitly PATIENT
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: insertedPatient, error: insertError } = await supabase
+      .from("patients")
+      .insert(newPatient)
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("[PATIENT REGISTER] Insert error:", insertError);
+      return res.status(500).json({ ok: false, error: "registration_failed" });
+    }
+
+    // Handle referrals
+    if (inviterReferralCode) {
+      try {
+        const { data: referrer } = await supabase
+          .from("patients")
+          .select("patient_id")
+          .eq("referral_code", inviterReferralCode)
+          .single();
+
+        if (referrer) {
+          await supabase.from("referrals").insert({
+            referrer_id: referrer.patient_id,
+            referred_id: patient_id,
+            referral_code: inviterReferralCode,
+            status: "pending",
+          });
+        }
+      } catch (referralError) {
+        console.error("[PATIENT REGISTER] Referral error:", referralError);
+      }
+    }
+
+    // Create JWT token for patient
+    const patientToken = jwt.sign(
+      { 
+        patientId: patient_id, 
+        clinicId: clinic.id,
+        clinicCode: clinicCode.trim(),
+        role: "PATIENT",
+        roleType: "PATIENT"
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    console.log("[PATIENT REGISTER] Patient registered successfully:", {
+      patient_id,
+      name: patientName,
+      role: "PATIENT",
+      status: "ACTIVE"
+    });
+
+    res.json({
+      ok: true,
+      message: "Patient registration successful.",
+      patientId: patient_id,
+      referralCode: referral_code,
+      name: patientName,
+      phone: phone,
+      email: email,
+      status: "ACTIVE",
+      role: "PATIENT",
+      token: patientToken,
+    });
+  } catch (error) {
+    console.error("[PATIENT REGISTER] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= APPROVE DOCTOR ================= */
+app.post("/api/admin/approve-doctor", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Check if admin
+    if (decoded.role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "admin_required" });
+    }
+
+    const { patientId } = req.body || {};
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "missing_patient_id" });
+    }
+
+    // Update doctor status to ACTIVE
+    const { data: doctor, error } = await supabase
+      .from("patients")
+      .update({ status: "ACTIVE" })
+      .eq("patient_id", patientId)
+      .eq("role", "DOCTOR")
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[APPROVE DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: "approval_failed" });
+    }
+
+    if (!doctor) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    console.log("[APPROVE DOCTOR] Doctor approved:", {
+      patientId,
+      name: doctor.name,
+      role: doctor.role,
+      status: "ACTIVE"
+    });
+
+    res.json({
+      ok: true,
+      message: "Doctor approved successfully",
+      doctor: {
+        patientId: doctor.patient_id,
+        name: doctor.name,
+        role: doctor.role,
+        status: doctor.status,
+      },
+    });
+  } catch (error) {
+    console.error("[APPROVE DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= GET DOCTOR APPLICATIONS ================= */
+app.get("/api/admin/doctor-applications", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Check if admin
+    if (decoded.role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "admin_required" });
+    }
+
+    // Get pending doctor applications
+    const { data: doctors, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("role", "DOCTOR")
+      .eq("status", "PENDING")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR APPLICATIONS] Error:", error);
+      return res.status(500).json({ ok: false, error: "fetch_failed" });
+    }
+
+    res.json({
+      ok: true,
+      doctors: doctors || [],
+    });
+  } catch (error) {
+    console.error("[DOCTOR APPLICATIONS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= GET ACTIVE PATIENTS ================= */
+app.get("/api/admin/active-patients", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    // Check if admin
+    if (decoded.role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "admin_required" });
+    }
+
+    // Get active patients
+    const { data: patients, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("role", "PATIENT")
+      .eq("status", "ACTIVE")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ACTIVE PATIENTS] Error:", error);
+      return res.status(500).json({ ok: false, error: "fetch_failed" });
+    }
+
+    res.json({
+      ok: true,
+      patients: patients || [],
+    });
+  } catch (error) {
+    console.error("[ACTIVE PATIENTS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ACCESS VERIFY ================= */
 app.post("/api/access/verify", async (req, res) => {
   try {
