@@ -1825,50 +1825,70 @@ app.post("/api/admin/register", async (req, res) => {
 /* ================= ADMIN LOGIN ================= */
 app.post("/api/admin/login", async (req, res) => {
   try {
-    const { clinicCode, password } = req.body || {};
+    const { email, password, clinicCode } = req.body || {};
 
-    if (!clinicCode || !String(clinicCode).trim()) {
-      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required" });
     }
 
     if (!password || !String(password).trim()) {
       return res.status(400).json({ ok: false, error: "password_required" });
     }
 
-    const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
-
-    // Klinik bul
-    const { data: clinic, error } = await supabase
-      .from("clinics")
-      .select("*")
-      .eq("clinic_code", trimmedClinicCode)
-      .single();
-
-    if (error || !clinic) {
-      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required" });
     }
 
-    // Şifre kontrolü
-    const passwordMatch = await bcrypt.compare(String(password).trim(), clinic.password_hash);
-    if (!passwordMatch) {
-      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedPassword = String(password).trim();
+    const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
+
+    // Admin listesini JSON dosyasından yükle
+    const fs = require('fs');
+    const path = require('path');
+    const adminsPath = path.join(process.cwd(), 'data', 'admins.json');
+    
+    let admins = [];
+    try {
+      admins = JSON.parse(fs.readFileSync(adminsPath, 'utf-8'));
+    } catch (error) {
+      console.error('[ADMIN LOGIN] Error loading admins:', error);
+      return res.status(500).json({ ok: false, error: "admin_config_error" });
+    }
+
+    // Admin bul
+    const admin = admins.find(a => 
+      a.email === trimmedEmail &&
+      a.password === trimmedPassword &&
+      a.clinicCode.toUpperCase() === trimmedClinicCode &&
+      a.status === "ACTIVE"
+    );
+
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
     }
 
     // JWT token oluştur
     const token = jwt.sign(
-      { clinicId: clinic.id, clinicCode: trimmedClinicCode },
+      {
+        adminId: admin.id,
+        role: "ADMIN",
+        clinicCode: admin.clinicCode
+      },
       JWT_SECRET,
-      { expiresIn: "30d" }
+      { expiresIn: "7d" }
     );
 
     res.json({
       ok: true,
       token,
-      clinicCode: trimmedClinicCode,
-      clinicName: clinic.name || "Clinic",
+      admin: {
+        email: admin.email,
+        clinicCode: admin.clinicCode
+      }
     });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error("[ADMIN LOGIN] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
