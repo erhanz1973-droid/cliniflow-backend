@@ -2831,7 +2831,7 @@ app.post("/api/register", async (req, res) => {
         referral_code: referralCode, // Referral Code = Patient ID (aynı)
         name: String(patientName).trim(), // fullName veya name
         phone: String(phone).trim(),
-        status: "PENDING", // Default status
+        status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // Status based on role
         role: role, // Add role information
       })
       .select()
@@ -2847,7 +2847,7 @@ app.post("/api/register", async (req, res) => {
           patient_id: nextPatientId, // Patient ID from name
           name: String(patientName).trim(), // fullName veya name
           phone: String(phone).trim(),
-          status: "PENDING", // Default status
+          status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // Status based on role
           role: role, // Add role information
         })
         .select()
@@ -3007,8 +3007,9 @@ app.post("/api/register", async (req, res) => {
         patientId: newPatient.patient_id, 
         clinicId: clinic.id,
         clinicCode: trimmedClinicCode,
-        role: role, // Add role to JWT
-        roleType: "PATIENT" // For backward compatibility
+        role: role, // DOCTOR or PATIENT
+        roleType: role, // Same as role for consistency
+        status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE") // Set status based on role
       },
       JWT_SECRET,
       { expiresIn: "30d" }
@@ -3026,7 +3027,7 @@ app.post("/api/register", async (req, res) => {
       requestId: newPatient.patient_id, // Backward compatibility
       name: finalName, // Name from request (patientName)
       phone: String(newPatient.phone || phone || "").trim(),
-      status: newPatient.status || "PENDING",
+      status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE"), // Set status based on role
       role: role, // Add role to response
     });
   } catch (error) {
