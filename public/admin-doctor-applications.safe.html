@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Doktor Başvuruları - Clinifly Admin (Safe)</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 20px;
+      color: #fff;
+    }
+    .navbar-links {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .navbar-link {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .navbar-link:hover {
+      background: var(--card);
+      color: #fff;
+    }
+    .navbar-link.active {
+      background: var(--p);
+      color: #fff;
+    }
+
+    .stats-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
+    .stat-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; text-align:center; }
+    .stat-number{ font-size:32px; font-weight:700; color:#fff; margin-bottom:4px; }
+    .stat-label{ color:var(--muted); font-size:14px; }
+
+    .search-filter{ display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
+    .search-input{ flex:1; min-width:200px; background:var(--card); border:1px solid var(--b); color:#fff; padding:12px 16px; border-radius:8px; font-size:14px; }
+    .search-input::placeholder{ color:var(--muted); }
+    .filter-btn{ background:var(--card); border:1px solid var(--b); color:var(--muted); padding:12px 20px; border-radius:8px; font-size:14px; cursor:pointer; transition:all 0.2s; }
+    .filter-btn:hover{ background:var(--b); color:#fff; }
+    .filter-btn.active{ background:var(--p); color:#fff; border-color:var(--p); }
+
+    .doctor-grid{ display:grid; gap:16px; }
+    .doctor-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; display:flex; justify-content:space-between; align-items:center; transition:all 0.2s; }
+    .doctor-card:hover{ border-color:var(--p); transform:translateY(-1px); }
+    .doctor-info{ flex:1; }
+    .doctor-name{ font-size:18px; font-weight:600; color:#fff; margin-bottom:8px; }
+    .doctor-details{ color:var(--muted); font-size:14px; line-height:1.5; }
+    .doctor-details span{ display:block; margin-bottom:2px; }
+    .doctor-meta{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+    .status-badge{ padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; text-transform:uppercase; }
+    .status-pending{ background:var(--y); color:#000; }
+    .status-approved{ background:var(--g); color:#fff; }
+    .status-rejected{ background:var(--r); color:#fff; }
+
+    .actions{ display:flex; gap:8px; }
+    .btn{ padding:8px 16px; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; }
+    .btn-approve{ background:var(--g); color:#fff; }
+    .btn-approve:hover{ background:#15803d; }
+    .btn-reject{ background:var(--r); color:#fff; }
+    .btn-reject:hover{ background:#b91c1c; }
+    .btn-view{ background:var(--p); color:#fff; }
+    .btn-view:hover{ background:#1d4ed8; }
+
+    .loading{ text-align:center; padding:40px; color:var(--muted); }
+    .error{ background:#7f1d1d; border:1px solid #991b1b; color:#fecaca; padding:16px; border-radius:8px; margin-bottom:20px; }
+    .empty{ text-align:center; padding:60px 20px; color:var(--muted); }
+
+    .compatibility-warning {
+      background: #7c2d12;
+      border: 1px solid #92400e;
+      color: #fed7aa;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          🏥 Clinifly Admin
+        </div>
+        <div class="navbar-links">
+          <a href="/admin-dashboard.html" class="navbar-link">Dashboard</a>
+          <a href="/admin-doctor-applications.html" class="navbar-link active">Doktor Başvuruları</a>
+          <a href="/admin-patients.html" class="navbar-link">Hastalar</a>
+          <a href="/admin-clinics.html" class="navbar-link">Klinikler</a>
+          <a href="/admin-settings.html" class="navbar-link">Ayarlar</a>
+        </div>
+      </div>
+      <a href="#" onclick="logout()" class="btn btn-view">Çıkış</a>
+    </div>
+
+    <header>
+      <h1>👨‍⚕️ Doktor Başvuruları</h1>
+    </header>
+
+    <div class="compatibility-warning" id="compatibility-warning" style="display: none;">
+      ⚠️ Backend API uyumluluk sorunu tespit edildi. Eski backend versiyonu kullanılıyor olabilir. Bazı özellikler çalışmayabilir.
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number" id="total-count">0</div>
+        <div class="stat-label">Toplam Başvuru</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="pending-count">0</div>
+        <div class="stat-label">Bekleyen</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="approved-count">0</div>
+        <div class="stat-label">Onaylanan</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="rejected-count">0</div>
+        <div class="stat-label">Reddedilen</div>
+      </div>
+    </div>
+
+    <div class="search-filter">
+      <input type="text" id="search-input" class="search-input" placeholder="Doktor adı, e-posta veya telefon ile ara...">
+      <select id="status-filter" class="filter-btn">
+        <option value="">Tüm Durumlar</option>
+        <option value="PENDING">Bekleyen</option>
+        <option value="APPROVED">Onaylanan</option>
+        <option value="REJECTED">Reddedilen</option>
+      </select>
+    </div>
+
+    <div class="loading" id="loading-container">
+      🔄 Doktor başvuruları yükleniyor...
+    </div>
+
+    <div class="error" id="error-container" style="display: none;"></div>
+
+    <div class="doctor-grid" id="doctors-container"></div>
+
+    <div class="empty" id="empty-container" style="display: none;">
+      <h3>📭 Henüz başvuru bulunmuyor</h3>
+      <p>Doktor başvuruları burada görünecek.</p>
+    </div>
+  </div>
+
+  <script>
+    let allDoctors = [];
+    let filteredDoctors = [];
+    let compatibilityMode = false;
+
+    // Safe JSON response parser
+    async function safeJsonParse(response) {
+      const contentType = response.headers.get("content-type");
+      
+      if (!contentType || !contentType.includes("application/json")) {
+        console.warn("Non-JSON response detected:", contentType);
+        compatibilityMode = true;
+        document.getElementById("compatibility-warning").style.display = "block";
+        
+        // Try to get text response for debugging
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+        
+        throw new Error("Backend API uyumsuzluk hatası. Lütfen backend versiyonunu kontrol edin.");
+      }
+      
+      return response.json();
+    }
+
+    // Alternative endpoint names for older backend
+    const alternativeEndpoints = {
+      doctorApplications: [
+        "/api/admin/doctor-applications",
+        "/api/admin/doctors",
+        "/api/admin/doctor-list",
+        "/api/admin/pending-doctors"
+      ],
+      approveDoctor: [
+        "/api/admin/approve-doctor",
+        "/api/admin/doctor/approve",
+        "/api/admin/approve",
+        "/api/admin/doctor-status"
+      ]
+    };
+
+    // Try multiple endpoints
+    async function tryMultipleEndpoints(endpoints, options = {}) {
+      let lastError = null;
+      
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`Trying endpoint: ${endpoint}`);
+          const response = await fetch(endpoint, options);
+          
+          if (response.ok) {
+            return response;
+          }
+        } catch (error) {
+          lastError = error;
+          console.warn(`Endpoint ${endpoint} failed:`, error.message);
+        }
+      }
+      
+      throw lastError || new Error("All endpoints failed");
+    }
+
+    async function loadApplications() {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+        return;
+      }
+
+      const loadingContainer = document.getElementById("loading-container");
+      const errorContainer = document.getElementById("error-container");
+      const doctorsContainer = document.getElementById("doctors-container");
+      const emptyContainer = document.getElementById("empty-container");
+
+      loadingContainer.style.display = "block";
+      errorContainer.style.display = "none";
+      doctorsContainer.innerHTML = "";
+      emptyContainer.style.display = "none";
+
+      try {
+        // Try multiple endpoints for doctor applications
+        const response = await tryMultipleEndpoints(alternativeEndpoints.doctorApplications, {
+          headers: {
+            "Authorization": "Bearer " + token
+          }
+        });
+
+        const data = await safeJsonParse(response);
+
+        if (data.ok) {
+          allDoctors = data.doctors || data.list || [];
+          filteredDoctors = [...allDoctors];
+          updateStats();
+          renderDoctors();
+        } else {
+          throw new Error(data.error || "Başvurular yüklenemedi");
+        }
+      } catch (error) {
+        console.error("Load applications error:", error);
+        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
+      } finally {
+        loadingContainer.style.display = "none";
+      }
+    }
+
+    function updateStats() {
+      const totalCount = document.getElementById("total-count");
+      const pendingCount = document.getElementById("pending-count");
+      const approvedCount = document.getElementById("approved-count");
+      const rejectedCount = document.getElementById("rejected-count");
+
+      const stats = {
+        total: filteredDoctors.length,
+        pending: filteredDoctors.filter(d => d.status === "PENDING").length,
+        approved: filteredDoctors.filter(d => d.status === "APPROVED").length,
+        rejected: filteredDoctors.filter(d => d.status === "REJECTED").length
+      };
+
+      totalCount.textContent = stats.total;
+      pendingCount.textContent = stats.pending;
+      approvedCount.textContent = stats.approved;
+      rejectedCount.textContent = stats.rejected;
+    }
+
+    function renderDoctors() {
+      const doctorsContainer = document.getElementById("doctors-container");
+      const emptyContainer = document.getElementById("empty-container");
+
+      if (filteredDoctors.length === 0) {
+        doctorsContainer.innerHTML = "";
+        emptyContainer.style.display = "block";
+        return;
+      }
+
+      const html = filteredDoctors.map(doctor => `
+        <div class="doctor-card">
+          <div class="doctor-info">
+            <div class="doctor-name">${doctor.name}</div>
+            <div class="doctor-details">
+              <span>📱 ${doctor.phone}</span>
+              <span>📧 ${doctor.email || "-"}</span>
+              <span>🏥 ${doctor.clinic_code}</span>
+            </div>
+            <div class="doctor-meta">
+              <span class="status-badge status-${doctor.status.toLowerCase()}">${getStatusText(doctor.status)}</span>
+              <span style="color: var(--muted); font-size: 12px;">
+                📅 ${new Date(doctor.created_at).toLocaleString("tr-TR")}
+              </span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-view" onclick="viewDetails('${doctor.id}')">Detaylar</button>
+            ${doctor.status === "PENDING" ? `
+              <button class="btn btn-approve" onclick="approveDoctor('${doctor.id}')">Onayla</button>
+              <button class="btn btn-reject" onclick="rejectDoctor('${doctor.id}')">Reddet</button>
+            ` : ""}
+          </div>
+        </div>
+      `).join("");
+
+      doctorsContainer.innerHTML = html;
+      emptyContainer.style.display = "none";
+    }
+
+    function getStatusText(status) {
+      const statusMap = {
+        "PENDING": "Bekleyen",
+        "APPROVED": "Onaylandı",
+        "REJECTED": "Reddedildi"
+      };
+      return statusMap[status] || status;
+    }
+
+    async function approveDoctor(doctorId) {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+        return;
+      }
+
+      try {
+        // 🔥 CRITICAL: Send doctorId instead of patientId
+        const response = await tryMultipleEndpoints(alternativeEndpoints.approveDoctor, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          },
+          body: JSON.stringify({ doctorId })
+        });
+
+        const data = await safeJsonParse(response);
+
+        if (data.ok) {
+          alert("✅ Doktor başarıyla onaylandı!");
+          loadApplications();
+        } else {
+          throw new Error(data.error || "Onaylama başarısız");
+        }
+      } catch (error) {
+        console.error("Approve doctor error:", error);
+        alert("❌ " + error.message);
+      }
+    }
+
+    async function rejectDoctor(doctorId) {
+      if (!confirm("Bu doktor başvurusunu reddetmek istediğinizden emin misiniz?")) {
+        return;
+      }
+      
+      // TODO: Implement reject endpoint
+      alert("🔧 Reddetme özelliği yakında eklenecek");
+    }
+
+    function viewDetails(doctorId) {
+      const doctor = allDoctors.find(d => d.id === doctorId);
+      if (!doctor) return;
+
+      alert(`👨‍⚕️ Doktor Detayları\n\nAd: ${doctor.name}\nTelefon: ${doctor.phone}\nEmail: ${doctor.email || "-"}\nKlinik: ${doctor.clinic_code}\nDurum: ${getStatusText(doctor.status)}\nKayıt: ${new Date(doctor.created_at).toLocaleString("tr-TR")}`);
+    }
+
+    function filterDoctors() {
+      const searchTerm = document.getElementById("search-input").value.toLowerCase();
+      const statusFilter = document.getElementById("status-filter").value;
+
+      filteredDoctors = allDoctors.filter(doctor => {
+        const matchesSearch = !searchTerm || 
+          doctor.name.toLowerCase().includes(searchTerm) ||
+          (doctor.email && doctor.email.toLowerCase().includes(searchTerm)) ||
+          doctor.phone.includes(searchTerm);
+
+        const matchesStatus = !statusFilter || doctor.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+      });
+
+      updateStats();
+      renderDoctors();
+    }
+
+    function logout() {
+      localStorage.removeItem("admin_token");
+      window.location.href = "/admin-login.html";
+    }
+
+    // Event listeners
+    document.getElementById("search-input").addEventListener("input", filterDoctors);
+    document.getElementById("status-filter").addEventListener("change", filterDoctors);
+
+    // Load on page load
+    document.addEventListener("DOMContentLoaded", loadApplications);
+  </script>
+</body>
+</html>

@@ -4540,25 +4540,23 @@ app.post("/api/register/patient", async (req, res) => {
 });
 
 /* ================= APPROVE DOCTOR ================= */
+// 🔥 CRITICAL: Use doctors.id (UUID) ONLY - NEVER patientId
 app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   try {
-    const { patientId } = req.body || {};
+    const { doctorId } = req.body || {};
 
-    if (!patientId) {
-      return res.status(400).json({ ok: false, error: "missing_patient_id" });
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "missing_doctor_id" });
     }
 
-    // Update doctor status to ACTIVE
-    console.log("[APPROVE DOCTOR] Approving doctor:", patientId);
+    console.log("[APPROVE DOCTOR] Approving doctor with ID:", doctorId);
     
-    // First check if doctor exists and get current status
-    console.log("[APPROVE DOCTOR] Looking for doctor with patientId:", patientId);
+    // 🔥 CRITICAL: Use doctors table with doctors.id (UUID)
     const { data: existingDoctor, error: checkError } = await supabase
-      .from("patients")
+      .from("doctors")
       .select("*")
-      .eq("patient_id", patientId)
-      .eq("role", "DOCTOR")
-      .maybeSingle(); // Use maybeSingle to avoid errors
+      .eq("id", doctorId) // Use doctors.id (UUID)
+      .maybeSingle();
 
     console.log("[APPROVE DOCTOR] Check result:", { existingDoctor, checkError });
 
@@ -4568,31 +4566,22 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
     }
 
     if (!existingDoctor) {
-      console.log("[APPROVE DOCTOR] Doctor not found for patientId:", patientId);
+      console.log("[APPROVE DOCTOR] Doctor not found for doctorId:", doctorId);
       return res.status(404).json({ ok: false, error: "doctor_not_found" });
     }
 
     console.log("[APPROVE DOCTOR] Current doctor status:", existingDoctor.status);
     
-    // DEV bypass for OTP verification
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[APPROVE DOCTOR] DEV mode: Bypassing OTP verification");
-      existingDoctor.emailVerified = true;
-      existingDoctor.otpVerified = true;
-    }
-    
-    // Update status - try without status first to avoid constraint
+    // Update doctor status to ACTIVE in doctors table
     const { data: doctor, error } = await supabase
-      .from("patients")
+      .from("doctors")
       .update({ 
-        status: "ACTIVE", // Update status to ACTIVE
-        clinic_code: "ERHANCAN", // Update clinic code
+        status: "ACTIVE", // 🔥 CRITICAL: Update to ACTIVE
         updated_at: new Date().toISOString()
       })
-      .eq("patient_id", patientId)
-      .eq("role", "DOCTOR")
+      .eq("id", doctorId) // Use doctors.id (UUID)
       .select()
-      .maybeSingle(); // Use maybeSingle instead of single
+      .maybeSingle();
 
     console.log("[APPROVE DOCTOR] Supabase response:", { doctor, error });
 
@@ -4607,7 +4596,7 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
     }
 
     console.log("[APPROVE DOCTOR] Doctor approved:", {
-      patientId,
+      doctorId,
       name: doctor.name,
       role: doctor.role,
       status: "ACTIVE"
@@ -4621,21 +4610,14 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
         // await sendDoctorApprovedEmail(existingDoctor.email);
       } catch (emailError) {
         console.error("[APPROVE DOCTOR] Approval email failed:", emailError);
-        // Don't fail the approval process
+        // Don't fail approval process
       }
     }
 
+    // 🔥 CRITICAL: Return success boolean only - NO auth data
     res.json({
       ok: true,
-      message: "Doctor approved successfully",
-      doctor: {
-        patientId: doctor.patient_id,
-        name: doctor.name,
-        role: doctor.role,
-        status: doctor.status,
-        clinicId: doctor.clinic_id,
-        clinicCode: doctor.clinic_code,
-      },
+      message: "Doctor approved successfully"
     });
   } catch (error) {
     console.error("[APPROVE DOCTOR] Error:", error);
@@ -4644,16 +4626,16 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
 });
 
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
+// 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
   try {
     console.log("[ADMIN DOCTOR APPLICATIONS] Request received");
     console.log("[ADMIN DOCTOR APPLICATIONS] Admin info:", req.admin);
 
-    // Get all doctor applications (both PENDING and ACTIVE)
+    // 🔥 CRITICAL: Get doctors from doctors table - NOT patients table
     const { data: doctors, error } = await supabase
-      .from("patients")
+      .from("doctors")
       .select("*")
-      .eq("role", "DOCTOR")
       .in("status", ["PENDING", "ACTIVE"])
       .order("created_at", { ascending: false });
 
@@ -6573,16 +6555,27 @@ app.get("/favicon.ico", (req, res) => {
 });
 
 /* ================= OTP VERIFICATION ================= */
+// 🔥 CRITICAL: UNIFIED OTP VERIFICATION WITH TYPE-BASED RESPONSES
 app.post("/auth/verify-otp", async (req, res) => {
   try {
-    const { otp, phone, email, sessionId } = req.body || {};
+    const { otp, phone, email, sessionId, type } = req.body || {};
 
     console.log("[OTP VERIFY] Request received:", {
       otp,
       phone,
       email,
-      sessionId
+      sessionId,
+      type
     });
+
+    // 🔥 HARD VALIDATION: Type is REQUIRED
+    if (!type || !["patient", "doctor", "admin"].includes(type)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_type",
+        message: "Type is required and must be: patient | doctor | admin" 
+      });
+    }
 
     // Validation
     if (!otp || !phone) {
@@ -6599,52 +6592,191 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     // DEV bypass for OTP verification
     if (process.env.NODE_ENV !== "production") {
-      console.log("[OTP VERIFY] DEV mode: Accepting any OTP");
+      console.log("[OTP VERIFY] DEV mode: Accepting any OTP for type:", type);
       
-      // Check if this is a DEV_PATIENT request
-      if (sessionId === "DEV_PATIENT") {
-        console.log("[OTP VERIFY] DEV_PATIENT mode: Creating mock patient");
-        
-        // Create mock patient for DEV mode
-        const mockPatient = {
-          patient_id: "DEV_PATIENT",
-          name: "DEV User",
-          phone: normalizedPhone,
-          email: email || "dev@example.com",
-          role: "PATIENT",
-          status: "ACTIVE",
-          clinic_id: "dev-clinic-id",
-          clinic_code: "DEV"
-        };
+      if (type === "patient") {
+        // Check if this is a DEV_PATIENT request
+        if (sessionId === "DEV_PATIENT") {
+          console.log("[OTP VERIFY] DEV_PATIENT mode: Creating mock patient");
+          
+          const mockPatient = {
+            patient_id: "DEV_PATIENT",
+            name: "DEV User",
+            phone: normalizedPhone,
+            email: email || "dev@example.com",
+            role: "PATIENT",
+            status: "ACTIVE",
+            clinic_id: "dev-clinic-id",
+            clinic_code: "DEV"
+          };
 
-        // Generate JWT token for mock patient
+          const token = jwt.sign(
+            {
+              patientId: mockPatient.patient_id,
+              clinicId: mockPatient.clinic_id,
+              clinicCode: mockPatient.clinic_code,
+              role: mockPatient.role,
+              type: "patient",
+              status: mockPatient.status
+            },
+            JWT_SECRET,
+            { expiresIn: "30d" }
+          );
+
+          console.log("[OTP VERIFY] DEV_PATIENT Success:", mockPatient);
+
+          return res.json({
+            ok: true,
+            token,
+            patientId: mockPatient.patient_id,
+            type: "patient",
+            role: "PATIENT",
+            status: mockPatient.status
+          });
+        }
+        
+        // Find patient by phone for DEV mode
+        const { data: patient, error: patientError } = await supabase
+          .from("patients")
+          .select("*")
+          .eq("phone", normalizedPhone)
+          .single();
+
+        if (patientError || !patient) {
+          return res.status(404).json({ 
+            ok: false, 
+            error: "patient_not_found",
+            message: "Patient not found" 
+          });
+        }
+
         const token = jwt.sign(
           {
-            patientId: mockPatient.patient_id,
-            clinicId: mockPatient.clinic_id,
-            clinicCode: mockPatient.clinic_code,
-            role: mockPatient.role,
-            roleType: mockPatient.role,
-            status: mockPatient.status
+            patientId: patient.patient_id,
+            clinicId: patient.clinic_id,
+            clinicCode: patient.clinic_code,
+            role: patient.role,
+            type: "patient",
+            status: patient.status
           },
           JWT_SECRET,
           { expiresIn: "30d" }
         );
 
-        console.log("[OTP VERIFY] DEV_PATIENT Success:", mockPatient);
+        console.log("[OTP VERIFY] DEV Patient Success:", {
+          patientId: patient.patient_id,
+          phone: phone,
+          role: patient.role
+        });
 
         return res.json({
           ok: true,
           token,
-          patientId: mockPatient.patient_id,
-          name: mockPatient.name,
-          phone: mockPatient.phone,
-          role: mockPatient.role,
-          status: mockPatient.status
+          patientId: patient.patient_id,
+          type: "patient",
+          role: "PATIENT",
+          status: patient.status
+        });
+      } else if (type === "doctor") {
+        // Find doctor by phone for DEV mode
+        const { data: doctor, error: doctorError } = await supabase
+          .from("doctors")
+          .select("*")
+          .eq("phone", normalizedPhone)
+          .single();
+
+        if (doctorError || !doctor) {
+          return res.status(404).json({ 
+            ok: false, 
+            error: "doctor_not_found",
+            message: "Doctor not found" 
+          });
+        }
+
+        const token = jwt.sign(
+          {
+            doctorId: doctor.id,
+            clinicId: doctor.clinic_id,
+            role: doctor.role,
+            type: "doctor",
+            status: doctor.status
+          },
+          JWT_SECRET,
+          { expiresIn: "30d" }
+        );
+
+        console.log("[OTP VERIFY] DEV Doctor Success:", {
+          doctorId: doctor.id,
+          phone: phone,
+          role: doctor.role,
+          status: doctor.status
+        });
+
+        return res.json({
+          ok: true,
+          token,
+          doctorId: doctor.id,
+          clinicId: doctor.clinic_id,
+          type: "doctor",
+          role: "DOCTOR",
+          status: doctor.status
+        });
+      } else if (type === "admin") {
+        // Find admin by phone for DEV mode
+        const { data: clinic, error: clinicError } = await supabase
+          .from("clinics")
+          .select("*")
+          .eq("phone", normalizedPhone)
+          .single();
+
+        if (clinicError || !clinic) {
+          return res.status(404).json({ 
+            ok: false, 
+            error: "clinic_not_found",
+            message: "Clinic not found" 
+          });
+        }
+
+        const token = jwt.sign(
+          {
+            clinicId: clinic.id,
+            clinicCode: clinic.clinic_code,
+            role: "ADMIN",
+            type: "admin"
+          },
+          JWT_SECRET,
+          { expiresIn: "30d" }
+        );
+
+        console.log("[OTP VERIFY] DEV Admin Success:", {
+          clinicId: clinic.id,
+          phone: phone,
+          role: "ADMIN"
+        });
+
+        return res.json({
+          ok: true,
+          token,
+          clinicId: clinic.id,
+          clinicCode: clinic.clinic_code,
+          type: "admin",
+          role: "ADMIN"
         });
       }
-      
-      // Find patient by phone for DEV mode
+    }
+
+    // For demo purposes, accept any 6-digit OTP
+    if (otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_otp_format",
+        message: "OTP must be 6 digits" 
+      });
+    }
+
+    // 🔥 TYPE-BASED USER LOOKUP AND RESPONSE
+    if (type === "patient") {
+      // Find patient by phone
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select("*")
@@ -6659,21 +6791,20 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
 
-      // Generate JWT token
       const token = jwt.sign(
         {
           patientId: patient.patient_id,
           clinicId: patient.clinic_id,
           clinicCode: patient.clinic_code,
           role: patient.role,
-          roleType: patient.role,
+          type: "patient",
           status: patient.status
         },
         JWT_SECRET,
         { expiresIn: "30d" }
       );
 
-      console.log("[OTP VERIFY] DEV Success:", {
+      console.log("[OTP VERIFY] Patient Success:", {
         patientId: patient.patient_id,
         phone: phone,
         role: patient.role
@@ -6683,71 +6814,101 @@ app.post("/auth/verify-otp", async (req, res) => {
         ok: true,
         token,
         patientId: patient.patient_id,
-        name: patient.name,
-        phone: patient.phone,
-        role: patient.role,
+        type: "patient",
+        role: "PATIENT",
         status: patient.status
       });
-    }
+    } else if (type === "doctor") {
+      // Find doctor by phone
+      const { data: doctor, error: doctorError } = await supabase
+        .from("doctors")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .single();
 
-    // For demo purposes, accept any 6-digit OTP
-    if (otp.length !== 6 || !/^\d{6}$/.test(otp)) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "invalid_otp_format",
-        message: "OTP must be 6 digits" 
+      if (doctorError || !doctor) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "doctor_not_found",
+          message: "Doctor not found" 
+        });
+      }
+
+      const token = jwt.sign(
+        {
+          doctorId: doctor.id,
+          clinicId: doctor.clinic_id,
+          role: doctor.role,
+          type: "doctor",
+          status: doctor.status
+        },
+        JWT_SECRET,
+        { expiresIn: "30d" }
+      );
+
+      console.log("[OTP VERIFY] Doctor Success:", {
+        doctorId: doctor.id,
+        phone: phone,
+        role: doctor.role,
+        status: doctor.status
+      });
+
+      return res.json({
+        ok: true,
+        token,
+        doctorId: doctor.id,
+        clinicId: doctor.clinic_id,
+        type: "doctor",
+        role: "DOCTOR",
+        status: doctor.status
+      });
+    } else if (type === "admin") {
+      // Find clinic by phone (admin)
+      const { data: clinic, error: clinicError } = await supabase
+        .from("clinics")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .single();
+
+      if (clinicError || !clinic) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "clinic_not_found",
+          message: "Clinic not found" 
+        });
+      }
+
+      const token = jwt.sign(
+        {
+          clinicId: clinic.id,
+          clinicCode: clinic.clinic_code,
+          role: "ADMIN",
+          type: "admin"
+        },
+        JWT_SECRET,
+        { expiresIn: "30d" }
+      );
+
+      console.log("[OTP VERIFY] Admin Success:", {
+        clinicId: clinic.id,
+        phone: phone,
+        role: "ADMIN"
+      });
+
+      return res.json({
+        ok: true,
+        token,
+        clinicId: clinic.id,
+        clinicCode: clinic.clinic_code,
+        type: "admin",
+        role: "ADMIN"
       });
     }
-
-    // Find patient by phone
-    const { data: patient, error: patientError } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("phone", normalizedPhone)
-      .single();
-
-    if (patientError || !patient) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "patient_not_found",
-        message: "Patient not found" 
-      });
-    }
-
-    // Generate JWT token
-    const token = jwt.sign(
-      {
-        patientId: patient.patient_id,
-        clinicId: patient.clinic_id,
-        clinicCode: patient.clinic_code,
-        role: patient.role,
-        roleType: patient.role,
-        status: patient.status
-      },
-      JWT_SECRET,
-      { expiresIn: "30d" }
-    );
-
-    console.log("[OTP VERIFY] Success:", {
-      patientId: patient.patient_id,
-      phone: phone,
-      role: patient.role
-    });
-
-    res.json({
-      ok: true,
-      token,
-      patientId: patient.patient_id,
-      name: patient.name,
-      phone: patient.phone,
-      role: patient.role,
-      status: patient.status
-    });
 
   } catch (error) {
     console.error("[OTP VERIFY] Error:", error);
     console.error("[OTP VERIFY] Error stack:", error.stack);
-    console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId });
+    console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId, type });
     res.status(500).json({ 
       ok: false, 
       error: "internal_error",
