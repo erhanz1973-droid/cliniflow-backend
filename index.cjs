@@ -4672,6 +4672,109 @@ require('./patient-info-endpoint.js')(app);
 // Admin enhanced APIs integration
 require('./admin-enhanced-apis.js')(app);
 
+/* ================= ADMIN STATIC ROUTES ================= */
+// Duplicate /api routes as /admin routes for static HTML compatibility
+app.get("/admin/doctor-applications", adminAuth, async (req, res) => {
+  try {
+    console.log("[ADMIN DOCTOR APPLICATIONS] Request received");
+    console.log("[ADMIN DOCTOR APPLICATIONS] Admin info:", req.admin);
+
+    // Get all doctor applications (both PENDING and ACTIVE)
+    const { data: doctors, error } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("role", "DOCTOR")
+      .in("status", ["PENDING", "ACTIVE"])
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR APPLICATIONS] Error:", error);
+      return res.status(500).json({ ok: false, error: "fetch_failed" });
+    }
+
+    res.json({
+      ok: true,
+      doctors: doctors || [],
+    });
+  } catch (error) {
+    console.error("[DOCTOR APPLICATIONS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/admin/approve-doctor", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.body || {};
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "missing_patient_id" });
+    }
+
+    // Update doctor status to ACTIVE
+    console.log("[APPROVE DOCTOR] Approving doctor:", patientId);
+    
+    // First check if doctor exists and get current status
+    const { data: existingDoctor, error: fetchError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("patient_id", patientId)
+      .single();
+
+    if (fetchError) {
+      console.error("[APPROVE DOCTOR] Fetch error:", fetchError);
+      return res.status(500).json({ ok: false, error: "fetch_failed" });
+    }
+
+    if (!existingDoctor) {
+      console.log("[APPROVE DOCTOR] Update failed - doctor not found after update");
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    // Update doctor status to ACTIVE
+    const { data: updatedDoctor, error: updateError } = await supabase
+      .from("patients")
+      .update({ 
+        status: "ACTIVE"
+      })
+      .eq("patient_id", patientId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[APPROVE DOCTOR] Update error:", updateError);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+
+    // Send approval email (don't fail approval if email fails)
+    if (existingDoctor.email) {
+      try {
+        console.log("[APPROVE DOCTOR] Sending approval email to:", existingDoctor.email);
+        // TODO: Implement email sending
+        // await sendDoctorApprovedEmail(existingDoctor.email);
+      } catch (emailError) {
+        console.warn("[APPROVE DOCTOR] Email sending failed:", emailError);
+        // Don't fail the approval if email fails
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: "Doctor approved successfully",
+      doctor: {
+        patientId: updatedDoctor.patient_id,
+        name: updatedDoctor.name,
+        role: updatedDoctor.role,
+        status: updatedDoctor.status,
+        clinicId: updatedDoctor.clinic_id,
+        clinicCode: updatedDoctor.clinic_code,
+      },
+    });
+  } catch (error) {
+    console.error("[APPROVE DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= GET ACTIVE PATIENTS ================= */
 app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   try {
