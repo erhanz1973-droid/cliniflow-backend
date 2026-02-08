@@ -32,7 +32,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 
 // Admin authentication middleware
-const { verifyAdminToken, adminAuth } = require('./admin-auth-middleware-debug.js');
+const { verifyAdminToken, adminAuth } = require('./admin-auth-middleware.js');
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
