@@ -762,6 +762,25 @@ function updatePagination(pagination) {
   container.innerHTML = html;
 }
 
+// Safari-compatible fetch with authorization
+async function safariFetch(url, options = {}) {
+  const token = getAdminToken();
+  if (!token) {
+    throw new Error('No admin token found');
+  }
+  
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+  
+  return fetch(url, {
+    ...options,
+    headers
+  });
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
   loadPatientStats();

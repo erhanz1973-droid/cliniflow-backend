@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Token Debug - Final Solution</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f0f2f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; margin-bottom: 30px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #555; }
+        input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        button { background: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px; }
+        button:hover { background: #0056b3; }
+        .debug-info { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 20px 0; }
+        .token-display { word-break: break-all; background: #e9ecef; padding: 10px; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 12px; }
+        .step { background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #2196f3; }
+        .step h3 { margin-top: 0; color: #2196f3; }
+        .step p { margin: 5px 0; }
+        .success { color: #28a745; }
+        .warning { color: #ffc107; }
+        .danger { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Admin Token Debug - Final Solution</h1>
+        
+        <div class="step">
+            <h3>🔍 Step 1: Check Current Storage</h3>
+            <button onclick="checkStorage()">Check Current Storage</button>
+        </div>
+        
+        <div class="step">
+            <h3>🔑 Step 2: Manual Token Set</h3>
+            <input type="text" id="tokenInput" placeholder="Paste admin token here...">
+            <button onclick="setManualToken()">Set Token Manually</button>
+        </div>
+        
+        <div class="step">
+            <h3>🚀 Step 3: Test Admin Panel</h3>
+            <button onclick="testAdminPanel()">Open Admin Panel</button>
+            <button onclick="testAdminPanelNewTab()">Open Admin Panel (New Tab)</button>
+        </div>
+        
+        <div class="step">
+            <h3>🗑️ Step 4: Clear Storage</h3>
+            <button onclick="clearAllStorage()">Clear All Storage</button>
+        </div>
+        
+        <div class="debug-info" id="debugInfo">
+            <h3>📋 Debug Information:</h3>
+            <div id="storageInfo">Click "Check Current Storage" to see info...</div>
+        </div>
+    </div>
+
+    <script>
+        function checkStorage() {
+            const token = localStorage.getItem('admin_token');
+            const storageInfo = document.getElementById('storageInfo');
+            
+            let info = '<strong>🔍 Current Storage Status:</strong><br>';
+            info += 'Token exists: ' + (token ? '<span class="success">✅ Yes</span>' : '<span class="danger">❌ No</span>') + '<br>';
+            info += 'Token length: ' + (token ? token.length : 0) + '<br>';
+            info += 'Token preview: ' + (token ? '<code>' + token.substring(0, 50) + '...</code>' : 'None') + '<br>';
+            info += 'Storage type: ' + (typeof(Storage) !== 'undefined' ? '✅ Available' : '❌ Not Available') + '<br>';
+            info += 'Browser: ' + navigator.userAgent.substring(0, 50) + '...<br>';
+            info += '<br><strong>🔧 Manual Fix:</strong><br>';
+            info += 'Copy this command and paste in browser console:<br>';
+            info += '<code>localStorage.setItem("admin_token", "YOUR_TOKEN_HERE");</code><br>';
+            info += 'Then refresh admin panel.';
+            
+            storageInfo.innerHTML = info;
+        }
+        
+        function setManualToken() {
+            const token = document.getElementById('tokenInput').value.trim();
+            if (!token) {
+                alert('Please enter a token');
+                return;
+            }
+            
+            localStorage.setItem('admin_token', token);
+            alert('Token set manually! Now refresh admin panel.');
+            checkStorage();
+        }
+        
+        function testAdminPanel() {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                alert('No token found! Please set token first.');
+                return;
+            }
+            
+            // Open admin panel in same window
+            window.open('http://localhost:5050/admin-doctor-applications.html', '_blank');
+        }
+        
+        function testAdminPanelNewTab() {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                alert('No token found! Please set token first.');
+                return;
+            }
+            
+            // Open admin panel in new tab
+            window.open('http://localhost:5050/admin-doctor-applications.html', '_blank');
+        }
+        
+        function clearAllStorage() {
+            if (confirm('Are you sure you want to clear all localStorage?')) {
+                localStorage.clear();
+                alert('All storage cleared!');
+                checkStorage();
+            }
+        }
+        
+        // Check on load
+        checkStorage();
+    </script>
+</body>
+</html>
