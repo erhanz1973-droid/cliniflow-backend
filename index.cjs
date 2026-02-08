@@ -4380,7 +4380,7 @@ app.post("/api/register/doctor", async (req, res) => {
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      patientId: patient_id,
+      doctorId: patient_id, // 🔥 FIX: Return doctorId for doctors
       referralCode: referral_code,
       name: patientName,
       phone: phone,
