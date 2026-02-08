@@ -7,19 +7,26 @@ try {
   // dotenv not installed, that's okay - use environment variables directly
 }
 
-const express = require("express");
+const express = require('express');
+const path = require('path');
+
+const app = express();
+// Prevent 304 Not Modified responses for dynamic APIs (Render/CF caching + ETag).
+// We explicitly disable ETag generation globally; admin endpoints are always dynamic.
+app.set("etag", false);
+
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
+
 const cors = require("cors");
-const path = require("path");
 const fs = require("fs");
 const { createClient } = require("@supabase/supabase-js");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 
-const app = express();
-// Prevent 304 Not Modified responses for dynamic APIs (Render/CF caching + ETag).
-// We explicitly disable ETag generation globally; admin endpoints are always dynamic.
-app.set("etag", false);
+// Admin authentication middleware
+const { verifyAdminToken, adminAuth } = require('./admin-auth-middleware-debug.js');
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -265,24 +272,105 @@ const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 const TRAVEL_DIR = path.join(DATA_DIR, "travel");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
+const ADMIN_DIR = path.join(__dirname, "cliniflow-admin", "public");
 
-// admin.html ve admin-travel.html route'larını static serving'den önce tanımla
+/* ================= HELPER FUNCTIONS ================= */
+
+// Hasta isminden patient ID oluştur
+async function generatePatientIdFromName(patientName) {
+  if (!patientName || !String(patientName).trim()) {
+    // İsim yoksa fallback: random kod
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code = "";
+    for (let i = 0; i < 5; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
+  }
+  
+  // Türkçe karakterleri dönüştür
+  const turkishMap = {
+    'ç': 'c', 'Ç': 'C', 'ğ': 'g', 'Ğ': 'G', 'ı': 'i', 'İ': 'I',
+    'ö': 'o', 'Ö': 'O', 'ş': 's', 'Ş': 'S', 'ü': 'u', 'Ü': 'U'
+  };
+  
+  let normalized = patientName
+    .replace(/[çÇğĞıİöÖşŞüÜ]/g, (match) => turkishMap[match])
+    .replace(/[^a-zA-Z0-9]/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  
+  // İsim kelimelerini al
+  const words = normalized.split(' ');
+  let slug = '';
+  
+  // Her kelimeden ilk harf al
+  for (const word of words) {
+    if (word.length > 0) {
+      slug += word[0].toUpperCase();
+    }
+  }
+  
+  // Eğer slug boşsa veya 1 karakter ise, ilk kelimenin ilk 3 harfini al
+  if (slug.length < 2) {
+    slug = normalized.substring(0, 3).toUpperCase();
+  }
+  
+  // Slug'ı 3 karakterle sınırla
+  slug = slug.substring(0, 3);
+  
+  // Rastgele 2 haneli sayı ekle
+  const randomNum = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+  const finalId = slug + randomNum;
+  
+  // Aynı ID varsa sonuna sayı ekle
+  let counter = 1;
+  let attempts = 0;
+  let finalIdWithCounter = finalId;
+  
+  while (attempts < 10) {
+    const { count, error: checkError } = await supabase
+      .from('patients')
+      .select('patient_id', { count: 'exact', head: true })
+      .eq('patient_id', finalIdWithCounter);
+    
+    if (checkError) {
+      console.warn("[REGISTER] Error checking patient ID uniqueness:", checkError);
+      break;
+    }
+    
+    if (count === 0) {
+      return finalIdWithCounter;
+    }
+    
+    // Aynı ID varsa sonuna sayı ekle
+    counter++;
+    finalIdWithCounter = `${slug}_${counter}`;
+    attempts++;
+  }
+  
+  // Fallback: timestamp ekle
+  return `${slug}_${Date.now().toString().slice(-6)}`;
+}
+
+// Referral code oluştur
+function generateReferralCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+// admin.html route - redirect to OLD dashboard
 app.get("/admin.html", (req, res) => {
   try {
-    // Önce public klasöründeki admin.html'i kontrol et
-    const publicPath = path.join(PUBLIC_DIR, "admin.html");
-    const rootPath = path.join(__dirname, "admin.html");
-    
-    if (fs.existsSync(publicPath)) {
-      res.sendFile(path.resolve(publicPath));
-    } else if (fs.existsSync(rootPath)) {
-      res.sendFile(path.resolve(rootPath));
-    } else {
-      res.status(404).send("admin.html not found");
-    }
+    console.log("[ROUTE] /admin.html requested - redirecting to OLD dashboard");
+    res.redirect("/admin-old.html");
   } catch (error) {
-    console.error("[ROUTE] Error serving admin.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    console.error("[ROUTE] Error redirecting to OLD dashboard:", error);
+    res.status(500).send("Internal server error");
   }
 });
 
@@ -404,6 +492,7 @@ app.get("/admin-referrals.html", (req, res) => {
 });
 
 app.use(express.static(PUBLIC_DIR));
+app.use(express.static(ADMIN_DIR));
 
 /* ================= HELPERS ================= */
 function ensureDirs() {
@@ -1559,7 +1648,7 @@ app.post("/api/patient/:patientId/travel", saveTravel);
 app.put("/api/patient/:patientId/travel", saveTravel);
 
 /* ================= ADMIN TRAVEL LOCK ================= */
-app.post("/api/admin/patient/:patientId/travel-lock", (req, res) => {
+app.post("/api/admin/patient/:patientId/travel-lock", adminAuth, (req, res) => {
   ensureDirs();
   const patientId = String(req.params.patientId || "").trim();
   if (!patientId) return res.status(400).json({ ok: false });
@@ -1585,7 +1674,7 @@ app.post("/api/admin/patient/:patientId/travel-lock", (req, res) => {
 });
 
 /* ================= AUTH MIDDLEWARE ================= */
-function verifyAdminToken(req, res, next) {
+function userAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     console.log("[AUTH] Missing or invalid Authorization header");
@@ -1593,20 +1682,9 @@ function verifyAdminToken(req, res, next) {
   }
 
   const token = authHeader.substring(7);
-  console.log("[AUTH] Verifying token, length:", token.length);
-  
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    console.log("[AUTH] Token decoded successfully:", { 
-      clinicId: decoded.clinicId, 
-      clinicCode: decoded.clinicCode 
-    });
-    
-    if (!decoded.clinicId || !decoded.clinicCode) {
-      console.error("[AUTH] Token missing clinicId or clinicCode");
-      return res.status(401).json({ ok: false, error: "invalid_token_format" });
-    }
-    
+    req.user = { userId: decoded.userId };
     req.clinicId = decoded.clinicId;
     req.clinicCode = decoded.clinicCode;
     next();
@@ -1632,8 +1710,8 @@ async function checkPatientApproved(patientId, clinicId) {
       return { approved: false, error: "patient_not_found" };
     }
 
-    if (patient.status !== "APPROVED") {
-      console.log(`[CHECK STATUS] Patient ${patientId} status is ${patient.status}, not APPROVED`);
+    if (patient.status !== "APPROVED" && patient.status !== "ACTIVE") {
+      console.log(`[CHECK STATUS] Patient ${patientId} status is ${patient.status}, not APPROVED or ACTIVE`);
       return { approved: false, error: "patient_not_approved", status: patient.status };
     }
 
@@ -1873,9 +1951,9 @@ app.post("/api/admin/login", async (req, res) => {
       {
         adminId: admin.id,
         role: "ADMIN",
-        clinicCode: admin.clinicCode
+        clinicCode: trimmedClinicCode
       },
-      JWT_SECRET,
+      process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
@@ -1907,7 +1985,7 @@ app.post("/api/patient/login", async (req, res) => {
     // Hasta bul (telefon numarası ile)
     const { data: patient, error } = await supabase
       .from("patients")
-      .select("id, patient_id, name, phone, status, clinic_id, clinic_code")
+      .select("id, patient_id, name, phone, status, clinic_id, clinic_code, role")
       .eq("phone", trimmedPhone)
       .maybeSingle();
 
@@ -1942,7 +2020,9 @@ app.post("/api/patient/login", async (req, res) => {
         patientId: patient.patient_id, 
         clinicId: patient.clinic_id,
         clinicCode: clinic.clinic_code || patient.clinic_code || "",
-        role: "patient"
+        role: patient.role || "PATIENT",
+        roleType: patient.role || "PATIENT",
+        status: patient.status || "PENDING"
       },
       JWT_SECRET,
       { expiresIn: "30d" }
@@ -1955,6 +2035,7 @@ app.post("/api/patient/login", async (req, res) => {
       name: patient.name || "",
       phone: patient.phone || "",
       status: patient.status || "PENDING",
+      role: patient.role || "PATIENT",
       clinicCode: clinic.clinic_code || "",
     });
   } catch (error) {
@@ -2087,7 +2168,7 @@ app.get("/api/clinic", async (req, res) => {
 });
 
 /* ================= ADMIN CLINIC (GET) ================= */
-app.get("/api/admin/clinic", verifyAdminToken, async (req, res) => {
+app.get("/api/admin/clinic", adminAuth, async (req, res) => {
   try {
     const { data: clinic, error } = await supabase
       .from("clinics")
@@ -2168,12 +2249,12 @@ app.get("/api/admin/clinic", verifyAdminToken, async (req, res) => {
 });
 
 /* ================= ADMIN EVENTS (GET) ================= */
-app.get("/api/admin/events", verifyAdminToken, (req, res) => {
+app.get("/api/admin/events", adminAuth, (req, res) => {
   res.json({ ok: true, events: [] });
 });
 
 /* ================= ADMIN CLINIC (PUT) ================= */
-app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
+app.put("/api/admin/clinic", adminAuth, async (req, res) => {
   try {
     const body = req.body || {};
     console.log("[UPDATE CLINIC] Received body:", JSON.stringify(body, null, 2));
@@ -2398,7 +2479,7 @@ app.put("/api/admin/clinic", verifyAdminToken, async (req, res) => {
 });
 
 /* ================= ADMIN PATIENTS (GET) ================= */
-app.get("/api/admin/patients", verifyAdminToken, async (req, res) => {
+app.get("/api/admin/patients", adminAuth, async (req, res) => {
   try {
     // Get clinic code first
     const { data: clinic, error: clinicError } = await supabase
@@ -2442,7 +2523,7 @@ app.get("/api/admin/patients", verifyAdminToken, async (req, res) => {
 });
 
 /* ================= ADMIN PATIENTS (POST - Create Patient) ================= */
-app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
+app.post("/api/admin/patients", adminAuth, async (req, res) => {
   try {
     const { name, phone, referralCode: inviterReferralCodeRaw } = req.body || {};
 
@@ -2662,7 +2743,7 @@ app.post("/api/admin/patients", verifyAdminToken, async (req, res) => {
 /* ================= PATIENT REGISTER ================= */
 app.post("/api/register", async (req, res) => {
   try {
-    const { name, fullName, phone, clinicCode, referralCode: inviterReferralCode, userType } = req.body || {};
+    const { name, fullName, phone, clinicCode, referralCode: inviterReferralCode, userType, department, specialties, title, experienceYears, languages } = req.body || {};
 
     // fullName veya name kabul et (backward compatibility için)
     const patientName = fullName || name;
@@ -2680,6 +2761,16 @@ app.post("/api/register", async (req, res) => {
 
     if (!patientName || !String(patientName).trim()) {
       return res.status(400).json({ ok: false, error: "full_name_required", message: "Full name is required" });
+    }
+
+    // Doctor-specific validation
+    if (role === "DOCTOR") {
+      if (!department || !String(department).trim()) {
+        return res.status(400).json({ ok: false, error: "department_required", message: "Department is required for doctors" });
+      }
+      if (!specialties || !Array.isArray(specialties) || specialties.length === 0) {
+        return res.status(400).json({ ok: false, error: "specialties_required", message: "At least one specialty is required for doctors" });
+      }
     }
 
     const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
@@ -2722,6 +2813,35 @@ app.post("/api/register", async (req, res) => {
     }
 
     console.log(`[REGISTER] Clinic found: ${clinic.name} (${clinic.clinic_code}), ID: ${clinic.id}, Plan: ${clinic.plan || "FREE"}`);
+
+    // Check if phone already exists
+    const { data: existingPatient, error: phoneCheckError } = await supabase
+      .from("patients")
+      .select("patient_id, phone, name")
+      .eq("phone", phone.trim())
+      .single();
+
+    if (phoneCheckError && phoneCheckError.code !== "PGRST116") {
+      console.error("[REGISTER] Phone check error:", phoneCheckError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "phone_check_failed", 
+        details: phoneCheckError.message 
+      });
+    }
+
+    if (existingPatient) {
+      console.log("[REGISTER] Phone already exists:", {
+        phone: phone.trim(),
+        existingPatientId: existingPatient.patient_id,
+        existingName: existingPatient.name
+      });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "phone_already_exists",
+        message: `Bu telefon numarası zaten kayıtlı: ${existingPatient.name}. Lütfen farklı bir numara kullanın.` 
+      });
+    }
 
     // Check plan limits
     const plan = String(clinic.plan || "FREE").trim().toUpperCase();
@@ -2768,71 +2888,6 @@ app.post("/api/register", async (req, res) => {
       console.log("[REGISTER] PRO plan - unlimited patients, skipping limit check");
     }
 
-    // Hasta isminden patient ID oluştur
-    async function generatePatientIdFromName(patientName) {
-      if (!patientName || !String(patientName).trim()) {
-        // İsim yoksa fallback: random kod
-        const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        let code = "";
-        for (let i = 0; i < 5; i++) {
-          code += chars[Math.floor(Math.random() * chars.length)];
-        }
-        return code;
-      }
-      
-      // Türkçe karakterleri dönüştür
-      const turkishMap = {
-        'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
-        'ü': 'u', 'Ü': 'U', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
-      };
-      
-      let slug = String(patientName).trim();
-      // Türkçe karakterleri değiştir
-      for (const [turkish, latin] of Object.entries(turkishMap)) {
-        slug = slug.replace(new RegExp(turkish, 'g'), latin);
-      }
-      
-      // Özel karakterleri ve boşlukları temizle, büyük harfe çevir
-      slug = slug
-        .replace(/[^a-zA-Z0-9\s]/g, '') // Özel karakterleri kaldır
-        .replace(/\s+/g, '_') // Boşlukları underscore ile değiştir
-        .toUpperCase()
-        .substring(0, 50); // Maksimum 50 karakter
-      
-      if (!slug) {
-        // Slug boşsa fallback
-        slug = "PATIENT_" + Date.now().toString().slice(-8);
-      }
-      
-      // Unique kontrolü ve gerekirse sayı ekle
-      let finalId = slug;
-      let counter = 1;
-      let attempts = 0;
-      const maxAttempts = 100;
-      
-      while (attempts < maxAttempts) {
-        // Unique kontrolü
-        const { data: existing } = await supabase
-          .from("patients")
-          .select("patient_id")
-          .eq("patient_id", finalId)
-          .eq("clinic_id", clinic.id) // Aynı clinic içinde unique olmalı
-          .maybeSingle();
-        
-        if (!existing) {
-          return finalId; // Unique ID bulundu
-        }
-        
-        // Aynı ID varsa sonuna sayı ekle
-        counter++;
-        finalId = `${slug}_${counter}`;
-        attempts++;
-      }
-      
-      // Fallback: timestamp ekle
-      return `${slug}_${Date.now().toString().slice(-6)}`;
-    }
-    
     const nextPatientId = await generatePatientIdFromName(patientName);
     const referralCode = nextPatientId; // Referral Code = Patient ID (aynı)
     console.log(`[REGISTER] Generated patient ID from name "${patientName}": ${nextPatientId}`);
@@ -2851,8 +2906,13 @@ app.post("/api/register", async (req, res) => {
         referral_code: referralCode, // Referral Code = Patient ID (aynı)
         name: String(patientName).trim(), // fullName veya name
         phone: String(phone).trim(),
-        status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // Status based on role
         role: role, // Add role information
+        status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // CRITICAL: Set status based on role
+        department: role === "DOCTOR" ? department : null,
+        specialties: role === "DOCTOR" ? specialties : [],
+        title: role === "DOCTOR" ? title : null,
+        experience_years: role === "DOCTOR" ? experienceYears : null,
+        languages: role === "DOCTOR" ? languages : [],
       })
       .select()
       .single();
@@ -2867,8 +2927,13 @@ app.post("/api/register", async (req, res) => {
           patient_id: nextPatientId, // Patient ID from name
           name: String(patientName).trim(), // fullName veya name
           phone: String(phone).trim(),
-          status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // Status based on role
           role: role, // Add role information
+          status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // CRITICAL: Set status based on role
+          department: role === "DOCTOR" ? department : null,
+          specialties: role === "DOCTOR" ? specialties : [],
+          title: role === "DOCTOR" ? title : null,
+          experience_years: role === "DOCTOR" ? experienceYears : null,
+          languages: role === "DOCTOR" ? languages : [],
         })
         .select()
         .single();
@@ -3061,7 +3126,7 @@ app.post("/api/register", async (req, res) => {
 });
 
 /* ================= ADMIN APPROVE ================= */
-app.post("/api/admin/approve", verifyAdminToken, async (req, res) => {
+app.post("/api/admin/approve", adminAuth, async (req, res) => {
   try {
     const { requestId, patientId } = req.body || {};
 
@@ -3136,7 +3201,7 @@ app.get("/api/patient/me", async (req, res) => {
       // patientId token'da TEXT formatında (örn: "p1"), Supabase'de patient_id kolonunda
       const { data: patient, error } = await supabase
         .from("patients")
-        .select("*, role")
+        .select("patient_id, name, phone, email, status, role, clinic_id, created_at, referral_code")
         .eq("patient_id", String(patientId))
         .eq("clinic_id", clinicId)
         .single();
@@ -3183,8 +3248,10 @@ app.get("/api/patient/me", async (req, res) => {
         name: patient.name || "",
         phone: patient.phone || "",
         status: patient.status || "PENDING",
-        role: patient.role || "PATIENT", // Add role information
+        role: patient.role || "PATIENT",
+        email: patient.email || "",
         clinicCode: decoded.clinicCode || null,
+        clinicId: decoded.clinicId || null,
         clinicPlan: clinicPlan,
         branding: branding,
         createdAt: patient.created_at ? new Date(patient.created_at).getTime() : null,
@@ -4169,9 +4236,15 @@ app.post("/api/register/doctor", async (req, res) => {
       clinicCode,
       phone,
       patientName,
+      name,
       email,
       userType = "DOCTOR", // Force to DOCTOR
       inviterReferralCode,
+      department,
+      specialties,
+      title,
+      experienceYears,
+      languages,
     } = req.body || {};
 
     console.log("[DOCTOR REGISTER] Request received:", {
@@ -4181,10 +4254,15 @@ app.post("/api/register/doctor", async (req, res) => {
       email,
       userType,
       inviterReferralCode,
+      department: req.body.department,
+      specialties: req.body.specialties,
+      title: req.body.title,
+      experienceYears: req.body.experienceYears,
+      languages: req.body.languages
     });
 
     // Validation
-    if (!clinicCode || !phone || !patientName) {
+    if (!clinicCode || !phone || !name || !department || !specialties || specialties.length === 0) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
@@ -4218,13 +4296,13 @@ app.post("/api/register/doctor", async (req, res) => {
     }
 
     // Generate patient ID
-    const patient_id = generatePatientIdFromName(patientName);
+    const patient_id = generatePatientIdFromName(name || patientName);
     const referral_code = generateReferralCode();
 
     // Create doctor with PENDING status
     const newPatient = {
       patient_id,
-      name: patientName,
+      name: name || patientName,
       phone: phone.trim(),
       email: email?.trim() || null,
       clinic_id: clinic.id,
@@ -4232,6 +4310,11 @@ app.post("/api/register/doctor", async (req, res) => {
       referral_code,
       status: "PENDING", // Doctors start as PENDING
       role: "DOCTOR", // Explicitly DOCTOR
+      department: req.body.department || null,
+      specialties: req.body.specialties || [],
+      title: req.body.title || null,
+      experience_years: req.body.experienceYears || null,
+      languages: req.body.languages || [],
       created_at: new Date().toISOString(),
     };
 
@@ -4451,27 +4534,8 @@ app.post("/api/register/patient", async (req, res) => {
 });
 
 /* ================= APPROVE DOCTOR ================= */
-app.post("/api/admin/approve-doctor", async (req, res) => {
+app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
-    }
-
-    // Check if admin
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "admin_required" });
-    }
-
     const { patientId } = req.body || {};
 
     if (!patientId) {
@@ -4479,20 +4543,60 @@ app.post("/api/admin/approve-doctor", async (req, res) => {
     }
 
     // Update doctor status to ACTIVE
+    console.log("[APPROVE DOCTOR] Approving doctor:", patientId);
+    
+    // First check if doctor exists and get current status
+    console.log("[APPROVE DOCTOR] Looking for doctor with patientId:", patientId);
+    const { data: existingDoctor, error: checkError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("patient_id", patientId)
+      .eq("role", "DOCTOR")
+      .maybeSingle(); // Use maybeSingle to avoid errors
+
+    console.log("[APPROVE DOCTOR] Check result:", { existingDoctor, checkError });
+
+    if (checkError) {
+      console.error("[APPROVE DOCTOR] Check error:", checkError);
+      return res.status(500).json({ ok: false, error: "check_failed", details: checkError.message });
+    }
+
+    if (!existingDoctor) {
+      console.log("[APPROVE DOCTOR] Doctor not found for patientId:", patientId);
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    console.log("[APPROVE DOCTOR] Current doctor status:", existingDoctor.status);
+    
+    // DEV bypass for OTP verification
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[APPROVE DOCTOR] DEV mode: Bypassing OTP verification");
+      existingDoctor.emailVerified = true;
+      existingDoctor.otpVerified = true;
+    }
+    
+    // Update status - try without status first to avoid constraint
     const { data: doctor, error } = await supabase
       .from("patients")
-      .update({ status: "ACTIVE" })
+      .update({ 
+        status: "ACTIVE", // Update status to ACTIVE
+        clinic_code: "ERHANCAN", // Update clinic code
+        updated_at: new Date().toISOString()
+      })
       .eq("patient_id", patientId)
       .eq("role", "DOCTOR")
       .select()
-      .single();
+      .maybeSingle(); // Use maybeSingle instead of single
+
+    console.log("[APPROVE DOCTOR] Supabase response:", { doctor, error });
 
     if (error) {
       console.error("[APPROVE DOCTOR] Error:", error);
-      return res.status(500).json({ ok: false, error: "approval_failed" });
+      return res.status(500).json({ ok: false, error: "approval_failed", details: error.message });
     }
 
     if (!doctor) {
+      console.log("[APPROVE DOCTOR] Update failed - doctor not found after update");
       return res.status(404).json({ ok: false, error: "doctor_not_found" });
     }
 
@@ -4503,6 +4607,18 @@ app.post("/api/admin/approve-doctor", async (req, res) => {
       status: "ACTIVE"
     });
 
+    // Send approval email (don't fail approval if email fails)
+    if (existingDoctor.email) {
+      try {
+        console.log("[APPROVE DOCTOR] Sending approval email to:", existingDoctor.email);
+        // TODO: Implement email sending
+        // await sendDoctorApprovedEmail(existingDoctor.email);
+      } catch (emailError) {
+        console.error("[APPROVE DOCTOR] Approval email failed:", emailError);
+        // Don't fail the approval process
+      }
+    }
+
     res.json({
       ok: true,
       message: "Doctor approved successfully",
@@ -4511,6 +4627,8 @@ app.post("/api/admin/approve-doctor", async (req, res) => {
         name: doctor.name,
         role: doctor.role,
         status: doctor.status,
+        clinicId: doctor.clinic_id,
+        clinicCode: doctor.clinic_code,
       },
     });
   } catch (error) {
@@ -4519,34 +4637,18 @@ app.post("/api/admin/approve-doctor", async (req, res) => {
   }
 });
 
-/* ================= GET DOCTOR APPLICATIONS ================= */
-app.get("/api/admin/doctor-applications", async (req, res) => {
+/* ================= ADMIN DOCTOR APPLICATIONS ================= */
+app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+    console.log("[ADMIN DOCTOR APPLICATIONS] Request received");
+    console.log("[ADMIN DOCTOR APPLICATIONS] Admin info:", req.admin);
 
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
-    }
-
-    // Check if admin
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "admin_required" });
-    }
-
-    // Get pending doctor applications
+    // Get all doctor applications (both PENDING and ACTIVE)
     const { data: doctors, error } = await supabase
       .from("patients")
       .select("*")
       .eq("role", "DOCTOR")
-      .eq("status", "PENDING")
+      .in("status", ["PENDING", "ACTIVE"])
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -4564,8 +4666,14 @@ app.get("/api/admin/doctor-applications", async (req, res) => {
   }
 });
 
+// Patient info endpoint
+require('./patient-info-endpoint.js')(app);
+
+// Admin enhanced APIs integration
+require('./admin-enhanced-apis.js')(app);
+
 /* ================= GET ACTIVE PATIENTS ================= */
-app.get("/api/admin/active-patients", async (req, res) => {
+app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
@@ -4772,7 +4880,7 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
-      .select("id, status, clinic_id")
+      .select("id, status, clinic_id, role")
       .eq("patient_id", patientId)
       .maybeSingle();
 
@@ -4787,8 +4895,8 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
       return res.status(401).json({ ok: false, error: "unauthorized", message: "Authentication required" });
     }
 
-    // 3. APPROVED kontrolü - Admin için bypass, patient için zorunlu
-    if (!isAdmin && patientData.status !== "APPROVED") {
+    // 3. APPROVED kontrolü - Admin ve Doctor için bypass, patient için zorunlu
+    if (!isAdmin && patientData.role !== "DOCTOR" && patientData.status !== "APPROVED") {
       return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
@@ -5149,8 +5257,8 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    // 5. APPROVED kontrolü - Chat sadece APPROVED hastalar için
-    if (patientData.status !== "APPROVED") {
+    // 5. APPROVED kontrolü - Chat sadece APPROVED hastalar ve Doctor'lar için
+    if (patientData.role !== "DOCTOR" && patientData.status !== "APPROVED") {
       return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
@@ -5260,8 +5368,8 @@ app.post("/api/chat/upload", chatUpload.array("files", 5), async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    // 3. APPROVED kontrolü - Chat sadece APPROVED hastalar için
-    if (patientData.status !== "APPROVED") {
+    // 3. APPROVED kontrolü - Chat sadece APPROVED hastalar ve Doctor'lar için
+    if (patientData.role !== "DOCTOR" && patientData.status !== "APPROVED") {
       return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
@@ -5482,7 +5590,7 @@ app.post("/api/chat/upload", chatUpload.array("files", 5), async (req, res) => {
 
 /* ================= PATIENT MESSAGES (POST - Admin Reply) ================= */
 // Admin mesaj gönder
-app.post("/api/patient/:patientId/messages/admin", verifyAdminToken, async (req, res) => {
+app.post("/api/patient/:patientId/messages/admin", adminAuth, async (req, res) => {
   const patientId = String(req.params.patientId || "").trim();
   if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
@@ -5509,8 +5617,8 @@ app.post("/api/patient/:patientId/messages/admin", verifyAdminToken, async (req,
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    // Admin için APPROVED kontrolü yap (admin bile olsa hasta APPROVED olmalı - chat sadece APPROVED için)
-    if (patientData.status !== "APPROVED") {
+    // Admin için APPROVED kontrolü yap (admin ve doctor için bypass)
+    if (patientData.role !== "DOCTOR" && patientData.status !== "APPROVED") {
       return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
@@ -5947,7 +6055,7 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
 
 /* ================= ADMIN HEALTH FORM ================= */
 // GET health form (admin)
-app.get("/api/admin/patients/:patientId/health", verifyAdminToken, async (req, res) => {
+app.get("/api/admin/patients/:patientId/health", adminAuth, async (req, res) => {
   try {
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) {
@@ -6006,7 +6114,7 @@ app.get("/api/admin/patients/:patientId/health", verifyAdminToken, async (req, r
 });
 
 /* ================= ADMIN REFERRALS (GET) ================= */
-app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
+app.get("/api/admin/referrals", adminAuth, async (req, res) => {
   try {
     // This endpoint is dynamic and must never be cached (prevents 304/empty stale lists in admin).
     res.set({
@@ -6180,7 +6288,7 @@ app.get("/api/admin/referrals", verifyAdminToken, async (req, res) => {
 });
 
 /* ================= ADMIN REFERRAL APPROVE ================= */
-app.patch("/api/admin/referrals/:referralId/approve", verifyAdminToken, async (req, res) => {
+app.patch("/api/admin/referrals/:referralId/approve", adminAuth, async (req, res) => {
   try {
     const referralId = String(req.params.referralId || "").trim();
     if (!referralId) {
@@ -6256,7 +6364,7 @@ app.patch("/api/admin/referrals/:referralId/approve", verifyAdminToken, async (r
 });
 
 /* ================= ADMIN REFERRAL REJECT ================= */
-app.patch("/api/admin/referrals/:referralId/reject", verifyAdminToken, async (req, res) => {
+app.patch("/api/admin/referrals/:referralId/reject", adminAuth, async (req, res) => {
   try {
     const referralId = String(req.params.referralId || "").trim();
     if (!referralId) {
@@ -6310,9 +6418,318 @@ app.patch("/api/admin/referrals/:referralId/reject", verifyAdminToken, async (re
   }
 });
 
+/* ================= OTP RATE LIMIT ================= */
+const otpRateLimit = new Map(); // email -> { lastSent: timestamp, count: number }
+
+function checkOtpRateLimit(email) {
+  const now = Date.now();
+  const limit = otpRateLimit.get(email);
+  
+  if (!limit) {
+    otpRateLimit.set(email, { lastSent: now, count: 1 });
+    return true;
+  }
+  
+  // Check if 120 seconds have passed
+  if (now - limit.lastSent < 120000) { // 120 seconds
+    throw new Error("OTP requested too frequently. Please wait 2 minutes before requesting another code.");
+  }
+  
+  // Check daily limit (5 OTP per day)
+  const dayStart = new Date().setHours(0, 0, 0, 0);
+  if (limit.lastSent < dayStart) {
+    limit.count = 0;
+  }
+  
+  if (limit.count >= 5) {
+    throw new Error("Daily OTP limit reached. Please try again tomorrow.");
+  }
+  
+  limit.lastSent = now;
+  limit.count++;
+  return true;
+}
+
+/* ================= OTP SEND ================= */
+app.post("/auth/send-otp", async (req, res) => {
+  try {
+    const { phone, email } = req.body || {};
+
+    console.log("[OTP SEND] Request received:", {
+      phone,
+      email
+    });
+
+    // Validation
+    if (!phone) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_phone",
+        message: "Phone number is required" 
+      });
+    }
+
+    // DEV bypass for OTP
+    if (process.env.NODE_ENV !== "production") {
+      const otp = "123456";
+      console.log("[OTP SEND] DEV OTP:", otp);
+      return res.json({
+        ok: true,
+        message: "OTP sent successfully",
+        otp: otp, // Only for dev
+        patientId: "DEV_PATIENT",
+        phone: phone.trim()
+      });
+    }
+
+    // Check rate limit
+    if (email) {
+      try {
+        checkOtpRateLimit(email);
+      } catch (rateError) {
+        return res.status(429).json({ 
+          ok: false, 
+          error: "rate_limit_exceeded",
+          message: rateError.message 
+        });
+      }
+    }
+
+    // Find patient by phone
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("phone", normalizedPhone)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found",
+        message: "Patient not found" 
+      });
+    }
+
+    // For demo purposes, simulate OTP sending
+    const otp = "123456"; // Fixed OTP for demo
+    
+    console.log("[OTP SEND] OTP sent (demo):", {
+      phone: phone.trim(),
+      otp: otp,
+      patientId: patient.patient_id,
+      role: patient.role
+    });
+
+    res.json({
+      ok: true,
+      message: "OTP sent successfully",
+      otp: otp, // Only for demo purposes
+      patientId: patient.patient_id,
+      phone: phone.trim()
+    });
+
+  } catch (error) {
+    console.error("[OTP SEND] Error:", error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error",
+      message: "Internal server error" 
+    });
+  }
+});
+
 /* ================= HEALTH ================= */
 app.get("/health", (req, res) => {
   res.json({ ok: true, port: String(PORT) });
+});
+
+/* ================= FAVICON ================= */
+app.get("/favicon.ico", (req, res) => {
+  res.status(404).send("Favicon not found");
+});
+
+/* ================= OTP VERIFICATION ================= */
+app.post("/auth/verify-otp", async (req, res) => {
+  try {
+    const { otp, phone, email, sessionId } = req.body || {};
+
+    console.log("[OTP VERIFY] Request received:", {
+      otp,
+      phone,
+      email,
+      sessionId
+    });
+
+    // Validation
+    if (!otp || !phone) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_parameters",
+        message: "OTP and phone are required" 
+      });
+    }
+
+    // Normalize phone number (remove +, spaces, etc.)
+    const normalizedPhone = phone.replace(/[^\d]/g, '').trim();
+    console.log("[OTP VERIFY] Normalized phone:", { original: phone, normalized: normalizedPhone });
+
+    // DEV bypass for OTP verification
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[OTP VERIFY] DEV mode: Accepting any OTP");
+      
+      // Check if this is a DEV_PATIENT request
+      if (sessionId === "DEV_PATIENT") {
+        console.log("[OTP VERIFY] DEV_PATIENT mode: Creating mock patient");
+        
+        // Create mock patient for DEV mode
+        const mockPatient = {
+          patient_id: "DEV_PATIENT",
+          name: "DEV User",
+          phone: normalizedPhone,
+          email: email || "dev@example.com",
+          role: "PATIENT",
+          status: "ACTIVE",
+          clinic_id: "dev-clinic-id",
+          clinic_code: "DEV"
+        };
+
+        // Generate JWT token for mock patient
+        const token = jwt.sign(
+          {
+            patientId: mockPatient.patient_id,
+            clinicId: mockPatient.clinic_id,
+            clinicCode: mockPatient.clinic_code,
+            role: mockPatient.role,
+            roleType: mockPatient.role,
+            status: mockPatient.status
+          },
+          JWT_SECRET,
+          { expiresIn: "30d" }
+        );
+
+        console.log("[OTP VERIFY] DEV_PATIENT Success:", mockPatient);
+
+        return res.json({
+          ok: true,
+          token,
+          patientId: mockPatient.patient_id,
+          name: mockPatient.name,
+          phone: mockPatient.phone,
+          role: mockPatient.role,
+          status: mockPatient.status
+        });
+      }
+      
+      // Find patient by phone for DEV mode
+      const { data: patient, error: patientError } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .single();
+
+      if (patientError || !patient) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "patient_not_found",
+          message: "Patient not found" 
+        });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign(
+        {
+          patientId: patient.patient_id,
+          clinicId: patient.clinic_id,
+          clinicCode: patient.clinic_code,
+          role: patient.role,
+          roleType: patient.role,
+          status: patient.status
+        },
+        JWT_SECRET,
+        { expiresIn: "30d" }
+      );
+
+      console.log("[OTP VERIFY] DEV Success:", {
+        patientId: patient.patient_id,
+        phone: phone,
+        role: patient.role
+      });
+
+      return res.json({
+        ok: true,
+        token,
+        patientId: patient.patient_id,
+        name: patient.name,
+        phone: patient.phone,
+        role: patient.role,
+        status: patient.status
+      });
+    }
+
+    // For demo purposes, accept any 6-digit OTP
+    if (otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_otp_format",
+        message: "OTP must be 6 digits" 
+      });
+    }
+
+    // Find patient by phone
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("phone", normalizedPhone)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found",
+        message: "Patient not found" 
+      });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        patientId: patient.patient_id,
+        clinicId: patient.clinic_id,
+        clinicCode: patient.clinic_code,
+        role: patient.role,
+        roleType: patient.role,
+        status: patient.status
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    console.log("[OTP VERIFY] Success:", {
+      patientId: patient.patient_id,
+      phone: phone,
+      role: patient.role
+    });
+
+    res.json({
+      ok: true,
+      token,
+      patientId: patient.patient_id,
+      name: patient.name,
+      phone: patient.phone,
+      role: patient.role,
+      status: patient.status
+    });
+
+  } catch (error) {
+    console.error("[OTP VERIFY] Error:", error);
+    console.error("[OTP VERIFY] Error stack:", error.stack);
+    console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId });
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error",
+      message: error.message 
+    });
+  }
 });
 
 /* ================= TEST CLINIC CREATE ================= */
@@ -6409,7 +6826,7 @@ const ZONE_LABELS = {
 // Default graft density options (grafts/cm²)
 const DEFAULT_GRAFT_DENSITIES = [20, 25, 30, 35, 40];
 
-app.get("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
+app.get("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
   try {
     const patientId = req.params.patientId;
     
@@ -6455,7 +6872,7 @@ app.get("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
 
 // ================= HAIR ZONES (POST/PUT) =================
 // Create or update a zone
-app.post("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
+app.post("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
   try {
     const patientId = req.params.patientId;
     const { zoneId, zoneType, areaCm2, graftDensity, plannedGrafts, angleNote, priority, notes, status, maxCapacity, extractedGrafts } = req.body;
@@ -6580,7 +6997,7 @@ app.post("/api/hair/zones/:patientId", verifyAdminToken, async (req, res) => {
 
 // ================= HAIR GRAFTS SUMMARY =================
 // Get graft planning summary for a patient
-app.get("/api/hair/summary/:patientId", verifyAdminToken, async (req, res) => {
+app.get("/api/hair/summary/:patientId", adminAuth, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 
@@ -6632,7 +7049,7 @@ app.get("/api/hair/summary/:patientId", verifyAdminToken, async (req, res) => {
 
 // ================= HAIR DONOR ZONES =================
 // Get donor zone information
-app.get("/api/hair/donor/:patientId", verifyAdminToken, async (req, res) => {
+app.get("/api/hair/donor/:patientId", adminAuth, async (req, res) => {
   try {
     const patientId = req.params.patientId;
 

@@ -350,7 +350,7 @@
   </div>
 
   <script>
-    const API_BASE = "https://cliniflow-admin.onrender.com";
+    const API_BASE = "http://localhost:5050";
 
     function updateUI() {
       if (typeof i18n === 'undefined') return;
@@ -438,6 +438,11 @@
         });
 
         const data = await res.json();
+        
+        console.log("[REGISTER DEBUG] Response status:", res.status);
+        console.log("[REGISTER DEBUG] Response data:", data);
+        console.log("[REGISTER DEBUG] Response ok:", data.ok);
+        console.log("[REGISTER DEBUG] Response token:", data.token);
 
         if (!res.ok || !data.ok) {
           const errorMsg = data.error || data.message || `HTTP ${res.status}`;
@@ -474,7 +479,7 @@
           
           // Auto-redirect to dashboard after 2 seconds
           setTimeout(() => {
-            window.location.href = '/admin.html';
+            window.location.href = '/admin-dashboard.html';
           }, 2000);
         } else {
           throw new Error('Registration failed - no token received');
