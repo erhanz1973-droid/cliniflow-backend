@@ -7,6 +7,12 @@ try {
   // dotenv not installed, that's okay - use environment variables directly
 }
 
+// ================= SERVER STARTUP ================= */
+console.log("[INIT] Server starting up");
+console.log("[INIT] Node version:", process.version);
+console.log("[INIT] Environment:", process.env.NODE_ENV || "development");
+console.log("[INIT] Working directory:", __dirname);
+
 const express = require('express');
 const path = require('path');
 
@@ -4674,6 +4680,8 @@ require('./admin-enhanced-apis.js')(app);
 
 /* ================= ADMIN ROUTE ALIASES ================= */
 // Simple route aliases to redirect /admin to /api routes
+console.log("[INIT] Admin route aliases loaded");
+
 app.get("/admin/doctor-applications", adminAuth, async (req, res) => {
   console.log("[ADMIN ALIAS] Redirecting /admin/doctor-applications to /api/admin/doctor-applications");
   return require('./api/admin/doctor-applications')(req, res);
@@ -4683,6 +4691,8 @@ app.post("/admin/approve-doctor", adminAuth, async (req, res) => {
   console.log("[ADMIN ALIAS] Redirecting /admin/approve-doctor to /api/admin/approve-doctor");
   return require('./api/admin/approve-doctor')(req, res);
 });
+
+console.log("[INIT] Admin route aliases registered");
 
 /* ================= ADMIN STATIC ROUTES ================= */
 
