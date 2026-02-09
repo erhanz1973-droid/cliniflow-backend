@@ -269,7 +269,7 @@
           </div>
           <div class="doctor-actions">
             ${doctor.status === "PENDING" ? `
-              <button class="btn btn-success" onclick="approveDoctor('${doctor.patient_id}')">✅ Onayla</button>
+              <button class="btn btn-success" onclick="approveDoctor('${doctor.doctor_id}')">✅ Onayla</button>
               <button class="btn btn-danger" onclick="rejectDoctor('${doctor.patient_id}')">❌ Reddet</button>
             ` : ""}
             <button class="btn btn-secondary" onclick="viewDetails('${doctor.patient_id}')">👁️ Detaylar</button>
@@ -287,7 +287,7 @@
       return statusMap[status] || status;
     }
 
-    async function approveDoctor(patientId) {
+    async function approveDoctor(doctorId) {
       const token = localStorage.getItem("admin_token");
       
       if (!confirm("Bu doktor başvurusunu onaylamak istediğinizden emin misiniz?")) {

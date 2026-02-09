@@ -4577,7 +4577,7 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
     const { doctorId } = req.body || {};
 
     if (!doctorId) {
-      return res.status(400).json({ ok: false, error: "missing_doctor_id" });
+      return res.status(400).json({ ok: false, error: "doctor_id_required" });
     }
 
     console.log("[APPROVE DOCTOR] Approving doctor with ID:", doctorId);
@@ -4660,6 +4660,126 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[APPROVE DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR PROFILE ================= */
+// GET /api/doctor/me - Fetch current doctor profile
+app.get("/api/doctor/me", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId } = v.decoded;
+
+    // Fetch doctor from patients table
+    const { data: doctor, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        patient_id,
+        name,
+        email,
+        phone,
+        department,
+        title,
+        experience_years,
+        languages,
+        specialties,
+        status,
+        clinic_id,
+        clinic_code,
+        license_number,
+        role
+      `)
+      .eq("role", "DOCTOR")
+      .eq("clinic_id", clinicId)
+      .eq("name", patientId)
+      .single();
+
+    if (error || !doctor) {
+      console.error("[DOCTOR PROFILE ME] Error:", error);
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      doctor: {
+        doctorId: doctor.id,
+        name: doctor.name,
+        email: doctor.email,
+        phone: doctor.phone,
+        department: doctor.department,
+        title: doctor.title,
+        experience_years: doctor.experience_years,
+        languages: doctor.languages,
+        specialties: doctor.specialties,
+        status: doctor.status,
+        clinic_code: doctor.clinic_code
+      }
+    });
+  } catch (err) {
+    console.error("[DOCTOR PROFILE ME] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// PUT /api/doctor/me - Update current doctor profile
+app.put("/api/doctor/me", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { clinicId, patientId } = v.decoded;
+    
+    // Only allow updating specific fields
+    const {
+      name,
+      phone,
+      department,
+      title,
+      experience_years,
+      languages,
+      specialties
+    } = req.body || {};
+
+    // Build update payload with only allowed fields
+    const updatePayload = {};
+    if (name !== undefined) updatePayload.name = name;
+    if (phone !== undefined) updatePayload.phone = phone;
+    if (department !== undefined) updatePayload.department = department;
+    if (title !== undefined) updatePayload.title = title;
+    if (experience_years !== undefined) updatePayload.experience_years = experience_years;
+    if (languages !== undefined) updatePayload.languages = languages;
+    if (specialties !== undefined) updatePayload.specialties = specialties;
+
+    // Update doctor in patients table
+    const { data: doctor, error } = await supabase
+      .from("patients")
+      .update(updatePayload)
+      .eq("role", "DOCTOR")
+      .eq("clinic_id", clinicId)
+      .eq("name", patientId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[DOCTOR PROFILE ME UPDATE] Error:", error);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+
+    if (!doctor) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[DOCTOR PROFILE ME UPDATE] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
