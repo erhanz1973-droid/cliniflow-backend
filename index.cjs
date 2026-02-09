@@ -4306,41 +4306,41 @@ app.post("/api/register/doctor", async (req, res) => {
       return res.status(400).json({ ok: false, error: "clinic_full" });
     }
 
-    // Generate patient ID
-    const patient_id = generatePatientIdFromName(name || patientName);
-    const referral_code = generateReferralCode();
+// Generate patient ID
+const patient_id = generatePatientIdFromName(name || patientName);
+const referral_code = generateReferralCode();
 
-    // Create doctor with PENDING status
-    const newPatient = {
-      patient_id,
-      name: name || patientName,
-      phone: phone.trim(),
-      email: email?.trim() || null,
-      clinic_id: clinic.id,
-      clinic_code: clinicCode.trim(),
-      referral_code,
-      status: "PENDING", // Doctors start as PENDING
-      role: "DOCTOR", // Explicitly DOCTOR
-      department: req.body.department || null,
-      specialties: req.body.specialties || [],
-      title: req.body.title || null,
-      experience_years: req.body.experienceYears || null,
-      languages: req.body.languages || [],
-      created_at: new Date().toISOString(),
-    };
+// Create doctor in DOCTORS table, not patients
+const newDoctor = {
+  patient_id,
+  name: name || patientName,
+  phone: phone.trim(),
+  email: email?.trim() || null,
+  clinic_id: clinic.id,
+  clinic_code: clinicCode.trim(),
+  referral_code,
+  status: "PENDING", // Doctors start as PENDING
+  role: "DOCTOR", // Explicitly DOCTOR
+  department: req.body.department || null,
+  specialties: req.body.specialties || [],
+  title: req.body.title || null,
+  experience_years: req.body.experienceYears || null,
+  languages: req.body.languages || [],
+  created_at: new Date().toISOString(),
+};
 
-    const { data: insertedPatient, error: insertError } = await supabase
-      .from("patients")
-      .insert(newPatient)
-      .select()
-      .single();
+const { data: insertedDoctor, error: insertError } = await supabase
+  .from("doctors")
+  .insert(newDoctor)
+  .select()
+  .single();
 
-    if (insertError) {
-      console.error("[DOCTOR REGISTER] Insert error:", insertError);
-      console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
-      console.error("[DOCTOR REGISTER] Patient data being inserted:", JSON.stringify(newPatient, null, 2));
-      return res.status(500).json({ ok: false, error: "registration_failed", details: insertError.message || "Unknown database error" });
-    }
+if (insertError) {
+  console.error("[DOCTOR REGISTER] Insert error:", insertError);
+  console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
+  console.error("[DOCTOR REGISTER] Doctor data being inserted:", JSON.stringify(newDoctor, null, 2));
+  return res.status(500).json({ ok: false, error: "registration_failed", details: insertError.message || "Unknown database error" });
+}
 
     // Handle referrals
     if (inviterReferralCode) {
