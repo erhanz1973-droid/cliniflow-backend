@@ -4313,6 +4313,7 @@ app.post("/api/register/doctor", async (req, res) => {
     // Create doctor in PATIENTS table with proper doctor fields
     const newPatient = {
       patient_id,
+      id: crypto.randomUUID(), // 🔥 CRITICAL: Add UUID for id field
       name: name || patientName,
       phone: phone.trim(),
       email: email?.trim() || null,
@@ -4381,6 +4382,7 @@ app.post("/api/register/doctor", async (req, res) => {
 
     console.log("[DOCTOR REGISTER] Doctor registered successfully:", {
       patient_id,
+      id: crypto.randomUUID(), // Log the UUID we're setting
       name: name || patientName,
       role: "DOCTOR",
       status: "PENDING"
@@ -4389,7 +4391,7 @@ app.post("/api/register/doctor", async (req, res) => {
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      doctorId: patient_id, 
+      doctorId: patient_id, // 🔥 FIX: Return patient_id as doctorId
       referralCode: referral_code,
       name: name || patientName,
       phone: phone,
@@ -4400,7 +4402,7 @@ app.post("/api/register/doctor", async (req, res) => {
     });
   } catch (error) {
     console.error("[DOCTOR REGISTER] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    res.status(500).json({ ok: false, error: "registration_failed" });
   }
 });
 
