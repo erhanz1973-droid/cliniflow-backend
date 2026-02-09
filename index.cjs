@@ -4305,34 +4305,21 @@ app.post("/api/register/doctor", async (req, res) => {
     const {
       clinicCode,
       phone,
-      patientName,
       name,
       email,
-      userType = "DOCTOR", // Force to DOCTOR
-      inviterReferralCode,
-      department,
-      specialties,
-      title,
-      experienceYears,
-      languages,
+      licenseNumber,
     } = req.body || {};
 
     console.log("[DOCTOR REGISTER] Request received:", {
       clinicCode,
       phone,
-      patientName,
+      name,
       email,
-      userType,
-      inviterReferralCode,
-      department: req.body.department,
-      specialties: req.body.specialties,
-      title: req.body.title,
-      experienceYears: req.body.experienceYears,
-      languages: req.body.languages
+      licenseNumber
     });
 
-    // Validation
-    if (!clinicCode || !phone || !name || !department || !specialties || specialties.length === 0) {
+    // Validation - ONLY required fields
+    if (!clinicCode || !phone || !name) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
@@ -4351,95 +4338,62 @@ app.post("/api/register/doctor", async (req, res) => {
       });
     }
 
-    // Check clinic limits
-    const { data: existingPatients, error: countError } = await supabase
-      .from("patients")
-      .select("patient_id")
-      .eq("clinic_id", clinic.id);
-
-    if (countError) {
-      console.error("[DOCTOR REGISTER] Count error:", countError);
+    if (clinicError) {
+      console.error("[DOCTOR REGISTER] Clinic lookup error:", clinicError);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    const patientCount = existingPatients?.length || 0;
-    const maxPatients = clinic.max_patients || 10;
+    console.log("[DOCTOR REGISTER] Found clinic:", clinic.data.name);
 
-    console.log("[DOCTOR REGISTER] Patient count:", patientCount, "Max allowed:", maxPatients);
-
-    if (patientCount >= maxPatients) {
-      return res.status(400).json({ ok: false, error: "clinic_full" });
-    }
-
-    // Generate patient ID
-    const patient_id = generatePatientIdFromName(name || patientName);
-    const referral_code = generateReferralCode();
-
-    // Create doctor in PATIENTS table with proper doctor fields
-    console.log("🔥 WORKING VERSION - DOCTOR PAYLOAD:", {
-      name,
-      full_name: name || patientName,
-      phone: phone.trim(),
-      email: email?.trim() || null,
-      clinic_id: clinic.id,
-      clinic_code: clinicCode.trim(),
-      status: "PENDING",
-      role: "DOCTOR"
-    });
-    
-    // Create doctor in PATIENTS table with ONLY existing fields
-    const newPatient = {
+    // Create doctor in PATIENTS table with ONLY required fields
+    const doctorPayload = {
       id: crypto.randomUUID(),
-      patient_id: generatePatientIdFromName(name || patientName),
-      clinic_id: clinic.id,
+      patient_id: generatePatientIdFromName(name),
+      clinic_id: clinic.data.id,
       clinic_code: clinicCode.trim(),
-      name: name || patientName,
-      phone: phone.trim(),
+      name: name,
+      full_name: name,
       email: email?.trim() || null,
+      phone: phone.trim(),
+      license_number: licenseNumber || "DEFAULT_LICENSE",
       status: "PENDING",
       role: "DOCTOR",
       created_at: new Date().toISOString(),
     };
 
-    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", JSON.stringify(newPatient, null, 2));
+    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", JSON.stringify(doctorPayload, null, 2));
 
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
-      .insert(newPatient)
+      .insert(doctorPayload)
       .select()
       .single();
 
     if (insertError) {
       console.error("❌ SUPABASE INSERT ERROR (PROD)", insertError);
-      console.error("[DOCTOR REGISTER] Insert error:", insertError);
-      console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
-      console.error("[DOCTOR REGISTER] Insert error code:", insertError.code);
-      console.error("[DOCTOR REGISTER] Insert error message:", insertError.message);
-      console.error("[DOCTOR REGISTER] Insert error details:", insertError.details);
-      console.error("[DOCTOR REGISTER] Insert error hint:", insertError.hint);
-      console.error("[DOCTOR REGISTER] Doctor data being inserted:", JSON.stringify(newPatient, null, 2));
       return res.status(500).json({ 
         ok: false, 
         error: "registration_failed",
-        details: insertError.message
+        message: "Doktor kaydı başarısız oldu."
       });
     }
-    
+
+    console.log("[DOCTOR REGISTER] Doctor created successfully:", insertedPatient);
+
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      doctorId: name, // 🔥 FIX: Return patient_id as doctorId
-      referralCode: referral_code,
-      full_name: name || patientName,
+      doctorId: insertedPatient.id,
+      patientId: insertedPatient.patient_id,
+      full_name: name,
       phone: phone,
       email: email,
       status: "PENDING",
-      role: "DOCTOR",
-      token: doctorToken,
+      role: "DOCTOR"
     });
+
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR REGISTER] Error:", error);
+    console.error("[DOCTOR REGISTER] Error:", err);
     res.status(500).json({ ok: false, error: "registration_failed" });
   }
 });
