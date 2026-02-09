@@ -4297,6 +4297,9 @@ app.put("/api/patient/role", async (req, res) => {
   }
 });
 
+// 🔥 BACKEND DEPLOYMENT FORCE - $(date)
+console.log("🔥 BACKEND VERSION: 9a190cd - DEPLOYED TO PRODUCTION");
+
 /* ================= DOCTOR REGISTRATION ================= */
 app.post("/api/register/doctor", async (req, res) => {
   console.log("🚨 PROD REGISTER DOCTOR ROUTE HIT");
