@@ -4299,6 +4299,8 @@ app.put("/api/patient/role", async (req, res) => {
 
 /* ================= DOCTOR REGISTRATION ================= */
 app.post("/api/register/doctor", async (req, res) => {
+  console.log("🚨 PROD REGISTER DOCTOR ROUTE HIT");
+  
   try {
     const {
       clinicCode,
@@ -4421,6 +4423,8 @@ app.post("/api/register/doctor", async (req, res) => {
       created_at: new Date().toISOString(),
     });
 
+    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", newPatient);
+
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
       .insert(newPatient)
@@ -4428,6 +4432,7 @@ app.post("/api/register/doctor", async (req, res) => {
       .single();
 
     if (insertError) {
+      console.error("❌ SUPABASE INSERT ERROR (PROD)", insertError);
       console.error("[DOCTOR REGISTER] Insert error:", insertError);
       console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
       console.error("[DOCTOR REGISTER] Insert error code:", insertError.code);
