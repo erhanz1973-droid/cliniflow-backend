@@ -4536,6 +4536,40 @@ app.post("/api/register/patient", async (req, res) => {
   }
 });
 
+/* ================= CLEAR DOCTOR FOR TESTING ================= */
+app.post("/api/admin/clear-doctor", adminAuth, async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    
+    if (!email) {
+      return res.status(400).json({ ok: false, error: "email_required" });
+    }
+
+    console.log("[CLEAR DOCTOR] Removing doctor with email:", email);
+
+    const { error } = await supabase
+      .from("patients")
+      .delete()
+      .eq("email", email.trim())
+      .eq("role", "DOCTOR");
+
+    if (error) {
+      console.error("[CLEAR DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: "delete_failed", details: error.message });
+    }
+
+    console.log("[CLEAR DOCTOR] Doctor removed successfully");
+    res.json({
+      ok: true,
+      message: "Doctor removed successfully. You can now register with same email."
+    });
+
+  } catch (err) {
+    console.error("[CLEAR DOCTOR] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= APPROVE DOCTOR ================= */
 // 🔥 CRITICAL: Use doctors.id (UUID) ONLY - NEVER patientId
 app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
