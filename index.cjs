@@ -4339,19 +4339,18 @@ app.post("/api/register/doctor", async (req, res) => {
     if (insertError) {
       console.error("[DOCTOR REGISTER] Insert error:", insertError);
       console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
+      console.error("[DOCTOR REGISTER] Insert error code:", insertError.code);
+      console.error("[DOCTOR REGISTER] Insert error message:", insertError.message);
+      console.error("[DOCTOR REGISTER] Insert error details:", insertError.details);
+      console.error("[DOCTOR REGISTER] Insert error hint:", insertError.hint);
       console.error("[DOCTOR REGISTER] Doctor data being inserted:", JSON.stringify(newPatient, null, 2));
-      return res.status(500).json({ ok: false, error: "registration_failed", details: insertError.message || "Unknown database error" });
-    }
-  return res.status(500).json({ ok: false, error: "registration_failed", details: insertError.message || "Unknown database error" });
-}
-
-    // Handle referrals
-    if (inviterReferralCode) {
-      try {
-        const { data: referrer } = await supabase
-          .from("patients")
-          .select("patient_id")
-          .eq("referral_code", inviterReferralCode)
+      return res.status(500).json({ 
+        ok: false, 
+        error: "registration_failed", 
+        message: insertError.message || "Unknown database error",
+        details: {
+          code: insertError.code,
+          message: insertError.message,
           .single();
 
         if (referrer) {
