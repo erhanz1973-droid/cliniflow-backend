@@ -4374,6 +4374,17 @@ app.post("/api/register/doctor", async (req, res) => {
     const referral_code = generateReferralCode();
 
     // Create doctor in PATIENTS table with proper doctor fields
+    console.log("🔥 WORKING VERSION - DOCTOR PAYLOAD:", {
+      name,
+      full_name: name || patientName,
+      phone: phone.trim(),
+      email: email?.trim() || null,
+      clinic_id: clinic.id,
+      clinic_code: clinicCode.trim(),
+      status: "PENDING",
+      role: "DOCTOR"
+    });
+    
     const newPatient = {
       name,
       id: crypto.randomUUID(), // 🔥 CRITICAL: Add UUID for id field
