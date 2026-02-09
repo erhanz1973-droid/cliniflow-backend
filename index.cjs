@@ -374,7 +374,8 @@ app.get("/admin.html", (req, res) => {
   try {
     console.log("[ROUTE] /admin.html requested - redirecting to OLD dashboard");
     res.redirect("/admin-old.html");
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error redirecting to OLD dashboard:", error);
     res.status(500).send("Internal server error");
   }
@@ -407,7 +408,8 @@ app.get("/admin-travel.html", (req, res) => {
     const absolutePath = path.resolve(filePath);
     console.log("[ROUTE] Absolute path:", absolutePath);
     res.sendFile(absolutePath);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error serving admin-travel.html:", error);
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -428,7 +430,8 @@ app.get("/admin-patients.html", (req, res) => {
       `);
     }
     res.sendFile(path.resolve(filePath));
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error serving admin-patients.html:", error);
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -449,7 +452,8 @@ app.get("/admin-treatment.html", (req, res) => {
       `);
     }
     res.sendFile(path.resolve(filePath));
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error serving admin-treatment.html:", error);
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -470,7 +474,8 @@ app.get("/admin-register.html", (req, res) => {
       `);
     }
     res.sendFile(path.resolve(filePath));
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error serving admin-register.html:", error);
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -491,7 +496,8 @@ app.get("/admin-referrals.html", (req, res) => {
       `);
     }
     res.sendFile(path.resolve(filePath));
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ROUTE] Error serving admin-referrals.html:", error);
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -562,7 +568,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
     let decoded;
     try {
       decoded = jwt.verify(authToken, JWT_SECRET);
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
 
@@ -658,7 +665,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
     };
 
     res.json(result);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Treatments GET error:", error);
     res.status(500).json({ ok: false, error: "treatments_fetch_failed", details: error.message });
   }
@@ -693,7 +701,8 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     let decoded;
     try {
       decoded = jwt.verify(authToken, JWT_SECRET);
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
 
@@ -935,7 +944,8 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     });
 
     res.json({ ok: true, saved: true, treatments: updatedData });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Treatments POST - Exception:", error);
     res.status(500).json({ ok: false, error: "treatments_save_exception", details: error.message });
   }
@@ -967,7 +977,8 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     let decoded;
     try {
       decoded = jwt.verify(authToken, JWT_SECRET);
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
 
@@ -1106,7 +1117,8 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     });
 
     res.json({ ok: true, deleted: true, treatments: updatedData });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Treatments DELETE - Exception:", error);
     res.status(500).json({ ok: false, error: "treatments_delete_exception", details: error.message });
   }
@@ -1152,7 +1164,8 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
         clinicCode: decoded.clinicCode,
         patientId: decoded.patientId
       });
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       console.error("Travel GET - Token verification failed:", error.message);
       return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
     }
@@ -1390,7 +1403,8 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
     console.log("Travel GET - Final result.hotel:", JSON.stringify(result.hotel, null, 2));
     console.log("Travel GET - Final result.flights:", JSON.stringify(result.flights, null, 2));
     res.json(result);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Travel GET error:", error);
     res.status(500).json({ ok: false, error: "travel_fetch_failed", details: error.message });
   }
@@ -1428,7 +1442,8 @@ async function saveTravel(req, res) {
       adminClinicId = decoded.clinicId;
       adminClinicCode = decoded.clinicCode;
       console.log("[TRAVEL SAVE] Admin token verified:", { clinicId: adminClinicId, clinicCode: adminClinicCode });
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       console.error("[TRAVEL SAVE] Admin token verification failed:", error.message);
       return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
     }
@@ -1451,7 +1466,8 @@ async function saveTravel(req, res) {
       let decoded;
       try {
         decoded = jwt.verify(token, JWT_SECRET);
-      } catch (error) {
+      } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
         return res.status(401).json({ ok: false, error: "invalid_token" });
       }
 
@@ -1644,7 +1660,8 @@ async function saveTravel(req, res) {
     });
 
     res.json({ ok: true, saved: true, travel: finalTravelData });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Travel SAVE - Exception:", error);
     res.status(500).json({ ok: false, error: "travel_save_exception", details: error.message });
   }
@@ -1694,7 +1711,8 @@ function userAuth(req, res, next) {
     req.clinicId = decoded.clinicId;
     req.clinicCode = decoded.clinicCode;
     next();
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[AUTH] Token verification failed:", error.message);
     return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
   }
@@ -1722,7 +1740,8 @@ async function checkPatientApproved(patientId, clinicId) {
     }
 
     return { approved: true, patient };
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[CHECK STATUS] Error checking patient status:", error);
     return { approved: false, error: "status_check_failed", details: error.message };
   }
@@ -1906,7 +1925,8 @@ app.post("/api/admin/register", async (req, res) => {
       enabledModules: newClinic.enabled_modules,
       message: "Clinic registered successfully",
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Register error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -1941,7 +1961,8 @@ app.post("/api/admin/login", async (req, res) => {
     let admins = [];
     try {
       admins = JSON.parse(fs.readFileSync(adminsPath, 'utf-8'));
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       console.error('[ADMIN LOGIN] Error loading admins:', error);
       return res.status(500).json({ ok: false, error: "admin_config_error" });
     }
@@ -1977,7 +1998,8 @@ app.post("/api/admin/login", async (req, res) => {
         clinicCode: admin.clinicCode
       }
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN LOGIN] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2021,7 +2043,7 @@ app.post("/api/patient/login", async (req, res) => {
       .eq("id", patient.clinic_id)
       .single();
 
-    if (clinicError || !clinic) {
+    if (!clinic?.data) {
       console.error("[PATIENT LOGIN] Clinic lookup error:", clinicError);
       return res.status(500).json({ ok: false, error: "internal_error", message: "Clinic lookup failed" });
     }
@@ -2050,7 +2072,8 @@ app.post("/api/patient/login", async (req, res) => {
       role: patient.role || "PATIENT",
       clinicCode: clinic.clinic_code || "",
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[PATIENT LOGIN] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error", message: error.message });
   }
@@ -2126,7 +2149,8 @@ app.get("/api/clinic/:clinicCode", async (req, res) => {
     
     console.log("Public clinic GET - Response:", JSON.stringify(response, null, 2));
     res.json(response);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Public clinic GET error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2173,7 +2197,8 @@ app.get("/api/clinic", async (req, res) => {
     
     console.log("Public clinic GET (query) - Response:", JSON.stringify(response, null, 2));
     res.json(response);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Public clinic GET (query) error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2254,7 +2279,8 @@ app.get("/api/admin/clinic", adminAuth, async (req, res) => {
       },
       updatedAt: clinic.updated_at ? new Date(clinic.updated_at).getTime() : null,
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Get clinic error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2484,7 +2510,8 @@ app.put("/api/admin/clinic", adminAuth, async (req, res) => {
         updatedAt: updatedClinic.updated_at ? new Date(updatedClinic.updated_at).getTime() : null,
       },
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Update clinic error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2528,7 +2555,8 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
     }));
 
     res.json({ ok: true, list });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Get patients error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2550,10 +2578,14 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
       .eq("id", req.clinicId)
       .single();
 
-    if (clinicError || !clinic) {
+    if (!clinic?.data) {
       console.error("[ADMIN CREATE PATIENT] Clinic lookup error:", clinicError);
       console.error("[ADMIN CREATE PATIENT] Clinic data:", JSON.stringify(clinic, null, 2));
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_clinic",
+        message: "Geçersiz klinik kodu"
+      });
     }
 
     console.log("[ADMIN CREATE PATIENT] Clinic found:", JSON.stringify(clinic, null, 2));
@@ -2749,7 +2781,8 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
       status: newPatient.status,
       createdAt: newPatient.created_at ? new Date(newPatient.created_at).getTime() : Date.now(),
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN CREATE PATIENT] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error", details: error?.message });
   }
@@ -3130,7 +3163,8 @@ app.post("/api/register", async (req, res) => {
       status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE"), // Set status based on role
       role: role, // Add role to response
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[REGISTER] Unexpected error:", error);
     res.status(500).json({ 
       ok: false, 
@@ -3183,7 +3217,8 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
       status: updatedPatient.status,
       message: "Patient approved successfully",
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Approve error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3278,7 +3313,8 @@ app.get("/api/patient/me", async (req, res) => {
     } catch (jwtError) {
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Patient me error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3310,7 +3346,8 @@ function verifyDoctorToken(req) {
         role: decoded.role
       }
     };
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     return { ok: false, code: "invalid_token" };
   }
 }
@@ -3341,7 +3378,8 @@ function verifyPatientToken(req) {
         role: decoded.role
       }
     };
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     return { ok: false, code: "invalid_token" };
   }
 }
@@ -3401,7 +3439,8 @@ app.get("/api/doctor/dashboard/stats", async (req, res) => {
         totalPatients: totalPatients || 0,
       }
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR DASHBOARD STATS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3450,7 +3489,8 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
       ok: true,
       appointments: formattedAppointments
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3500,7 +3540,8 @@ app.get("/api/doctor/patients", async (req, res) => {
       ok: true,
       patients: formattedPatients
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR PATIENTS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3552,7 +3593,8 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
       ok: true,
       treatmentPlans: formattedPlans
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR TREATMENT PLANS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3612,7 +3654,8 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
       ok: true,
       treatmentPlan: treatmentPlan
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3665,7 +3708,8 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
         lastVisit: patient.last_visit,
       }
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR PATIENT INFO] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3725,7 +3769,8 @@ app.get("/api/doctor/treatment/:patientId/teeth", async (req, res) => {
       ok: true,
       teeth: formattedTeeth
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR TEETH] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3784,7 +3829,8 @@ app.get("/api/doctor/treatment/:patientId/records", async (req, res) => {
       ok: true,
       records: formattedRecords
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR RECORDS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3839,7 +3885,8 @@ app.get("/api/doctor/treatment/:patientId/photos", async (req, res) => {
       ok: true,
       photos: formattedPhotos
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR PHOTOS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -3911,7 +3958,8 @@ app.put("/api/doctor/treatment/procedure/:procedureId/complete", async (req, res
       ok: true,
       message: "Procedure completed successfully"
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[COMPLETE PROCEDURE] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4015,7 +4063,8 @@ app.post("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis", async 
       message: "Diagnosis added successfully",
       tooth: updatedTooth
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADD DIAGNOSIS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4094,7 +4143,8 @@ app.put("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosi
       message: "Diagnosis updated successfully",
       tooth: updatedTooth
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[UPDATE DIAGNOSIS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4167,7 +4217,8 @@ app.delete("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagn
       message: "Diagnosis deleted successfully",
       tooth: updatedTooth
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DELETE DIAGNOSIS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4186,7 +4237,8 @@ app.put("/api/patient/role", async (req, res) => {
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
 
@@ -4238,7 +4290,8 @@ app.put("/api/patient/role", async (req, res) => {
       status: patient.status,
       token: updatedToken,
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[UPDATE ROLE] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4288,8 +4341,12 @@ app.post("/api/register/doctor", async (req, res) => {
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    if (clinicError || !clinic) {
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
+    if (!clinic?.data) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_clinic",
+        message: "Geçersiz klinik kodu"
+      });
     }
 
     // Check clinic limits
@@ -4382,7 +4439,8 @@ app.post("/api/register/doctor", async (req, res) => {
       role: "DOCTOR",
       token: doctorToken,
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR REGISTER] Error:", error);
     res.status(500).json({ ok: false, error: "registration_failed" });
   }
@@ -4421,8 +4479,12 @@ app.post("/api/register/patient", async (req, res) => {
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    if (clinicError || !clinic) {
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
+    if (!clinic?.data) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_clinic",
+        message: "Geçersiz klinik kodu"
+      });
     }
 
     // Check clinic limits
@@ -4469,7 +4531,11 @@ app.post("/api/register/patient", async (req, res) => {
 
     if (insertError) {
       console.error("[PATIENT REGISTER] Insert error:", insertError);
-      return res.status(500).json({ ok: false, error: "registration_failed" });
+      return res.status(500).json({
+        ok: false,
+        error: "registration_failed",
+        message: err.message || "Doktor kaydı başarısız oldu."
+      });
     }
 
     // Handle referrals
@@ -4526,7 +4592,8 @@ app.post("/api/register/patient", async (req, res) => {
       role: "PATIENT",
       token: patientToken,
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[PATIENT REGISTER] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4612,7 +4679,8 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
       ok: true,
       message: "Doctor approved successfully"
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[APPROVE DOCTOR] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4641,7 +4709,8 @@ app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
       ok: true,
       doctors: doctors || [],
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR APPLICATIONS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4684,7 +4753,8 @@ app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
-    } catch (error) {
+    } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
 
@@ -4710,7 +4780,8 @@ app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
       ok: true,
       patients: patients || [],
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ACTIVE PATIENTS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4754,7 +4825,8 @@ app.post("/api/access/verify", async (req, res) => {
     } catch (jwtError) {
       return res.status(401).json({ ok: false, error: "invalid_token" });
     }
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Access verify error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -4833,7 +4905,8 @@ app.post("/api/events", async (req, res) => {
 
     // Her zaman success dön (analytics hataları uygulamayı etkilemesin)
     res.json({ ok: true, received: true });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     // Analytics hataları sessizce handle et
     console.error("[EVENTS] Error:", error);
     res.json({ ok: true, received: true }); // Her zaman success dön
@@ -4868,7 +4941,8 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
         const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
         isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
         clinicId = decoded.clinicId;
-      } catch (error) {
+      } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
         console.log("Messages GET - Token verification failed:", error.message);
         // Token invalid, continue without auth (might be public endpoint)
       }
@@ -4981,7 +5055,8 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
     }
 
     res.json({ ok: true, messages: formattedMessages });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Messages GET error:", error);
     res.json({ ok: true, messages: [] }); // Error durumunda boş liste döndür
   }
@@ -5170,7 +5245,8 @@ app.post("/api/patient/:patientId/upload", upload.single("file"), async (req, re
 
     console.log("Upload POST - Success:", { patientId, fileName, url: publicUrl });
     res.json(response);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Upload POST error:", error);
     
     // Multer fileFilter hatası ise özel mesaj döndür
@@ -5298,7 +5374,8 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
 
     console.log("Messages POST - Success (Admin):", { patientId, messageId });
     res.json(response);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Messages POST error (Admin):", error);
     res.status(500).json({ ok: false, error: "message_send_exception", details: error.message });
   }
@@ -5568,7 +5645,8 @@ app.post("/api/chat/upload", chatUpload.array("files", 5), async (req, res) => {
         ? "File uploaded successfully" 
         : `${uploadedFiles.length} files uploaded successfully`
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[Chat Upload] Exception:", error);
     res.status(500).json({ ok: false, error: "upload_exception", details: error.message });
   }
@@ -5658,7 +5736,8 @@ app.post("/api/patient/:patientId/messages/admin", adminAuth, async (req, res) =
 
     console.log("Messages POST - Success:", { patientId, messageId });
     res.json(response);
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Messages POST error:", error);
     res.status(500).json({ ok: false, error: "message_send_exception", details: error.message });
   }
@@ -5766,7 +5845,8 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
     }));
 
     res.json({ ok: true, items: formattedReferrals });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Patient Referrals GET error:", error);
     res.status(500).json({ ok: false, error: "referrals_fetch_exception", details: error.message });
   }
@@ -5830,7 +5910,8 @@ app.get("/api/patient/:patientId/health", async (req, res) => {
       completedAt: healthForm.completed_at || null,
       updatedAt: healthForm.updated_at || null
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Health Form GET - Error:", error);
     res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
   }
@@ -5940,7 +6021,8 @@ app.post("/api/patient/:patientId/health", async (req, res) => {
       completedAt: result.completed_at || null,
       updatedAt: result.updated_at || null
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Health Form POST - Error:", error);
     res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
   }
@@ -6046,7 +6128,8 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
       completedAt: result.completed_at || null,
       updatedAt: result.updated_at || null
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Health Form PUT - Error:", error);
     res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
   }
@@ -6106,7 +6189,8 @@ app.get("/api/admin/patients/:patientId/health", adminAuth, async (req, res) => 
       updatedAt: healthForm.updated_at || null,
       createdAt: healthForm.created_at || null
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Admin Health Form GET - Error:", error);
     res.status(500).json({ ok: false, error: "health_form_fetch_failed", details: error.message });
   }
@@ -6280,7 +6364,8 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
 
     console.log(`[ADMIN REFERRALS] Returning ${formattedReferrals.length} formatted referral(s)`);
     res.json({ ok: true, items: formattedReferrals });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN REFERRALS] Exception:", error);
     res.status(500).json({ ok: false, error: "referrals_fetch_exception", details: error.message });
   }
@@ -6356,7 +6441,8 @@ app.patch("/api/admin/referrals/:referralId/approve", adminAuth, async (req, res
         invitedDiscountPercent: updatedReferral.invited_discount_percent || null,
       },
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN REFERRAL APPROVE] Exception:", error);
     res.status(500).json({ ok: false, error: "approval_exception", details: error.message });
   }
@@ -6411,7 +6497,8 @@ app.patch("/api/admin/referrals/:referralId/reject", adminAuth, async (req, res)
         status: updatedReferral.status,
       },
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN REFERRAL REJECT] Exception:", error);
     res.status(500).json({ ok: false, error: "rejection_exception", details: error.message });
   }
@@ -6527,7 +6614,8 @@ app.post("/auth/send-otp", async (req, res) => {
       phone: phone.trim()
     });
 
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[OTP SEND] Error:", error);
     res.status(500).json({ 
       ok: false, 
@@ -6722,7 +6810,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           .eq("phone", normalizedPhone)
           .single();
 
-        if (clinicError || !clinic) {
+        if (!clinic?.data) {
           return res.status(404).json({ 
             ok: false, 
             error: "clinic_not_found",
@@ -6863,7 +6951,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         .eq("phone", normalizedPhone)
         .single();
 
-      if (clinicError || !clinic) {
+      if (!clinic?.data) {
         return res.status(404).json({ 
           ok: false, 
           error: "clinic_not_found",
@@ -6898,7 +6986,8 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
 
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[OTP VERIFY] Error:", error);
     console.error("[OTP VERIFY] Error stack:", error.stack);
     console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId, type });
@@ -6973,7 +7062,8 @@ app.post("/api/test/create-clinic", async (req, res) => {
       clinicId: newClinic.id,
       clinicName: newClinic.name
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[TEST CREATE CLINIC] Exception:", error);
     res.status(500).json({ ok: false, error: error?.message || "Unknown error" });
   }
@@ -7042,7 +7132,8 @@ app.get("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
       },
       defaultDensities: DEFAULT_GRAFT_DENSITIES,
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[HAIR ZONES GET] Exception:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -7167,7 +7258,8 @@ app.post("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
         status: result.status,
       },
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[HAIR ZONES POST] Exception:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -7219,7 +7311,8 @@ app.get("/api/hair/summary/:patientId", adminAuth, async (req, res) => {
       donorZones: donorZones.length,
       zones: zones || [],
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[HAIR SUMMARY GET] Exception:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -7270,7 +7363,8 @@ app.get("/api/hair/donor/:patientId", adminAuth, async (req, res) => {
         utilizationPercent: totalCapacity > 0 ? Math.round((totalExtracted / totalCapacity) * 100) : 0,
       },
     });
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[HAIR DONOR GET] Exception:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -7320,7 +7414,8 @@ async function updateHairGraftsSummary(patientUuid) {
         .from("patient_hair_grafts")
         .insert(summaryData);
     }
-  } catch (error) {
+  } catch (err) {
+      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[updateHairGraftsSummary] Error:", error);
   }
 }
