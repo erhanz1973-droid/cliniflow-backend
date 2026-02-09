@@ -4388,42 +4388,21 @@ app.post("/api/register/doctor", async (req, res) => {
     });
     
     const newPatient = {
-      name,
       id: crypto.randomUUID(), // 🔥 CRITICAL: Add UUID for id field
+      patient_id: generatePatientIdFromName(name || patientName),
+      clinic_id: clinic.id,
+      clinic_code: clinicCode.trim(),
+      name: name || patientName,
       full_name: name || patientName,
       phone: phone.trim(),
       email: email?.trim() || null,
-      clinic_id: clinic.id,
-      clinic_code: clinicCode.trim(),
-      referral_code,
+      referral_code: generateReferralCode(),
       status: "PENDING", // Doctors start as PENDING
       role: "DOCTOR", // Explicitly DOCTOR
-      
-      
-      
-      
-      
-      status: "PENDING",
-      role: "DOCTOR",
       created_at: new Date().toISOString(),
     };
 
-    console.log("[DOCTOR REGISTER] DEBUG: Request received:", {
-      clinicCode: clinicCode.trim(),
-      phone: phone.trim(),
-      full_name: name || patientName,
-      email: email?.trim() || null,
-      
-      
-      
-      
-      
-      status: "PENDING",
-      role: "DOCTOR",
-      created_at: new Date().toISOString(),
-    });
-
-    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", newPatient);
+    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", JSON.stringify(newPatient, null, 2));
 
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
