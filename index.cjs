@@ -1872,8 +1872,14 @@ app.post("/api/admin/register", async (req, res) => {
       
       return res.status(500).json({ 
         ok: false, 
-        error: "registration_failed",
-        details: error.message || "Unknown database error"
+        error: "registration_failed", 
+        message: insertError.message || "Unknown database error",
+        details: {
+          code: insertError.code,
+          message: insertError.message,
+          details: insertError.details,
+          hint: insertError.hint
+        }
       });
     }
 
