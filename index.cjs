@@ -2546,8 +2546,11 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
 
     if (clinicError || !clinic) {
       console.error("[ADMIN CREATE PATIENT] Clinic lookup error:", clinicError);
-      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+      console.error("[ADMIN CREATE PATIENT] Clinic data:", JSON.stringify(clinic, null, 2));
+      return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
     }
+
+    console.log("[ADMIN CREATE PATIENT] Clinic found:", JSON.stringify(clinic, null, 2));
 
     // Patient limit kontrolü
     if (clinic.max_patients !== null && clinic.max_patients !== undefined) {
