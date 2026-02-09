@@ -4336,6 +4336,19 @@ app.post("/api/register/doctor", async (req, res) => {
       created_at: new Date().toISOString(),
     };
 
+    console.log("[DOCTOR REGISTER] DEBUG: Request received:", {
+      clinicCode: clinicCode.trim(),
+      phone: phone.trim(),
+      name: name || patientName,
+      email: email?.trim() || null,
+      department: req.body.department || null,
+      specialties: req.body.specialties || [],
+      title: req.body.title || null,
+      experience_years: req.body.experienceYears || null,
+      languages: req.body.languages || [],
+      created_at: new Date().toISOString(),
+    });
+
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
       .insert(newPatient)
