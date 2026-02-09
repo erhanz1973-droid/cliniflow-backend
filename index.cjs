@@ -4297,13 +4297,8 @@ app.put("/api/patient/role", async (req, res) => {
   }
 });
 
-// 🔥 BACKEND DEPLOYMENT FORCE - $(date)
-console.log("🔥 BACKEND VERSION: 9a190cd - DEPLOYED TO PRODUCTION");
-
 /* ================= DOCTOR REGISTRATION ================= */
 app.post("/api/register/doctor", async (req, res) => {
-  console.log("🚨 PROD REGISTER DOCTOR ROUTE HIT");
-  
   try {
     const {
       clinicCode,
@@ -4312,14 +4307,6 @@ app.post("/api/register/doctor", async (req, res) => {
       email,
       licenseNumber,
     } = req.body || {};
-
-    console.log("[DOCTOR REGISTER] Request received:", {
-      clinicCode,
-      phone,
-      name,
-      email,
-      licenseNumber
-    });
 
     // Validation - ONLY required fields
     if (!clinicCode || !phone || !name) {
@@ -4346,9 +4333,7 @@ app.post("/api/register/doctor", async (req, res) => {
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    console.log("[DOCTOR REGISTER] Found clinic:", clinic.data.name);
-
-    // Create doctor in PATIENTS table with ONLY required fields
+    // Create doctor in PATIENTS table with ONLY whitelist fields
     const doctorPayload = {
       id: crypto.randomUUID(),
       patient_id: generatePatientIdFromName(name),
@@ -4364,8 +4349,6 @@ app.post("/api/register/doctor", async (req, res) => {
       created_at: new Date().toISOString(),
     };
 
-    console.log("🔥 FINAL DOCTOR PAYLOAD (PROD)", JSON.stringify(doctorPayload, null, 2));
-
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
       .insert(doctorPayload)
@@ -4373,15 +4356,12 @@ app.post("/api/register/doctor", async (req, res) => {
       .single();
 
     if (insertError) {
-      console.error("❌ SUPABASE INSERT ERROR (PROD)", insertError);
       return res.status(500).json({ 
         ok: false, 
         error: "registration_failed",
         message: "Doktor kaydı başarısız oldu."
       });
     }
-
-    console.log("[DOCTOR REGISTER] Doctor created successfully:", insertedPatient);
 
     res.json({
       ok: true,
