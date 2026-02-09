@@ -4357,29 +4357,6 @@ app.post("/api/register/doctor", async (req, res) => {
         if (referrer) {
           await supabase.from("referrals").insert({
             referrer_id: referrer.patient_id,
-            referred_id: patient_id,
-            referral_code: inviterReferralCode,
-            status: "pending",
-          });
-        }
-      } catch (referralError) {
-        console.error("[DOCTOR REGISTER] Referral error:", referralError);
-      }
-    }
-
-    // Create JWT token for doctor
-    const doctorToken = jwt.sign(
-      { 
-        patientId: patient_id, 
-        clinicId: clinic.id,
-        clinicCode: clinicCode.trim(),
-        role: "DOCTOR",
-        roleType: "DOCTOR"
-      },
-      JWT_SECRET,
-      { expiresIn: "30d" }
-    );
-
     console.log("[DOCTOR REGISTER] Doctor registered successfully:", {
       patient_id,
       id: crypto.randomUUID(), // Log the UUID we're setting
@@ -4387,7 +4364,7 @@ app.post("/api/register/doctor", async (req, res) => {
       role: "DOCTOR",
       status: "PENDING"
     });
-
+    
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
