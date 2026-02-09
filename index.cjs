@@ -4346,20 +4346,6 @@ app.post("/api/register/doctor", async (req, res) => {
       console.error("[DOCTOR REGISTER] Doctor data being inserted:", JSON.stringify(newPatient, null, 2));
       return res.status(500).json({ 
         ok: false, 
-        error: "registration_failed", 
-        message: insertError.message || "Unknown database error",
-        details: {
-          code: insertError.code,
-          message: insertError.message,
-          .single();
-
-        if (referrer) {
-          await supabase.from("referrals").insert({
-            referrer_id: referrer.patient_id,
-    console.log("[DOCTOR REGISTER] Doctor registered successfully:", {
-      patient_id,
-      id: crypto.randomUUID(), // Log the UUID we're setting
-      name: name || patientName,
       role: "DOCTOR",
       status: "PENDING"
     });
