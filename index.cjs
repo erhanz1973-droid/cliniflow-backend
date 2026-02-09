@@ -4297,6 +4297,8 @@ app.post("/api/register/doctor", async (req, res) => {
     const patientCount = existingPatients?.length || 0;
     const maxPatients = clinic.max_patients || 10;
 
+    console.log("[DOCTOR REGISTER] Patient count:", patientCount, "Max allowed:", maxPatients);
+
     if (patientCount >= maxPatients) {
       return res.status(400).json({ ok: false, error: "clinic_full" });
     }
@@ -4332,7 +4334,9 @@ app.post("/api/register/doctor", async (req, res) => {
 
     if (insertError) {
       console.error("[DOCTOR REGISTER] Insert error:", insertError);
-      return res.status(500).json({ ok: false, error: "registration_failed" });
+      console.error("[DOCTOR REGISTER] Insert error details:", JSON.stringify(insertError, null, 2));
+      console.error("[DOCTOR REGISTER] Patient data being inserted:", JSON.stringify(newPatient, null, 2));
+      return res.status(500).json({ ok: false, error: "registration_failed", details: insertError.message || "Unknown database error" });
     }
 
     // Handle referrals
