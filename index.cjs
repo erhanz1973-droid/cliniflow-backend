@@ -4352,9 +4352,10 @@ app.post("/api/register/doctor", async (req, res) => {
       console.error("[DOCTOR REGISTER] Doctor data being inserted:", JSON.stringify(newPatient, null, 2));
       return res.status(500).json({ 
         ok: false, 
-      role: "DOCTOR",
-      status: "PENDING"
-    });
+        error: "registration_failed",
+        details: insertError.message
+      });
+    }
     
     res.json({
       ok: true,
