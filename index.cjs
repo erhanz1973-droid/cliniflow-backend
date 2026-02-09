@@ -4387,18 +4387,17 @@ app.post("/api/register/doctor", async (req, res) => {
       role: "DOCTOR"
     });
     
+    // Create doctor in PATIENTS table with ONLY existing fields
     const newPatient = {
-      id: crypto.randomUUID(), // 🔥 CRITICAL: Add UUID for id field
+      id: crypto.randomUUID(),
       patient_id: generatePatientIdFromName(name || patientName),
       clinic_id: clinic.id,
       clinic_code: clinicCode.trim(),
       name: name || patientName,
-      full_name: name || patientName,
       phone: phone.trim(),
       email: email?.trim() || null,
-      referral_code: generateReferralCode(),
-      status: "PENDING", // Doctors start as PENDING
-      role: "DOCTOR", // Explicitly DOCTOR
+      status: "PENDING",
+      role: "DOCTOR",
       created_at: new Date().toISOString(),
     };
 
