@@ -592,7 +592,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
 
       // Find patient UUID by patient_id
       const { data: patientData, error: patientError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("id, status, clinic_id")
         .eq("patient_id", patientId)
         .eq("clinic_id", clinicId)
@@ -760,8 +760,8 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
 
       // First, try to find patient by patient_id and clinic_id
       let { data: patientData, error: patientError } = await supabase
-        .from("doctors")
-        .select("id, status, clinic_id, full_name, name")
+        .from("patients")
+        .select("id, status, clinic_id, name, name")
         .eq("patient_id", String(patientId).trim())
         .eq("clinic_id", String(clinicId).trim())
         .maybeSingle();
@@ -770,8 +770,8 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
       if (patientError || !patientData) {
         console.log("[TREATMENTS POST] Patient not found with clinic_id filter. Trying without clinic_id filter...");
         const { data: allPatients, error: allError } = await supabase
-          .from("doctors")
-          .select("id, status, clinic_id, full_name, name")
+          .from("patients")
+          .select("id, status, clinic_id, name, name")
           .eq("patient_id", String(patientId).trim());
         
         console.log("[TREATMENTS POST] All patients with patient_id:", {
@@ -779,7 +779,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
           foundCount: allPatients?.length || 0,
           patients: allPatients?.map(p => ({
             id: p.id,
-            patient_id: p.full_name,
+            patient_id: p.name,
             clinic_id: p.clinic_id,
             name: p.name
           })) || [],
@@ -1001,7 +1001,7 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
 
       // Find patient UUID by patient_id
       const { data: patientData, error: patientError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("id, status, clinic_id")
         .eq("patient_id", patientId)
         .eq("clinic_id", clinicId)
@@ -1214,8 +1214,8 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
       
       // Find patient UUID by patient_id
       const { data: patientData, error: patientError } = await supabase
-        .from("doctors")
-        .select("id, status, clinic_id, full_name, name")
+        .from("patients")
+        .select("id, status, clinic_id, name, name")
         .eq("patient_id", patientId)
         .eq("clinic_id", clinicId)
         .maybeSingle();
@@ -1224,7 +1224,7 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
         hasData: !!patientData, 
         hasError: !!patientError,
         error: patientError,
-        patientData: patientData ? { id: patientData.id, patient_id: patientData.full_name, name: patientData.name, status: patientData.status } : null
+        patientData: patientData ? { id: patientData.id, patient_id: patientData.name, name: patientData.name, status: patientData.status } : null
       });
 
       if (patientError) {
@@ -1496,7 +1496,7 @@ async function saveTravel(req, res) {
 
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     let query = supabase
-      .from("doctors")
+      .from("patients")
       .select("id, clinic_id")
       .eq("patient_id", patientId);
     
@@ -1652,7 +1652,7 @@ async function saveTravel(req, res) {
     console.log("Travel SAVE - Success:", {
       patientId,
       patientUuid,
-      savedPatientUuid: savedData.full_name,
+      savedPatientUuid: savedData.name,
       hasHotel: !!finalTravelData.hotel,
       hotelData: JSON.stringify(finalTravelData.hotel, null, 2),
       hasAirportPickup: !!finalTravelData.airportPickup,
@@ -1723,8 +1723,8 @@ function userAuth(req, res, next) {
 async function checkPatientApproved(patientId, clinicId) {
   try {
     const { data: patient, error } = await supabase
-      .from("doctors")
-      .select("id, full_name, status, clinic_id")
+      .from("patients")
+      .select("id, name, status, clinic_id")
       .eq("patient_id", String(patientId))
       .eq("clinic_id", clinicId)
       .maybeSingle();
@@ -2018,8 +2018,8 @@ app.post("/api/patient/login", async (req, res) => {
 
     // Hasta bul (telefon numarası ile)
     const { data: patient, error } = await supabase
-      .from("doctors")
-      .select("id, full_name, name, phone, status, clinic_id, clinic_code, role")
+      .from("patients")
+      .select("id, name, name, phone, status, clinic_id, clinic_code, role")
       .eq("phone", trimmedPhone)
       .maybeSingle();
 
@@ -2051,7 +2051,7 @@ app.post("/api/patient/login", async (req, res) => {
     // JWT token oluştur (register endpoint ile aynı format)
     const token = jwt.sign(
       { 
-        patientId: patient.full_name, 
+        patientId: patient.name, 
         clinicId: patient.clinic_id,
         clinicCode: clinic.clinic_code || patient.clinic_code || "",
         role: patient.role || "PATIENT",
@@ -2065,7 +2065,7 @@ app.post("/api/patient/login", async (req, res) => {
     res.json({
       ok: true,
       token,
-      patientId: patient.full_name,
+      patientId: patient.name,
       name: patient.name || "",
       phone: patient.phone || "",
       status: patient.status || "PENDING",
@@ -2219,7 +2219,7 @@ app.get("/api/admin/clinic", adminAuth, async (req, res) => {
 
     // Patient count hesapla
     const { count: patientCount, error: countError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*", { count: "exact", head: true })
       .eq("clinic_id", req.clinicId);
 
@@ -2449,7 +2449,7 @@ app.put("/api/admin/clinic", adminAuth, async (req, res) => {
 
     // Patient count hesapla
     const { count: patientCount, error: countError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*", { count: "exact", head: true })
       .eq("clinic_id", req.clinicId);
 
@@ -2531,7 +2531,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
 
     // Tüm hastaları getir (hem PENDING hem APPROVED)
     const { data: patients, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .eq("clinic_id", req.clinicId)
       .order("created_at", { ascending: false });
@@ -2542,8 +2542,8 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
     }
 
     const list = (patients || []).map((p) => ({
-      requestId: p.full_name, // Backward compatibility
-      patientId: p.full_name,
+      requestId: p.name, // Backward compatibility
+      patientId: p.name,
       referralCode: p.referral_code || null,
       name: p.name || "",
       phone: p.phone || "",
@@ -2593,7 +2593,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
     // Patient limit kontrolü
     if (clinic.max_patients !== null && clinic.max_patients !== undefined) {
       const { count, error: countError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("*", { count: "exact", head: true })
         .eq("clinic_id", req.clinicId);
       
@@ -2627,7 +2627,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
         }
         
         const { data: existingById } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("patient_id")
           .eq("patient_id", code)
           .maybeSingle();
@@ -2635,7 +2635,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
         let existingByCode = null;
         try {
           const { data } = await supabase
-            .from("doctors")
+            .from("patients")
             .select("referral_code")
             .eq("referral_code", code)
             .maybeSingle();
@@ -2664,7 +2664,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
     let patientError;
     
     const { data: patientWithCode, error: errorWithCode } = await supabase
-      .from("doctors")
+      .from("patients")
       .insert({
         clinic_id: clinic.id,
         patient_id: nextPatientId,
@@ -2679,7 +2679,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
     if (errorWithCode && errorWithCode.message && errorWithCode.message.includes("referral_code")) {
       console.warn("[ADMIN CREATE PATIENT] referral_code column not found, inserting without referral_code");
       const { data: patientWithoutCode, error: errorWithoutCode } = await supabase
-        .from("doctors")
+        .from("patients")
         .insert({
           clinic_id: clinic.id,
           patient_id: nextPatientId,
@@ -2716,8 +2716,8 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
       console.log(`[ADMIN CREATE PATIENT] Referral code provided: ${code}. Looking up inviter in clinic ${clinic.clinic_code}`);
 
       const { data: inviterPatient, error: inviterErr } = await supabase
-        .from("doctors")
-        .select("id, full_name, name, clinic_id")
+        .from("patients")
+        .select("id, name, name, clinic_id")
         .eq("patient_id", code)
         .eq("clinic_id", clinic.id)
         .maybeSingle();
@@ -2726,7 +2726,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
         console.error("[ADMIN CREATE PATIENT] Invalid referral code (inviter not found):", { code, inviterErr });
         // Rollback created patient to avoid silently creating without intended referral link
         try {
-          await supabase.from("doctors").delete().eq("id", newPatient.id);
+          await supabase.from("patients").delete().eq("id", newPatient.id);
           console.log("[ADMIN CREATE PATIENT] Rolled back patient due to invalid referral code:", newPatient.patient_id);
         } catch (rbErr) {
           console.error("[ADMIN CREATE PATIENT] Rollback failed:", rbErr?.message || rbErr);
@@ -2757,7 +2757,7 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
         console.error("[ADMIN CREATE PATIENT] Failed to create referral:", refErr);
         // Rollback patient to keep data consistent
         try {
-          await supabase.from("doctors").delete().eq("id", newPatient.id);
+          await supabase.from("patients").delete().eq("id", newPatient.id);
           console.log("[ADMIN CREATE PATIENT] Rolled back patient due to referral insert failure:", newPatient.patient_id);
         } catch (rbErr) {
           console.error("[ADMIN CREATE PATIENT] Rollback failed:", rbErr?.message || rbErr);
@@ -2774,8 +2774,8 @@ app.post("/api/admin/patients", adminAuth, async (req, res) => {
 
     res.json({
       ok: true,
-      patientId: newPatient.full_name,
-      referralCode: newPatient.referral_code || newPatient.full_name,
+      patientId: newPatient.name,
+      referralCode: newPatient.referral_code || newPatient.name,
       name: newPatient.name || "",
       phone: newPatient.phone || "",
       status: newPatient.status,
@@ -2864,8 +2864,8 @@ app.post("/api/register", async (req, res) => {
 
     // Check if phone already exists
     const { data: existingPatient, error: phoneCheckError } = await supabase
-      .from("doctors")
-      .select("full_name, phone, name")
+      .from("patients")
+      .select("name, phone, name")
       .eq("phone", phone.trim())
       .single();
 
@@ -2881,7 +2881,7 @@ app.post("/api/register", async (req, res) => {
     if (existingPatient) {
       console.log("[REGISTER] Phone already exists:", {
         phone: phone.trim(),
-        existingPatientId: existingPatient.full_name,
+        existingPatientId: existingPatient.name,
         existingName: existingPatient.name
       });
       return res.status(400).json({ 
@@ -2911,7 +2911,7 @@ app.post("/api/register", async (req, res) => {
     // Check patient limit (PRO has unlimited, so skip check)
     if (maxPatients !== null && maxPatients !== undefined && plan !== "PRO") {
       const { count, error: countError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("*", { count: "exact", head: true })
         .eq("clinic_id", clinic.id);
       
@@ -2947,7 +2947,7 @@ app.post("/api/register", async (req, res) => {
     
     // Önce referral_code ile dene
     const { data: patientWithCode, error: errorWithCode } = await supabase
-      .from("doctors")
+      .from("patients")
       .insert({
         clinic_id: clinic.id,
         patient_id: nextPatientId, // Patient ID from name
@@ -2969,7 +2969,7 @@ app.post("/api/register", async (req, res) => {
     if (errorWithCode && errorWithCode.message && errorWithCode.message.includes("referral_code")) {
       console.warn("[REGISTER] referral_code column not found, inserting without referral_code:", errorWithCode.message);
       const { data: patientWithoutCode, error: errorWithoutCode } = await supabase
-        .from("doctors")
+        .from("patients")
         .insert({
           clinic_id: clinic.id,
           patient_id: nextPatientId, // Patient ID from name
@@ -3020,8 +3020,8 @@ app.post("/api/register", async (req, res) => {
       // Referral code = Patient ID (aynı kod), bu yüzden patient_id ile ara
       // referral_code kolonu olmayabilir, bu yüzden sadece patient_id kullan
       const { data: inviterById, error: errorById } = await supabase
-        .from("doctors")
-        .select("id, full_name, name, clinic_id")
+        .from("patients")
+        .select("id, name, name, clinic_id")
         .eq("patient_id", trimmedReferralCode)
         .eq("clinic_id", clinic.id)
         .maybeSingle();
@@ -3029,7 +3029,7 @@ app.post("/api/register", async (req, res) => {
       console.log(`[REGISTER] Search by patient_id result:`, {
         found: !!inviterById,
         error: errorById?.message,
-        patientId: inviterById?.full_name,
+        patientId: inviterById?.name,
         clinicId: inviterById?.clinic_id,
         name: inviterById?.name,
       });
@@ -3043,15 +3043,15 @@ app.post("/api/register", async (req, res) => {
         
         // Debug: Tüm patient_id'leri listele (aynı clinic'te) - referral code'ları görmek için
         const { data: allPatients, error: allError } = await supabase
-          .from("doctors")
-          .select("full_name, name")
+          .from("patients")
+          .select("name, name")
           .eq("clinic_id", clinic.id)
           .limit(20);
         
         if (!allError && allPatients) {
           console.log(`[REGISTER] Available patient IDs (referral codes) in clinic ${clinic.clinic_code}:`, 
             allPatients.map(p => ({
-              patientId: p.full_name,
+              patientId: p.name,
               name: p.name,
             }))
           );
@@ -3076,8 +3076,8 @@ app.post("/api/register", async (req, res) => {
         console.log(`[REGISTER] Creating referral record:`, {
           referralId,
           clinicId: clinic.id,
-          inviterPatientId: inviterPatient.full_name,
-          invitedPatientId: newPatient.full_name,
+          inviterPatientId: inviterPatient.name,
+          invitedPatientId: newPatient.name,
           status: "pending",
         });
         
@@ -3089,7 +3089,7 @@ app.post("/api/register", async (req, res) => {
 
           // Referral kaydı kritik: rollback patient (referralCode ile kayıt yapılan akışta sessizce geçmeyelim)
           try {
-            await supabase.from("doctors").delete().eq("id", newPatient.id);
+            await supabase.from("patients").delete().eq("id", newPatient.id);
             console.log("[REGISTER] Patient rolled back due to referral insert failure:", newPatient.patient_id);
           } catch (rbErr) {
             console.error("[REGISTER] Failed to rollback patient after referral insert failure:", rbErr?.message || rbErr);
@@ -3106,8 +3106,8 @@ app.post("/api/register", async (req, res) => {
         console.log(`[REGISTER] Referral record created successfully:`, {
           referralId: createdReferral.referral_id || createdReferral.id,
           status: createdReferral.status || "NULL",
-          inviter: inviterPatient.full_name,
-          invited: newPatient.full_name,
+          inviter: inviterPatient.name,
+          invited: newPatient.name,
         });
       } else {
         // Referral code geçersiz - hasta kaydını iptal et
@@ -3118,7 +3118,7 @@ app.post("/api/register", async (req, res) => {
         // Hasta kaydını sil (rollback)
         try {
           await supabase
-            .from("doctors")
+            .from("patients")
             .delete()
             .eq("id", newPatient.id);
           console.log(`[REGISTER] Patient record rolled back due to invalid referral code`);
@@ -3137,7 +3137,7 @@ app.post("/api/register", async (req, res) => {
     // Patient için JWT token oluştur (frontend token bekliyor)
     const patientToken = jwt.sign(
       { 
-        patientId: newPatient.full_name, 
+        patientId: newPatient.name, 
         clinicId: clinic.id,
         clinicCode: trimmedClinicCode,
         role: role, // DOCTOR or PATIENT
@@ -3155,9 +3155,9 @@ app.post("/api/register", async (req, res) => {
     res.json({
       ok: true,
       token: patientToken, // Frontend token bekliyor
-      patientId: newPatient.full_name,
+      patientId: newPatient.name,
       referralCode: newPatient.referral_code || null,
-      requestId: newPatient.full_name, // Backward compatibility
+      requestId: newPatient.name, // Backward compatibility
       name: finalName, // Name from request (patientName)
       phone: String(newPatient.phone || phone || "").trim(),
       status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE"), // Set status based on role
@@ -3188,7 +3188,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
 
     // Hasta bul (sadece bu klinik için)
     const { data: patient, error: findError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .eq("clinic_id", req.clinicId)
       .eq("patient_id", trimmedPatientId)
@@ -3200,7 +3200,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
 
     // Hasta durumunu APPROVED yap
     const { data: updatedPatient, error: updateError } = await supabase
-      .from("doctors")
+      .from("patients")
       .update({ status: "APPROVED" })
       .eq("id", patient.id)
       .select()
@@ -3213,7 +3213,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
 
     res.json({
       ok: true,
-      patientId: updatedPatient.full_name,
+      patientId: updatedPatient.name,
       status: updatedPatient.status,
       message: "Patient approved successfully",
     });
@@ -3250,8 +3250,8 @@ app.get("/api/patient/me", async (req, res) => {
       // Patient bilgilerini Supabase'den al
       // patientId token'da TEXT formatında (örn: "p1"), Supabase'de patient_id kolonunda
       const { data: patient, error } = await supabase
-        .from("doctors")
-        .select("full_name, name, phone, email, status, role, clinic_id, created_at, referral_code")
+        .from("patients")
+        .select("name, name, phone, email, status, role, clinic_id, created_at, referral_code")
         .eq("patient_id", String(patientId))
         .eq("clinic_id", clinicId)
         .single();
@@ -3293,7 +3293,7 @@ app.get("/api/patient/me", async (req, res) => {
 
       const response = {
         ok: true,
-        patientId: patient.full_name,
+        patientId: patient.name,
         referralCode: patient.referral_code || null,
         name: patient.name || "",
         phone: patient.phone || "",
@@ -3419,14 +3419,14 @@ app.get("/api/doctor/dashboard/stats", async (req, res) => {
 
     // Get waiting patients count
     const { count: waitingPatients } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*", { count: "exact", head: true })
       .eq("clinic_id", clinicId)
       .eq("status", "PENDING");
 
     // Get total patients count
     const { count: totalPatients } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*", { count: "exact", head: true })
       .eq("clinic_id", clinicId);
 
@@ -3463,7 +3463,7 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
       .select(`
         *,
         patients!inner(
-          full_name,
+          name,
           name
         )
       `)
@@ -3508,10 +3508,10 @@ app.get("/api/doctor/patients", async (req, res) => {
 
     // Get all patients for this clinic
     const { data: patients, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .select(`
         id,
-        full_name,
+        name,
         name,
         phone,
         email,
@@ -3528,7 +3528,7 @@ app.get("/api/doctor/patients", async (req, res) => {
 
     const formattedPatients = patients.map(patient => ({
       id: patient.id,
-      patientId: patient.full_name,
+      patientId: patient.name,
       name: patient.name,
       phone: patient.phone,
       email: patient.email,
@@ -3563,7 +3563,7 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
       .select(`
         *,
         patients!inner(
-          full_name,
+          name,
           name
         )
       `)
@@ -3577,7 +3577,7 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
 
     const formattedPlans = treatmentPlans.map(plan => ({
       id: plan.id,
-      patientId: plan.patients.full_name,
+      patientId: plan.patients.name,
       patientName: plan.patients.name,
       toothNumber: plan.tooth_number,
       diagnosis: plan.diagnosis,
@@ -3618,7 +3618,7 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
 
     // Get patient info to verify they belong to this clinic
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -3681,10 +3681,10 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
 
     // Get patient info
     const { data: patient, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .select(`
         id,
-        full_name,
+        name,
         name,
         status,
         created_at,
@@ -3702,7 +3702,7 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
       ok: true,
       patient: {
         id: patient.id,
-        patientId: patient.full_name,
+        patientId: patient.name,
         name: patient.name,
         status: patient.status === "APPROVED" ? "Active" : "Pending",
         lastVisit: patient.last_visit,
@@ -3733,7 +3733,7 @@ app.get("/api/doctor/treatment/:patientId/teeth", async (req, res) => {
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -3789,7 +3789,7 @@ app.get("/api/doctor/treatment/:patientId/records", async (req, res) => {
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -3849,7 +3849,7 @@ app.get("/api/doctor/treatment/:patientId/photos", async (req, res) => {
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -3941,7 +3941,7 @@ app.put("/api/doctor/treatment/procedure/:procedureId/complete", async (req, res
     const { error: recordError } = await supabase
       .from("treatment_records")
       .insert({
-        patient_id: procedure.full_name,
+        patient_id: procedure.name,
         tooth_number: procedure.fdi_number,
         procedure: procedure.procedures?.[0]?.type || "İşlem",
         status: "COMPLETED",
@@ -3991,7 +3991,7 @@ app.post("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis", async 
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -4094,7 +4094,7 @@ app.put("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosi
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -4168,7 +4168,7 @@ app.delete("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagn
 
     // Get patient info first to verify access
     const { data: patient } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -4252,7 +4252,7 @@ app.put("/api/patient/role", async (req, res) => {
 
     // Update patient role
     const { data: patient, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .update({ role: newRole })
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -4271,7 +4271,7 @@ app.put("/api/patient/role", async (req, res) => {
     // Create new token with updated role
     const updatedToken = jwt.sign(
       { 
-        patientId: patient.full_name, 
+        patientId: patient.name, 
         clinicId: clinicId,
         clinicCode: patient.clinic_code || "",
         role: newRole,
@@ -4284,7 +4284,7 @@ app.put("/api/patient/role", async (req, res) => {
     res.json({
       ok: true,
       message: "Role updated successfully",
-      patientId: patient.full_name,
+      patientId: patient.name,
       name: patient.name,
       role: newRole,
       status: patient.status,
@@ -4351,7 +4351,7 @@ app.post("/api/register/doctor", async (req, res) => {
 
     // Check clinic limits
     const { data: existingPatients, error: countError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("patient_id")
       .eq("clinic_id", clinic.id);
 
@@ -4375,7 +4375,7 @@ app.post("/api/register/doctor", async (req, res) => {
 
     // Create doctor in PATIENTS table with proper doctor fields
     const newPatient = {
-      full_name,
+      name,
       id: crypto.randomUUID(), // 🔥 CRITICAL: Add UUID for id field
       full_name: name || patientName,
       phone: phone.trim(),
@@ -4411,7 +4411,7 @@ app.post("/api/register/doctor", async (req, res) => {
     });
 
     const { data: insertedPatient, error: insertError } = await supabase
-      .from("doctors")
+      .from("patients")
       .insert(newPatient)
       .select()
       .single();
@@ -4434,7 +4434,7 @@ app.post("/api/register/doctor", async (req, res) => {
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      doctorId: full_name, // 🔥 FIX: Return patient_id as doctorId
+      doctorId: name, // 🔥 FIX: Return patient_id as doctorId
       referralCode: referral_code,
       full_name: name || patientName,
       phone: phone,
@@ -4493,7 +4493,7 @@ app.post("/api/register/patient", async (req, res) => {
 
     // Check clinic limits
     const { data: existingPatients, error: countError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("patient_id")
       .eq("clinic_id", clinic.id);
 
@@ -4515,7 +4515,7 @@ app.post("/api/register/patient", async (req, res) => {
 
     // Create patient with ACTIVE status
     const newPatient = {
-      full_name,
+      name,
       name: patientName,
       phone: phone.trim(),
       email: email?.trim() || null,
@@ -4530,7 +4530,7 @@ app.post("/api/register/patient", async (req, res) => {
     };
 
     const { data: insertedPatient, error: insertError } = await supabase
-      .from("doctors")
+      .from("patients")
       .insert(newPatient)
       .select()
       .single();
@@ -4548,15 +4548,15 @@ app.post("/api/register/patient", async (req, res) => {
     if (inviterReferralCode) {
       try {
         const { data: referrer } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("patient_id")
           .eq("referral_code", inviterReferralCode)
           .single();
 
         if (referrer) {
           await supabase.from("referrals").insert({
-            referrer_id: referrer.full_name,
-            referred_id: full_name,
+            referrer_id: referrer.name,
+            referred_id: name,
             referral_code: inviterReferralCode,
             status: "pending",
           });
@@ -4569,7 +4569,7 @@ app.post("/api/register/patient", async (req, res) => {
     // Create JWT token for patient
     const patientToken = jwt.sign(
       { 
-        patientId: full_name, 
+        patientId: name, 
         clinicId: clinic.id,
         clinicCode: clinicCode.trim(),
         role: "PATIENT",
@@ -4580,7 +4580,7 @@ app.post("/api/register/patient", async (req, res) => {
     );
 
     console.log("[PATIENT REGISTER] Patient registered successfully:", {
-      full_name,
+      name,
       name: patientName,
       role: "PATIENT",
       status: "ACTIVE"
@@ -4589,7 +4589,7 @@ app.post("/api/register/patient", async (req, res) => {
     res.json({
       ok: true,
       message: "Patient registration successful.",
-      patientId: full_name,
+      patientId: name,
       referralCode: referral_code,
       name: patientName,
       phone: phone,
@@ -4619,7 +4619,7 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
     
     // 🔥 CRITICAL: Use doctors table with doctors.id (UUID)
     const { data: existingDoctor, error: checkError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .eq("id", doctorId) // Use doctors.id (UUID)
       .maybeSingle();
@@ -4640,7 +4640,7 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
     
     // Update doctor status to ACTIVE in doctors table
     const { data: doctor, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .update({ 
         status: "ACTIVE", // 🔥 CRITICAL: Update to ACTIVE
         updated_at: new Date().toISOString()
@@ -4701,7 +4701,7 @@ app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
 
     // 🔥 CRITICAL: Get doctors from doctors table - NOT patients table
     const { data: doctors, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .in("status", ["PENDING", "ACTIVE"])
       .order("created_at", { ascending: false });
@@ -4771,7 +4771,7 @@ app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
 
     // Get active patients
     const { data: patients, error } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .eq("role", "PATIENT")
       .eq("status", "ACTIVE")
@@ -4814,7 +4814,7 @@ app.post("/api/access/verify", async (req, res) => {
       // Patient bilgilerini Supabase'den al
       // patientId token'da TEXT formatında (örn: "p1"), Supabase'de patient_id kolonunda
       const { data: patient, error } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("status")
         .eq("patient_id", String(patientId))
         .eq("clinic_id", clinicId)
@@ -4864,7 +4864,7 @@ app.post("/api/events", async (req, res) => {
         // Eğer patientId varsa, UUID'sini bul
         if (patientIdText && clinicId) {
           const { data: patientData, error: patientError } = await supabase
-            .from("doctors")
+            .from("patients")
             .select("id")
             .eq("patient_id", patientIdText)
             .eq("clinic_id", clinicId)
@@ -4958,7 +4958,7 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
 
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, status, clinic_id, role")
       .eq("patient_id", patientId)
       .maybeSingle();
@@ -5151,7 +5151,7 @@ app.post("/api/patient/:patientId/upload", upload.single("file"), async (req, re
 
     // 4. Patient UUID'sini al
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -5327,7 +5327,7 @@ app.post("/api/patient/:patientId/messages", async (req, res) => {
 
     // 4. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini ve status'unu al
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, status")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId) // Aynı clinic'ten olmalı
@@ -5440,7 +5440,7 @@ app.post("/api/chat/upload", chatUpload.array("files", 5), async (req, res) => {
 
     // 2. Patient kontrolü ve APPROVED kontrolü
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, status, clinic_id")
       .eq("patient_id", patientId)
       .maybeSingle();
@@ -5689,7 +5689,7 @@ app.post("/api/patient/:patientId/messages/admin", adminAuth, async (req, res) =
   try {
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, status")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId) // Aynı clinic'ten olmalı
@@ -5785,7 +5785,7 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
 
     // Patient UUID'sini al
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -5816,7 +5816,7 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
       let inviterPatientId = null;
       if (ref.inviter_patient_id) {
         const { data: inviterPatient } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("patient_id")
           .eq("id", ref.inviter_patient_id)
           .maybeSingle();
@@ -5827,7 +5827,7 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
       let invitedPatientId = null;
       if (ref.invited_patient_id) {
         const { data: invitedPatient } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("patient_id")
           .eq("id", ref.invited_patient_id)
           .maybeSingle();
@@ -6155,7 +6155,7 @@ app.get("/api/admin/patients/:patientId/health", adminAuth, async (req, res) => 
 
     // Verify patient belongs to clinic
     const { data: patientData, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, patient_id")
       .eq("patient_id", patientId)
       .eq("clinic_id", clinicId)
@@ -6287,8 +6287,8 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
           console.log(`[ADMIN REFERRALS] Referral ${i + 1}:`, {
             id: r.referral_id || r.id,
             status: r.status || "NULL",
-            inviter: r.inviter_patient_name || r.inviter_full_name,
-            invited: r.invited_patient_name || r.invited_full_name,
+            inviter: r.inviter_patient_name || r.inviter_name,
+            invited: r.invited_patient_name || r.invited_name,
           });
         });
       }
@@ -6313,8 +6313,8 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       let inviterPatientId = null;
       if (ref.inviter_patient_id) {
         const { data: inviterPatient, error: inviterError } = await supabase
-          .from("doctors")
-          .select("full_name, name")
+          .from("patients")
+          .select("name, name")
           .eq("id", ref.inviter_patient_id)
           .maybeSingle();
         if (!inviterError && inviterPatient) {
@@ -6330,8 +6330,8 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       let invitedPatientId = null;
       if (ref.invited_patient_id) {
         const { data: invitedPatient, error: invitedError } = await supabase
-          .from("doctors")
-          .select("full_name, name")
+          .from("patients")
+          .select("name, name")
           .eq("id", ref.invited_patient_id)
           .maybeSingle();
         if (!invitedError && invitedPatient) {
@@ -6589,7 +6589,7 @@ app.post("/auth/send-otp", async (req, res) => {
 
     // Find patient by phone
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("*")
       .eq("phone", normalizedPhone)
       .single();
@@ -6608,7 +6608,7 @@ app.post("/auth/send-otp", async (req, res) => {
     console.log("[OTP SEND] OTP sent (demo):", {
       phone: phone.trim(),
       otp: otp,
-      patientId: patient.full_name,
+      patientId: patient.name,
       role: patient.role
     });
 
@@ -6616,7 +6616,7 @@ app.post("/auth/send-otp", async (req, res) => {
       ok: true,
       message: "OTP sent successfully",
       otp: otp, // Only for demo purposes
-      patientId: patient.full_name,
+      patientId: patient.name,
       phone: phone.trim()
     });
 
@@ -6699,7 +6699,7 @@ app.post("/auth/verify-otp", async (req, res) => {
 
           const token = jwt.sign(
             {
-              patientId: mockPatient.full_name,
+              patientId: mockPatient.name,
               clinicId: mockPatient.clinic_id,
               clinicCode: mockPatient.clinic_code,
               role: mockPatient.role,
@@ -6715,7 +6715,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           return res.json({
             ok: true,
             token,
-            patientId: mockPatient.full_name,
+            patientId: mockPatient.name,
             type: "patient",
             role: "PATIENT",
             status: mockPatient.status
@@ -6724,7 +6724,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         
         // Find patient by phone for DEV mode
         const { data: patient, error: patientError } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("*")
           .eq("phone", normalizedPhone)
           .single();
@@ -6739,7 +6739,7 @@ app.post("/auth/verify-otp", async (req, res) => {
 
         const token = jwt.sign(
           {
-            patientId: patient.full_name,
+            patientId: patient.name,
             clinicId: patient.clinic_id,
             clinicCode: patient.clinic_code,
             role: patient.role,
@@ -6751,7 +6751,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         );
 
         console.log("[OTP VERIFY] DEV Patient Success:", {
-          patientId: patient.full_name,
+          patientId: patient.name,
           phone: phone,
           role: patient.role
         });
@@ -6759,7 +6759,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         return res.json({
           ok: true,
           token,
-          patientId: patient.full_name,
+          patientId: patient.name,
           type: "patient",
           role: "PATIENT",
           status: patient.status
@@ -6767,7 +6767,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       } else if (type === "doctor") {
         // Find doctor by phone for DEV mode
         const { data: doctor, error: doctorError } = await supabase
-          .from("doctors")
+          .from("patients")
           .select("*")
           .eq("phone", normalizedPhone)
           .single();
@@ -6865,7 +6865,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     if (type === "patient") {
       // Find patient by phone
       const { data: patient, error: patientError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("*")
         .eq("phone", normalizedPhone)
         .single();
@@ -6880,7 +6880,7 @@ app.post("/auth/verify-otp", async (req, res) => {
 
       const token = jwt.sign(
         {
-          patientId: patient.full_name,
+          patientId: patient.name,
           clinicId: patient.clinic_id,
           clinicCode: patient.clinic_code,
           role: patient.role,
@@ -6892,7 +6892,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       );
 
       console.log("[OTP VERIFY] Patient Success:", {
-        patientId: patient.full_name,
+        patientId: patient.name,
         phone: phone,
         role: patient.role
       });
@@ -6900,7 +6900,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.json({
         ok: true,
         token,
-        patientId: patient.full_name,
+        patientId: patient.name,
         type: "patient",
         role: "PATIENT",
         status: patient.status
@@ -6908,7 +6908,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     } else if (type === "doctor") {
       // Find doctor by phone
       const { data: doctor, error: doctorError } = await supabase
-        .from("doctors")
+        .from("patients")
         .select("*")
         .eq("phone", normalizedPhone)
         .single();
@@ -7106,7 +7106,7 @@ app.get("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
     
     // Verify patient belongs to clinic
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, clinic_id")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId)
@@ -7166,7 +7166,7 @@ app.post("/api/hair/zones/:patientId", adminAuth, async (req, res) => {
 
     // Verify patient belongs to clinic
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, clinic_id")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId)
@@ -7279,7 +7279,7 @@ app.get("/api/hair/summary/:patientId", adminAuth, async (req, res) => {
 
     // Verify patient belongs to clinic
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, clinic_id")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId)
@@ -7332,7 +7332,7 @@ app.get("/api/hair/donor/:patientId", adminAuth, async (req, res) => {
 
     // Verify patient belongs to clinic
     const { data: patient, error: patientError } = await supabase
-      .from("doctors")
+      .from("patients")
       .select("id, clinic_id")
       .eq("patient_id", patientId)
       .eq("clinic_id", req.clinicId)
