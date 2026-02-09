@@ -4569,7 +4569,13 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
 
     console.log("[APPROVE DOCTOR] Current doctor status:", existingDoctor.status);
     
-    // Update doctor status to ACTIVE in doctors table
+    // Update doctor status to ACTIVE in patients table
+    console.log("[APPROVE DOCTOR] Attempting to update doctor:", {
+      doctorId,
+      currentStatus: existingDoctor.status,
+      newStatus: "ACTIVE"
+    });
+
     const { data: doctor, error } = await supabase
       .from("patients")
       .update({ 
@@ -4584,6 +4590,7 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
 
     if (error) {
       console.error("[APPROVE DOCTOR] Error:", error);
+      console.error("[APPROVE DOCTOR] Error details:", JSON.stringify(error, null, 2));
       return res.status(500).json({ ok: false, error: "approval_failed", details: error.message });
     }
 
