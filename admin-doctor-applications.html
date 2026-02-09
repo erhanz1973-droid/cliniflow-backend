@@ -301,7 +301,7 @@
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
           },
-          body: JSON.stringify({ patientId })
+          body: JSON.stringify({ doctorId: patientId })
         });
 
         const data = await response.json();
