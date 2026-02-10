@@ -4927,7 +4927,7 @@ app.post("/api/admin/tasks", adminAuth, async (req, res) => {
 
     // 3. Verify doctor exists, is active, belongs to same clinic, and is member of treatment group
     const { data: doctor, error: doctorError } = await supabase
-      .from("patients")
+      .from("doctors")
       .select("id, clinic_id, status, role")
       .eq("id", assigned_doctor_id)
       .eq("clinic_id", clinicId)
@@ -5009,7 +5009,7 @@ app.post("/api/admin/tasks", adminAuth, async (req, res) => {
 /* ================= DOCTOR TASKS ================= */
 app.get("/api/doctor/tasks", verifyDoctorToken, async (req, res) => {
   try {
-    const { clinicId, doctorId } = v.decoded;
+    const { clinicId, doctorId } = req.doctor;
 
     // Get doctor's tasks with patient and treatment group info
     const { data: tasks, error: tasksError } = await supabase
@@ -5095,7 +5095,7 @@ app.get("/api/doctor/tasks", verifyDoctorToken, async (req, res) => {
 /* ================= DOCTOR UPDATE TASK STATUS ================= */
 app.patch("/api/doctor/tasks/:taskId", verifyDoctorToken, async (req, res) => {
   try {
-    const { clinicId, doctorId } = v.decoded;
+    const { clinicId, doctorId } = req.doctor;
     const { taskId } = req.params;
     const { status } = req.body;
 
