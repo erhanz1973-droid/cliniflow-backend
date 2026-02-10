@@ -373,15 +373,175 @@
             <div class="patient-header">
               <div class="patient-info">
                 <div class="patient-name">${patient.name}</div>
-                <div class="patient-details">${patient.phone} • ${patient.referralCode}</div>
+                <div class="patient-details">
+                  <div>📞 ${patient.phone || '-'}</div>
+                  <div>🆔 ${patient.patient_id || patient.id}</div>
+                  <div>📅 ${formatDate(patient.created_at)}</div>
+                </div>
               </div>
               <div class="patient-actions">
-                <button class="btn btn-sm btn-info" onclick="viewPatientDetails('${patient.id}')">👁 Detaylar</button>
-                <button class="btn btn-sm btn-warning" onclick="unassignPatient('${patient.id}')">🔤 Çıkar</button>
+                <button class="btn btn-sm btn-primary" onclick="assignPatientToDoctor('${patient.patient_id || patient.id}')">
+                  �‍⚕️ Assign to Doctor
+                </button>
+                <button class="btn btn-sm btn-success" onclick="viewPatientTreatmentGroup('${patient.id}')">
+                  🦷 Treatment Group
+                </button>
               </div>
             </div>
           </div>
         `).join('');
+      }
+    }
+
+    // Assign patient to doctor
+    async function assignPatientToDoctor(patientId) {
+      const doctors = allDoctors.filter(d => d.status === 'ACTIVE');
+      if (doctors.length === 0) {
+        alert('Aktif doktor bulunamadı!');
+        return;
+      }
+
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.innerHTML = `
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>👨‍⚕️ Hasta Doktora Ata</h3>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Doktor Seçimi</label>
+              <select id="doctor-select" class="form-control">
+                <option value="">Doktor seçin...</option>
+                ${doctors.map(doctor => `
+                  <option value="${doctor.id}">${doctor.name} - ${doctor.department || 'Bilinmeyen'}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="auto-create-group" checked>
+                Otomatik Treatment Group oluştur
+              </label>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">İptal</button>
+            <button type="button" class="btn btn-primary" onclick="confirmAssignPatient('${patientId}')">Ata</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+
+    // Confirm assign patient
+    async function confirmAssignPatient(patientId) {
+      const doctorId = document.getElementById('doctor-select').value;
+      const autoCreateGroup = document.getElementById('auto-create-group').checked;
+
+      if (!doctorId) {
+        alert('Doktor seçmelisiniz!');
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch('/api/admin/assign-patient', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            patientId,
+            doctorId,
+            autoCreateGroup
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.ok) {
+          alert(`✅ Hasta başarıyla doktora atandı!\n${data.data.assignmentType === 'new_group' ? 'Yeni Treatment Group oluşturuldu.' : 'Mevcut Treatment Group kullanıldı.'}`);
+          closeModal();
+          loadPatients();
+        } else {
+          throw new Error(data.error || 'Atama başarısız');
+        }
+      } catch (error) {
+        console.error('Assign patient error:', error);
+        alert('❌ Hasta atama başarısız: ' + error.message);
+      }
+    }
+
+    // View patient treatment group
+    async function viewPatientTreatmentGroup(patientId) {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch(`/api/admin/patients/${patientId}/treatment-group`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.ok && data.treatmentGroup) {
+          const group = data.treatmentGroup;
+          const modal = document.createElement('div');
+          modal.className = 'modal';
+          modal.innerHTML = `
+            <div class="modal-content">
+              <div class="modal-header">
+                <h3>🦷 Treatment Group</h3>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+              </div>
+              <div class="modal-body">
+                <div class="form-group">
+                  <label>Group Adı</label>
+                  <div>${group.name}</div>
+                </div>
+                <div class="form-group">
+                  <label>Açıklama</label>
+                  <div>${group.description || '-'}</div>
+                </div>
+                <div class="form-group">
+                  <label>Durum</label>
+                  <div><span class="status ${group.status}">${getStatusText(group.status)}</span></div>
+                </div>
+                <div class="form-group">
+                  <label>Doktorlar</label>
+                  <div>
+                    ${group.members ? group.members.map(member => `
+                      <div>👨‍⚕️ ${member.doctor_name} ${member.is_primary ? '(Primary)' : ''}</div>
+                    `).join('') : 'Doktor bulunmuyor'}
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Oluşturulma Tarihi</label>
+                  <div>${formatDate(group.created_at)}</div>
+                </div>
+              </div>
+              <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Kapat</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(modal);
+        } else {
+          alert('Bu hastanın Treatment Group\'u bulunmuyor.');
+        }
+      } catch (error) {
+        console.error('View treatment group error:', error);
+        alert('❌ Treatment Group yüklenemedi: ' + error.message);
       }
     }
 
@@ -954,6 +1114,162 @@
       }
     }
 
+    // Load treatment groups
+    async function loadTreatmentGroups() {
+      const token = localStorage.getItem('admin_token');
+      const loadingContainer = document.getElementById('loading-container');
+      const errorContainer = document.getElementById('error-container');
+      const groupsContainer = document.getElementById('treatment-groups-container');
+      const emptyContainer = document.getElementById('empty-container');
+
+      // Show loading
+      if (loadingContainer) loadingContainer.style.display = 'block';
+      if (errorContainer) errorContainer.innerHTML = '';
+      if (emptyContainer) emptyContainer.style.display = 'none';
+
+      try {
+        const response = await fetch('/api/treatment-groups', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.ok && data.groups) {
+          renderTreatmentGroups(data.groups);
+        } else {
+          throw new Error(data.error || 'Failed to load treatment groups');
+        }
+      } catch (error) {
+        console.error('Load treatment groups error:', error);
+        if (errorContainer) {
+          errorContainer.innerHTML = `<div class="error">Failed to load treatment groups: ${error.message}</div>`;
+        }
+      } finally {
+        if (loadingContainer) loadingContainer.style.display = 'none';
+      }
+    }
+
+    // Render treatment groups
+    function renderTreatmentGroups(groups) {
+      const container = document.getElementById('treatment-groups-grid');
+      const emptyContainer = document.getElementById('treatment-groups-empty');
+      
+      if (!container) return;
+      
+      if (groups.length === 0) {
+        container.style.display = 'none';
+        if (emptyContainer) emptyContainer.style.display = 'flex';
+        return;
+      }
+
+      container.style.display = 'block';
+      if (emptyContainer) emptyContainer.style.display = 'none';
+      
+      container.innerHTML = groups.map(group => `
+        <div class="group-card" style="background: var(--card); border: 1px solid var(--b); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
+          <h4 style="margin: 0 0 8px 0; color: #fff;">${group.name}</h4>
+          <p style="margin: 0 0 8px 0; color: var(--muted); font-size: 14px;">${group.description || 'No description'}</p>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <span class="meta-item">👥 ${group.member_count || 0} members</span>
+            <span class="meta-item">📅 ${formatDate(group.created_at)}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Load patients
+    async function loadPatients() {
+      const token = localStorage.getItem('admin_token');
+      const loadingContainer = document.getElementById('loading-container');
+      const errorContainer = document.getElementById('error-container');
+      const patientsContainer = document.getElementById('patients-container');
+      const emptyContainer = document.getElementById('empty-container');
+
+      // Show loading
+      if (loadingContainer) loadingContainer.style.display = 'block';
+      if (errorContainer) errorContainer.innerHTML = '';
+      if (emptyContainer) emptyContainer.style.display = 'none';
+
+      try {
+        const response = await fetch('/api/admin/patients', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.ok && data.patients) {
+          renderPatients(data.patients);
+        } else {
+          throw new Error(data.error || 'Failed to load patients');
+        }
+      } catch (error) {
+        console.error('Load patients error:', error);
+        if (errorContainer) {
+          errorContainer.innerHTML = `<div class="error">Failed to load patients: ${error.message}</div>`;
+        }
+      } finally {
+        if (loadingContainer) loadingContainer.style.display = 'none';
+      }
+    }
+
+    // Render patients table
+    function renderPatients(patients) {
+      const container = document.getElementById('patients-grid');
+      const emptyContainer = document.getElementById('patients-empty');
+      
+      if (!container) return;
+      
+      if (patients.length === 0) {
+        container.style.display = 'none';
+        if (emptyContainer) emptyContainer.style.display = 'flex';
+        return;
+      }
+
+      container.style.display = 'block';
+      if (emptyContainer) emptyContainer.style.display = 'none';
+      
+      container.innerHTML = `
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: var(--card); border-bottom: 1px solid var(--b);">
+              <th style="padding: 12px; text-align: left; color: #fff;">Name</th>
+              <th style="padding: 12px; text-align: left; color: #fff;">Phone</th>
+              <th style="padding: 12px; text-align: left; color: #fff;">Status</th>
+              <th style="padding: 12px; text-align: left; color: #fff;">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${patients.map(patient => `
+              <tr style="border-bottom: 1px solid var(--b);">
+                <td style="padding: 12px; color: #fff;">${patient.name || '-'}</td>
+                <td style="padding: 12px; color: var(--muted);">${patient.phone || '-'}</td>
+                <td style="padding: 12px;">
+                  <span class="status ${patient.status || 'PENDING'}">${getStatusText(patient.status || 'PENDING')}</span>
+                </td>
+                <td style="padding: 12px; color: var(--muted); font-size: 12px;">
+                  ${formatDate(patient.created_at)}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
     function closeModal() {
       const modal = document.querySelector('.modal');
       if (modal) {
@@ -966,9 +1282,16 @@
         'PENDING': 'Beklemede',
         'ACTIVE': 'Aktif',
         'REJECTED': 'Reddedildi',
-        'INACTIVE': 'Pasif'
+        'INACTIVE': 'Pasif',
+        'APPROVED': 'Onaylı'
       };
       return statusMap[status] || status;
+    }
+
+    function formatDate(dateString) {
+      if (!dateString) return '-';
+      const date = new Date(dateString);
+      return date.toLocaleDateString('tr-TR') + ' ' + date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     }
 
     // Event listeners
@@ -979,7 +1302,25 @@
 
     // Load on page load
     document.addEventListener("DOMContentLoaded", () => {
-      showSection('doctors');
+      // Check URL hash for routing
+      const hash = window.location.hash.substring(1); // Remove #
+      if (hash === 'patients') {
+        showSection('patients');
+      } else {
+        showSection('doctors'); // Default
+      }
+    });
+
+    // Handle hash changes
+    window.addEventListener('hashchange', () => {
+      const hash = window.location.hash.substring(1);
+      if (hash === 'patients') {
+        showSection('patients');
+      } else if (hash === 'doctors') {
+        showSection('doctors');
+      } else if (hash === 'treatment-groups') {
+        showSection('treatment-groups');
+      }
     });
   </script>
 </body>

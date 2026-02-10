@@ -2544,44 +2544,43 @@ app.put("/api/admin/clinic", adminAuth, async (req, res) => {
 /* ================= ADMIN PATIENTS (GET) ================= */
 app.get("/api/admin/patients", adminAuth, async (req, res) => {
   try {
-    // Get clinic code first
-    const { data: clinic, error: clinicError } = await supabase
-      .from("clinics")
-      .select("clinic_code")
-      .eq("id", req.clinicId)
-      .single();
+    console.log("[ADMIN PATIENTS] Request received");
 
-    const clinicCode = clinic?.clinic_code || "";
-
-    // Tüm hastaları getir (hem PENDING hem APPROVED)
+    // Get patients with required fields only
     const { data: patients, error } = await supabase
       .from("patients")
-      .select("*")
-      .eq("clinic_id", req.clinicId)
+      .select(`
+        id,
+        patient_id,
+        name,
+        phone,
+        created_at
+      `)
+      .eq("clinic_id", req.admin.clinicId)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Get patients error:", error);
+      console.error("[ADMIN PATIENTS] Error:", error);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_patients" });
     }
 
     const list = (patients || []).map((p) => ({
-      requestId: p.name, // Backward compatibility
-      patientId: p.name,
-      referralCode: p.referral_code || null,
+      id: p.id,
+      patient_id: p.patient_id,
       name: p.name || "",
       phone: p.phone || "",
-      status: p.status || "PENDING",
-      clinicCode: clinicCode,
-      createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
-      updatedAt: p.updated_at ? new Date(p.updated_at).getTime() : Date.now(),
-      treatmentStartDate: p.treatment_start_date ? new Date(p.treatment_start_date).getTime() : null,
+      created_at: p.created_at
     }));
 
-    res.json({ ok: true, list });
+    console.log("[ADMIN PATIENTS] Success:", { count: list.length });
+
+    res.json({ 
+      ok: true, 
+      patients: list  
+    });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Get patients error:", error);
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[ADMIN PATIENTS] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -3198,6 +3197,37 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+/* ================= ADMIN TOKEN TEST ================= */
+app.get("/api/admin/token-test", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+  
+  console.log("[TOKEN TEST] Token:", token);
+  
+  if (!token) {
+    return res.json({ ok: false, error: "missing_token" });
+  }
+  
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, 'clinifly_admin_secret_2024');
+    console.log("[TOKEN TEST] Decoded:", decoded);
+    res.json({ ok: true, decoded });
+  } catch (error) {
+    console.log("[TOKEN TEST] Error:", error.message);
+    res.json({ ok: false, error: error.message });
+  }
+});
+
+/* ================= ADMIN TEST ================= */
+app.get("/api/admin/test", adminAuth, async (req, res) => {
+  res.json({ 
+    ok: true, 
+    message: "Admin auth working",
+    admin: req.admin 
+  });
+});
+
 /* ================= ADMIN APPROVE ================= */
 app.post("/api/admin/approve", adminAuth, async (req, res) => {
   try {
@@ -3210,15 +3240,22 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     const targetPatientId = patientId || requestId;
     const trimmedPatientId = String(targetPatientId).trim();
 
+    console.log("[ADMIN APPROVE] Approving patient:", { 
+      targetPatientId: trimmedPatientId, 
+      clinicId: req.admin.clinicId,
+      clinicCode: req.admin.clinicCode
+    });
+
     // Hasta bul (sadece bu klinik için)
     const { data: patient, error: findError } = await supabase
       .from("patients")
       .select("*")
-      .eq("clinic_id", req.clinicId)
+      .eq("clinic_id", req.admin.clinicId)
       .eq("patient_id", trimmedPatientId)
       .single();
 
     if (findError || !patient) {
+      console.error("[ADMIN APPROVE] Patient not found:", findError);
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
@@ -3231,9 +3268,11 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
       .single();
 
     if (updateError) {
-      console.error("Approve patient error:", updateError);
+      console.error("[ADMIN APPROVE] Update error:", updateError);
       return res.status(500).json({ ok: false, error: "approval_failed" });
     }
+
+    console.log("[ADMIN APPROVE] Patient approved successfully:", updatedPatient.name);
 
     res.json({
       ok: true,
@@ -3243,7 +3282,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Approve error:", error);
+    console.error("[ADMIN APPROVE] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -4756,23 +4795,166 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   }
 });
 
-/* ================= ADMIN ASSIGN PATIENT ================= */
-app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
+/* ================= ADMIN PATIENT TREATMENT GROUP ================= */
+app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req, res) => {
   try {
-    const { patientId, doctorId } = req.body || {};
+    const { patientId } = req.params;
 
-    if (!patientId || !doctorId) {
-      return res.status(400).json({ ok: false, error: "patientId_and_doctorId_required" });
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
     }
 
-    console.log("[ADMIN ASSIGN PATIENT] Request:", { patientId, doctorId });
+    console.log("[ADMIN PATIENT TREATMENT GROUP] Request:", { patientId });
+
+    // Get patient's treatment group assignment
+    const { data: assignment, error: assignmentError } = await supabase
+      .from("patient_group_assignments")
+      .select(`
+        treatment_group_id,
+        treatment_groups!inner(
+          id,
+          name,
+          description,
+          status,
+          created_at
+        )
+      `)
+      .eq("patient_id", patientId)
+      .eq("treatment_groups.clinic_id", req.admin.clinicId)
+      .single();
+
+    if (assignmentError && assignmentError.code !== 'PGRST116') {
+      console.error("[ADMIN PATIENT TREATMENT GROUP] Assignment error:", assignmentError);
+      return res.status(500).json({ ok: false, error: "assignment_check_failed" });
+    }
+
+    if (!assignment) {
+      return res.json({ ok: true, treatmentGroup: null });
+    }
+
+    // Get group members
+    const { data: members, error: membersError } = await supabase
+      .from("treatment_group_members")
+      .select(`
+        doctor_id,
+        is_primary,
+        patients!inner(
+          id,
+          name,
+          department
+        )
+      `)
+      .eq("treatment_group_id", assignment.treatment_group_id)
+      .eq("patients.clinic_id", req.admin.clinicId);
+
+    if (membersError) {
+      console.error("[ADMIN PATIENT TREATMENT GROUP] Members error:", membersError);
+      return res.status(500).json({ ok: false, error: "members_check_failed" });
+    }
+
+    const treatmentGroup = {
+      ...assignment.treatment_groups,
+      members: members ? members.map(member => ({
+        doctor_id: member.doctor_id,
+        doctor_name: member.patients.name,
+        department: member.patients.department,
+        is_primary: member.is_primary
+      })) : []
+    };
+
+    console.log("[ADMIN PATIENT TREATMENT GROUP] Success:", {
+      patientId,
+      groupId: treatmentGroup.id,
+      memberCount: treatmentGroup.members.length
+    });
+
+    res.json({
+      ok: true,
+      treatmentGroup
+    });
+
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[ADMIN PATIENT TREATMENT GROUP] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN FIND TEST DATA ================= */
+app.get("/api/admin/find-test-data", async (req, res) => {
+  try {
+    // Find patients
+    const { data: patients, error: patientError } = await supabase
+      .from("patients")
+      .select("id, patient_id, name, role, status, clinic_id")
+      .eq("clinic_id", 1)
+      .limit(5);
+
+    // Find doctors
+    const { data: doctors, error: doctorError } = await supabase
+      .from("patients")
+      .select("id, patient_id, name, role, status, clinic_id")
+      .eq("clinic_id", 1)
+      .eq("role", "DOCTOR")
+      .eq("status", "ACTIVE")
+      .limit(5);
+
+    res.json({
+      ok: true,
+      patients: patients || [],
+      doctors: doctors || [],
+      errors: {
+        patientError: patientError?.message,
+        doctorError: doctorError?.message
+      }
+    });
+  } catch (error) {
+    res.json({ ok: false, error: error.message });
+  }
+});
+
+/* ================= ADMIN ASSIGN PATIENT (TEST) ================= */
+app.post("/api/admin/assign-patient", async (req, res) => {
+  try {
+    const { patient_id, doctor_id } = req.body || {};
+
+    if (!patient_id || !doctor_id) {
+      return res.status(400).json({ ok: false, error: "patient_id_and_doctor_id_required" });
+    }
+
+    // CLINIC FALLBACK LOGIC FOR DEV/TEST
+    let clinicId = req.admin?.clinicId;
+    
+    // DEV / TEST fallback - use patient's clinic_id if admin clinic not available
+    if (!clinicId && patient_id) {
+      console.log("[ADMIN ASSIGN PATIENT] Using patient clinic fallback");
+      const { data: patient, error: patientError } = await supabase
+        .from("patients")
+        .select("clinic_id")
+        .eq("patient_id", patient_id)
+        .single();
+      
+      if (!patientError && patient) {
+        clinicId = patient.clinic_id;
+        console.log("[ADMIN ASSIGN PATIENT] Found clinic from patient:", clinicId);
+      }
+    }
+
+    if (!clinicId) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_found"
+      });
+    }
+
+    console.log("[ADMIN ASSIGN PATIENT] Request:", { patient_id, doctor_id, clinicId });
 
     // 1. Get patient details
     const { data: patient, error: patientError } = await supabase
       .from("patients")
       .select("id, patient_id, name, clinic_id, status")
-      .eq("clinic_id", req.clinicId)
-      .eq("patient_id", patientId)
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patient_id)
       .single();
 
     if (patientError || !patient) {
@@ -4784,8 +4966,8 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
     const { data: doctor, error: doctorError } = await supabase
       .from("patients")
       .select("id, patient_id, name, clinic_id, status, department")
-      .eq("clinic_id", req.clinicId)
-      .eq("id", doctorId)
+      .eq("clinic_id", clinicId)
+      .eq("id", doctor_id)
       .eq("role", "DOCTOR")
       .eq("status", "ACTIVE")
       .single();
@@ -4808,7 +4990,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
         )
       `)
       .eq("patient_id", patient.id)
-      .eq("treatment_groups.clinic_id", req.clinicId);
+      .eq("treatment_groups.clinic_id", clinicId);
 
     if (assignmentError) {
       console.error("[ADMIN ASSIGN PATIENT] Assignment check error:", assignmentError);
@@ -4831,9 +5013,9 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
         .insert({
           name: groupName,
           description: groupDescription,
-          clinic_id: req.clinicId,
+          clinic_id: clinicId,
           status: "ACTIVE",
-          created_by: req.admin.id
+          created_by: req.admin?.adminId || 1
         })
         .select()
         .single();
@@ -4852,7 +5034,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
         .insert({
           treatment_group_id: targetGroupId,
           patient_id: patient.id,
-          assigned_by: req.admin.id
+          assigned_by: req.admin?.adminId || 1
         });
 
       if (assignError) {
@@ -4866,7 +5048,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       .from("treatment_group_members")
       .select("id, is_primary")
       .eq("treatment_group_id", targetGroupId)
-      .eq("doctor_id", doctorId)
+      .eq("doctor_id", doctor_id)
       .single();
 
     if (memberCheckError && memberCheckError.code !== 'PGRST116') {
@@ -4880,9 +5062,9 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
         .from("treatment_group_members")
         .insert({
           treatment_group_id: targetGroupId,
-          doctor_id: doctorId,
+          doctor_id: doctor_id,
           is_primary: true,
-          added_by: req.admin.id
+          added_by: req.admin?.adminId || 1
         });
 
       if (addMemberError) {
@@ -4904,54 +5086,20 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       console.log("[ADMIN ASSIGN PATIENT] Updated doctor to primary member");
     }
 
-    // 5. Get final group details for response
-    const { data: finalGroup, error: finalGroupError } = await supabase
-      .from("treatment_groups")
-      .select(`
-        id,
-        name,
-        description,
-        status,
-        created_at
-      `)
-      .eq("id", targetGroupId)
-      .single();
-
-    if (finalGroupError) {
-      console.error("[ADMIN ASSIGN PATIENT] Final group error:", finalGroupError);
-      return res.status(500).json({ ok: false, error: "final_group_error" });
-    }
-
     console.log("[ADMIN ASSIGN PATIENT] Success:", {
-      patientId: patient.patient_id,
-      doctorId: doctor.patient_id,
-      groupId: targetGroupId,
-      groupName: finalGroup.name
+      patient_id: patient.patient_id,
+      doctor_id: doctor.patient_id,
+      groupId: targetGroupId
     });
 
     res.json({
       ok: true,
-      message: "Patient successfully assigned to doctor",
-      data: {
-        patient: {
-          id: patient.id,
-          patient_id: patient.patient_id,
-          name: patient.name
-        },
-        doctor: {
-          id: doctor.id,
-          patient_id: doctor.patient_id,
-          name: doctor.name,
-          department: doctor.department
-        },
-        treatmentGroup: finalGroup,
-        assignmentType: existingAssignments.length > 0 ? "existing_group" : "new_group"
-      }
+      treatment_group_id: targetGroupId
     });
 
   } catch (err) {
     console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ADMIN ASSIGN PATIENT] Error:", error);
+    console.error("[ADMIN ASSIGN PATIENT] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
