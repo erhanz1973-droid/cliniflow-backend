@@ -21,6 +21,42 @@ const app = express();
 // We explicitly disable ETag generation globally; admin endpoints are always dynamic.
 app.set("etag", false);
 
+// admin.html route - serve doctor applications (MUST be before static middleware)
+app.get("/admin.html", (req, res) => {
+  try {
+    console.log("[ROUTE] /admin.html requested - serving doctor applications");
+    const filePath = path.join(__dirname, "admin.html");
+    
+    // Add cache-busting headers
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin.html:", error);
+    res.status(500).send("Internal server error");
+  }
+});
+
+// admin-dashboard.html route - serve admin dashboard (MUST be before static middleware)
+app.get("/admin-dashboard.html", (req, res) => {
+  try {
+    console.log("[ROUTE] /admin-dashboard.html requested - serving admin dashboard");
+    const filePath = path.join(__dirname, "admin.html");
+    
+    // Add cache-busting headers
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-dashboard.html:", error);
+    res.status(500).send("Internal server error");
+  }
+});
+
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -368,18 +404,6 @@ function generateReferralCode() {
   }
   return code;
 }
-
-// admin.html route - redirect to OLD dashboard
-app.get("/admin.html", (req, res) => {
-  try {
-    console.log("[ROUTE] /admin.html requested - redirecting to OLD dashboard");
-    res.redirect("/admin-old.html");
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error redirecting to OLD dashboard:", error);
-    res.status(500).send("Internal server error");
-  }
-});
 
 app.get("/admin-travel.html", (req, res) => {
   try {
@@ -4570,100 +4594,6 @@ app.post("/api/admin/clear-doctor", adminAuth, async (req, res) => {
   }
 });
 
-/* ================= APPROVE DOCTOR ================= */
-// 🔥 CRITICAL: Use doctors.id (UUID) ONLY - NEVER patientId
-app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
-  try {
-    const { doctorId } = req.body || {};
-
-    if (!doctorId) {
-      return res.status(400).json({ ok: false, error: "doctor_id_required" });
-    }
-
-    console.log("[APPROVE DOCTOR] Approving doctor with ID:", doctorId);
-    
-    // 🔥 CRITICAL: Use doctors table with doctors.id (UUID)
-    const { data: existingDoctor, error: checkError } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("id", doctorId) // Use doctors.id (UUID)
-      .maybeSingle();
-
-    console.log("[APPROVE DOCTOR] Check result:", { existingDoctor, checkError });
-
-    if (checkError) {
-      console.error("[APPROVE DOCTOR] Check error:", checkError);
-      return res.status(500).json({ ok: false, error: "check_failed", details: checkError.message });
-    }
-
-    if (!existingDoctor) {
-      console.log("[APPROVE DOCTOR] Doctor not found for doctorId:", doctorId);
-      return res.status(404).json({ ok: false, error: "doctor_not_found" });
-    }
-
-    console.log("[APPROVE DOCTOR] Current doctor status:", existingDoctor.status);
-    
-    // Update doctor status to ACTIVE in patients table
-    console.log("[APPROVE DOCTOR] Attempting to update doctor:", {
-      doctorId,
-      currentStatus: existingDoctor.status,
-      newStatus: "ACTIVE"
-    });
-
-    const { data: doctor, error } = await supabase
-      .from("patients")
-      .update({ 
-        status: "ACTIVE", // 🔥 CRITICAL: Update to ACTIVE
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", doctorId) // Use doctors.id (UUID)
-      .select()
-      .maybeSingle();
-
-    console.log("[APPROVE DOCTOR] Supabase response:", { doctor, error });
-
-    if (error) {
-      console.error("[APPROVE DOCTOR] Error:", error);
-      console.error("[APPROVE DOCTOR] Error details:", JSON.stringify(error, null, 2));
-      return res.status(500).json({ ok: false, error: "approval_failed", details: error.message });
-    }
-
-    if (!doctor) {
-      console.log("[APPROVE DOCTOR] Update failed - doctor not found after update");
-      return res.status(404).json({ ok: false, error: "doctor_not_found" });
-    }
-
-    console.log("[APPROVE DOCTOR] Doctor approved:", {
-      doctorId,
-      name: doctor.name,
-      role: doctor.role,
-      status: "ACTIVE"
-    });
-
-    // Send approval email (don't fail approval if email fails)
-    if (existingDoctor.email) {
-      try {
-        console.log("[APPROVE DOCTOR] Sending approval email to:", existingDoctor.email);
-        // TODO: Implement email sending
-        // await sendDoctorApprovedEmail(existingDoctor.email);
-      } catch (emailError) {
-        console.error("[APPROVE DOCTOR] Approval email failed:", emailError);
-        // Don't fail approval process
-      }
-    }
-
-    // 🔥 CRITICAL: Return success boolean only - NO auth data
-    res.json({
-      ok: true,
-      message: "Doctor approved successfully"
-    });
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[APPROVE DOCTOR] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
 /* ================= DOCTOR PROFILE ================= */
 // GET /api/doctor/me - Fetch current doctor profile
 app.get("/api/doctor/me", async (req, res) => {
@@ -4784,6 +4714,47 @@ app.put("/api/doctor/me", async (req, res) => {
   }
 });
 
+/* ================= ADMIN DOCTOR APPROVAL ================= */
+app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
+  try {
+    const { doctorId } = req.body || {};
+
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId_required" });
+    }
+
+    // 🔥 CRITICAL: Update doctor status in patients table (not doctors table)
+    const { data: updatedDoctor, error: updateError } = await supabase
+      .from("patients")
+      .update({ status: "ACTIVE" })
+      .eq("patient_id", doctorId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[DOCTOR APPROVAL] Update error:", updateError);
+      return res.status(500).json({ ok: false, error: "approval_failed" });
+    }
+
+    if (!updatedDoctor) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    console.log("[DOCTOR APPROVAL] Doctor approved:", updatedDoctor.name);
+
+    res.json({
+      ok: true,
+      doctorId: updatedDoctor.patient_id,
+      status: updatedDoctor.status,
+      message: "Doctor approved successfully",
+    });
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[DOCTOR APPROVAL] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
@@ -4827,11 +4798,6 @@ console.log("[INIT] Admin route aliases loaded");
 app.get("/admin/doctor-applications", adminAuth, async (req, res) => {
   console.log("[ADMIN ALIAS] Redirecting /admin/doctor-applications to /api/admin/doctor-applications");
   return require('./api/admin/doctor-applications')(req, res);
-});
-
-app.post("/admin/approve-doctor", adminAuth, async (req, res) => {
-  console.log("[ADMIN ALIAS] Redirecting /admin/approve-doctor to /api/admin/approve-doctor");
-  return require('./api/admin/approve-doctor')(req, res);
 });
 
 console.log("[INIT] Admin route aliases registered");
@@ -7519,6 +7485,21 @@ async function updateHairGraftsSummary(patientUuid) {
 }
 */
 /* ================= END HAIR TRANSPLANT MODULE (DISABLED) ================= */
+
+const treatmentRoutes = require('./server/routes/treatment');
+app.use('/api/treatment', treatmentRoutes);
+
+// Treatment Groups routes (Admin only)
+const treatmentGroupsRoutes = require('./server/routes/treatment-groups');
+app.use('/api/treatment-groups', treatmentGroupsRoutes);
+
+// Patient Group Assignments routes (Admin only)
+const patientGroupAssignmentsRoutes = require('./server/routes/patient-group-assignments');
+app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
+
+// Patients routes (Admin only)
+const patientsRoutes = require('./server/routes/patients');
+app.use('/api/patients', patientsRoutes);
 
 /* ================= START ================= */
 app.listen(PORT, () => {

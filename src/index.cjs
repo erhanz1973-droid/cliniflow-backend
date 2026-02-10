@@ -3276,7 +3276,7 @@ app.get("/api/patient/me", async (req, res) => {
 });
 
 /* ================= DOCTOR AUTH MIDDLEWARE ================= */
-function verifyDoctorToken(req) {
+async function verifyDoctorToken(req) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
 
@@ -3290,6 +3290,21 @@ function verifyDoctorToken(req) {
     // Check if user has DOCTOR role
     if (decoded.role !== "DOCTOR") {
       return { ok: false, code: "insufficient_permissions" };
+    }
+
+    // Check doctor approval status from database
+    const { data: doctor, error } = await supabase
+      .from("doctors")
+      .select("status")
+      .eq("doctor_id", decoded.patientId)
+      .maybeSingle();
+
+    if (error || !doctor) {
+      return { ok: false, code: "doctor_not_found" };
+    }
+
+    if (doctor.status !== "APPROVED") {
+      return { ok: false, code: "doctor_not_approved" };
     }
 
     return { 
@@ -3346,7 +3361,7 @@ function checkDoctorSelfAccess(doctorId, targetPatientId) {
 /* ================= DOCTOR DASHBOARD STATS ================= */
 app.get("/api/doctor/dashboard/stats", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3401,7 +3416,7 @@ app.get("/api/doctor/dashboard/stats", async (req, res) => {
 /* ================= DOCTOR DASHBOARD APPOINTMENTS ================= */
 app.get("/api/doctor/dashboard/appointments", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3450,7 +3465,7 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
 /* ================= DOCTOR PATIENTS ================= */
 app.get("/api/doctor/patients", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3500,7 +3515,7 @@ app.get("/api/doctor/patients", async (req, res) => {
 /* ================= DOCTOR TREATMENT PLANS ================= */
 app.get("/api/doctor/treatment-plans", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3552,7 +3567,7 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
 /* ================= DOCTOR CREATE TREATMENT PLAN ================= */
 app.post("/api/doctor/treatment-plans", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3614,7 +3629,7 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
 // Get patient info for doctor
 app.get("/api/doctor/patient/:patientId", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3665,7 +3680,7 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
 // Get patient teeth data
 app.get("/api/doctor/treatment/:patientId/teeth", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3725,7 +3740,7 @@ app.get("/api/doctor/treatment/:patientId/teeth", async (req, res) => {
 // Get treatment records
 app.get("/api/doctor/treatment/:patientId/records", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3784,7 +3799,7 @@ app.get("/api/doctor/treatment/:patientId/records", async (req, res) => {
 // Get patient photos
 app.get("/api/doctor/treatment/:patientId/photos", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3839,7 +3854,7 @@ app.get("/api/doctor/treatment/:patientId/photos", async (req, res) => {
 // Complete procedure
 app.put("/api/doctor/treatment/procedure/:procedureId/complete", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -3913,7 +3928,7 @@ app.put("/api/doctor/treatment/procedure/:procedureId/complete", async (req, res
 // Add diagnosis to tooth
 app.post("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -4015,7 +4030,7 @@ app.post("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis", async 
 // Update diagnosis
 app.put("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosisIndex", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -4094,7 +4109,7 @@ app.put("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosi
 // Delete diagnosis
 app.delete("/api/doctor/treatment/:patientId/tooth/:toothNumber/diagnosis/:diagnosisIndex", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -4539,91 +4554,6 @@ app.post("/api/register/patient", async (req, res) => {
   }
 });
 
-/* ================= APPROVE DOCTOR ================= */
-// 🔥 CRITICAL: Use doctors.id (UUID) ONLY - NEVER patientId
-app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
-  try {
-    const { doctorId } = req.body || {};
-
-    if (!doctorId) {
-      return res.status(400).json({ ok: false, error: "missing_doctor_id" });
-    }
-
-    console.log("[APPROVE DOCTOR] Approving doctor with ID:", doctorId);
-    
-    // 🔥 CRITICAL: Use doctors table with doctors.id (UUID)
-    const { data: existingDoctor, error: checkError } = await supabase
-      .from("doctors")
-      .select("*")
-      .eq("id", doctorId) // Use doctors.id (UUID)
-      .maybeSingle();
-
-    console.log("[APPROVE DOCTOR] Check result:", { existingDoctor, checkError });
-
-    if (checkError) {
-      console.error("[APPROVE DOCTOR] Check error:", checkError);
-      return res.status(500).json({ ok: false, error: "check_failed", details: checkError.message });
-    }
-
-    if (!existingDoctor) {
-      console.log("[APPROVE DOCTOR] Doctor not found for doctorId:", doctorId);
-      return res.status(404).json({ ok: false, error: "doctor_not_found" });
-    }
-
-    console.log("[APPROVE DOCTOR] Current doctor status:", existingDoctor.status);
-    
-    // Update doctor status to ACTIVE in doctors table
-    const { data: doctor, error } = await supabase
-      .from("doctors")
-      .update({ 
-        status: "ACTIVE", // 🔥 CRITICAL: Update to ACTIVE
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", doctorId) // Use doctors.id (UUID)
-      .select()
-      .maybeSingle();
-
-    console.log("[APPROVE DOCTOR] Supabase response:", { doctor, error });
-
-    if (error) {
-      console.error("[APPROVE DOCTOR] Error:", error);
-      return res.status(500).json({ ok: false, error: "approval_failed", details: error.message });
-    }
-
-    if (!doctor) {
-      console.log("[APPROVE DOCTOR] Update failed - doctor not found after update");
-      return res.status(404).json({ ok: false, error: "doctor_not_found" });
-    }
-
-    console.log("[APPROVE DOCTOR] Doctor approved:", {
-      doctorId,
-      name: doctor.name,
-      role: doctor.role,
-      status: "ACTIVE"
-    });
-
-    // Send approval email (don't fail approval if email fails)
-    if (existingDoctor.email) {
-      try {
-        console.log("[APPROVE DOCTOR] Sending approval email to:", existingDoctor.email);
-        // TODO: Implement email sending
-        // await sendDoctorApprovedEmail(existingDoctor.email);
-      } catch (emailError) {
-        console.error("[APPROVE DOCTOR] Approval email failed:", emailError);
-        // Don't fail approval process
-      }
-    }
-
-    // 🔥 CRITICAL: Return success boolean only - NO auth data
-    res.json({
-      ok: true,
-      message: "Doctor approved successfully"
-    });
-  } catch (error) {
-    console.error("[APPROVE DOCTOR] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
 
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
@@ -4669,10 +4599,6 @@ app.get("/admin/doctor-applications", adminAuth, async (req, res) => {
   return require('./api/admin/doctor-applications')(req, res);
 });
 
-app.post("/admin/approve-doctor", adminAuth, async (req, res) => {
-  console.log("[ADMIN ALIAS] Redirecting /admin/approve-doctor to /api/admin/approve-doctor");
-  return require('./api/admin/approve-doctor')(req, res);
-});
 
 console.log("[INIT] Admin route aliases registered");
 
