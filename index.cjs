@@ -4880,6 +4880,288 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
   }
 });
 
+/* ================= ADMIN TASK ASSIGNMENT ================= */
+app.post("/api/admin/tasks", adminAuth, async (req, res) => {
+  try {
+    const {
+      treatment_group_id,
+      patient_id,
+      assigned_doctor_id,
+      title,
+      description,
+      priority = "medium",
+      due_date
+    } = req.body;
+
+    if (!treatment_group_id || !patient_id || !assigned_doctor_id || !title) {
+      return res.status(400).json({ ok: false, error: "required_fields_missing" });
+    }
+
+    const clinicId = req.admin.clinicId;
+
+    // 1. Verify treatment group exists and belongs to admin's clinic
+    const { data: treatmentGroup, error: groupError } = await supabase
+      .from("treatment_groups")
+      .select("id, clinic_id, status")
+      .eq("id", treatment_group_id)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (groupError || !treatmentGroup) {
+      console.error("[ADMIN CREATE TASK] Treatment group not found:", groupError);
+      return res.status(404).json({ ok: false, error: "treatment_group_not_found" });
+    }
+
+    // 2. Verify patient exists and belongs to same clinic
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("id, clinic_id, status")
+      .eq("id", patient_id)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (patientError || !patient) {
+      console.error("[ADMIN CREATE TASK] Patient not found:", patientError);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // 3. Verify doctor exists, is active, belongs to same clinic, and is member of treatment group
+    const { data: doctor, error: doctorError } = await supabase
+      .from("patients")
+      .select("id, clinic_id, status, role")
+      .eq("id", assigned_doctor_id)
+      .eq("clinic_id", clinicId)
+      .eq("role", "DOCTOR")
+      .eq("status", "ACTIVE")
+      .single();
+
+    if (doctorError || !doctor) {
+      console.error("[ADMIN CREATE TASK] Doctor not found:", doctorError);
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    // 4. Verify doctor is member of the treatment group
+    const { data: groupMember, error: memberError } = await supabase
+      .from("treatment_group_members")
+      .select("id")
+      .eq("treatment_group_id", treatment_group_id)
+      .eq("doctor_id", assigned_doctor_id)
+      .single();
+
+    if (memberError || !groupMember) {
+      console.error("[ADMIN CREATE TASK] Doctor not in treatment group:", memberError);
+      return res.status(400).json({ ok: false, error: "doctor_not_in_treatment_group" });
+    }
+
+    // 5. Create the task
+    const { data: task, error: taskError } = await supabase
+      .from("tasks")
+      .insert({
+        treatment_group_id,
+        patient_id,
+        assigned_doctor_id,
+        created_by_admin_id: req.admin.adminId,
+        title,
+        description,
+        priority,
+        due_date: due_date ? new Date(due_date).toISOString() : null
+      })
+      .select()
+      .single();
+
+    if (taskError || !task) {
+      console.error("[ADMIN CREATE TASK] Task creation error:", taskError);
+      return res.status(500).json({ ok: false, error: "task_creation_failed" });
+    }
+
+    console.log("[ADMIN CREATE TASK] Success:", {
+      taskId: task.id,
+      treatmentGroupId: treatment_group_id,
+      patientId: patient_id,
+      assignedDoctorId: assigned_doctor_id,
+      adminId: req.admin.adminId
+    });
+
+    res.json({
+      ok: true,
+      task: {
+        id: task.id,
+        treatment_group_id: task.treatment_group_id,
+        patient_id: task.patient_id,
+        assigned_doctor_id: task.assigned_doctor_id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        due_date: task.due_date,
+        created_at: task.created_at,
+        updated_at: task.updated_at
+      }
+    });
+
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[ADMIN CREATE TASK] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR TASKS ================= */
+app.get("/api/doctor/tasks", verifyDoctorToken, async (req, res) => {
+  try {
+    const { clinicId, doctorId } = v.decoded;
+
+    // Get doctor's tasks with patient and treatment group info
+    const { data: tasks, error: tasksError } = await supabase
+      .from("tasks")
+      .select(`
+        id,
+        title,
+        description,
+        status,
+        priority,
+        due_date,
+        completed_at,
+        created_at,
+        updated_at,
+        treatment_group_id,
+        patient_id,
+        assigned_doctor_id,
+        treatment_groups!inner(
+          id,
+          name,
+          status,
+          clinic_id
+        ),
+        patients!inner(
+          id,
+          name,
+          patient_id,
+          phone,
+          status
+        )
+      `)
+      .eq("assigned_doctor_id", doctorId)
+      .eq("treatment_groups.clinic_id", clinicId)
+      .order("created_at", { ascending: false });
+
+    if (tasksError) {
+      console.error("[DOCTOR TASKS] Error:", tasksError);
+      return res.status(500).json({ ok: false, error: "tasks_fetch_failed" });
+    }
+
+    // Format tasks for response
+    const formattedTasks = (tasks || []).map(task => ({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      priority: task.priority,
+      due_date: task.due_date,
+      completed_at: task.completed_at,
+      created_at: task.created_at,
+      updated_at: task.updated_at,
+      treatment_group: {
+        id: task.treatment_groups.id,
+        name: task.treatment_groups.name,
+        status: task.treatment_groups.status
+      },
+      patient: {
+        id: task.patients.id,
+        name: task.patients.name,
+        patient_id: task.patients.patient_id,
+        phone: task.patients.phone,
+        status: task.patients.status
+      }
+    }));
+
+    console.log("[DOCTOR TASKS] Success:", {
+      doctorId,
+      taskCount: formattedTasks.length
+    });
+
+    res.json({
+      ok: true,
+      tasks: formattedTasks
+    });
+
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[DOCTOR TASKS] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR UPDATE TASK STATUS ================= */
+app.patch("/api/doctor/tasks/:taskId", verifyDoctorToken, async (req, res) => {
+  try {
+    const { clinicId, doctorId } = v.decoded;
+    const { taskId } = req.params;
+    const { status } = req.body;
+
+    if (!status || !['open', 'in_progress', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ ok: false, error: "invalid_status" });
+    }
+
+    // Verify task exists and belongs to this doctor
+    const { data: task, error: taskError } = await supabase
+      .from("tasks")
+      .select(`
+        id,
+        assigned_doctor_id,
+        status,
+        treatment_groups!inner(
+          clinic_id
+        )
+      `)
+      .eq("id", taskId)
+      .eq("assigned_doctor_id", doctorId)
+      .eq("treatment_groups.clinic_id", clinicId)
+      .single();
+
+    if (taskError || !task) {
+      console.error("[DOCTOR UPDATE TASK] Task not found:", taskError);
+      return res.status(404).json({ ok: false, error: "task_not_found" });
+    }
+
+    // Update task status
+    const { data: updatedTask, error: updateError } = await supabase
+      .from("tasks")
+      .update({ status })
+      .eq("id", taskId)
+      .eq("assigned_doctor_id", doctorId)
+      .select()
+      .single();
+
+    if (updateError || !updatedTask) {
+      console.error("[DOCTOR UPDATE TASK] Update error:", updateError);
+      return res.status(500).json({ ok: false, error: "task_update_failed" });
+    }
+
+    console.log("[DOCTOR UPDATE TASK] Success:", {
+      taskId,
+      doctorId,
+      oldStatus: task.status,
+      newStatus: status
+    });
+
+    res.json({
+      ok: true,
+      task: {
+        id: updatedTask.id,
+        status: updatedTask.status,
+        updated_at: updatedTask.updated_at,
+        completed_at: updatedTask.completed_at
+      }
+    });
+
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[DOCTOR UPDATE TASK] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN FIND TEST DATA ================= */
 app.get("/api/admin/find-test-data", async (req, res) => {
   try {
