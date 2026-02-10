@@ -3364,7 +3364,8 @@ function verifyDoctorToken(req) {
     return { 
       ok: true, 
       decoded: {
-        patientId: decoded.patientId,
+        doctorId: decoded.doctorId,
+        patientId: decoded.doctorId, // For compatibility with existing code
         clinicId: decoded.clinicId,
         clinicCode: decoded.clinicCode,
         role: decoded.role
@@ -4603,7 +4604,7 @@ app.get("/api/doctor/me", async (req, res) => {
       return res.status(401).json({ ok: false, error: v.code });
     }
 
-    const { clinicId, patientId } = v.decoded;
+    const { clinicId, doctorId } = v.decoded;
 
     // Fetch doctor from patients table
     const { data: doctor, error } = await supabase
@@ -4627,7 +4628,7 @@ app.get("/api/doctor/me", async (req, res) => {
       `)
       .eq("role", "DOCTOR")
       .eq("clinic_id", clinicId)
-      .eq("name", patientId)
+      .eq("id", doctorId)
       .single();
 
     if (error || !doctor) {
@@ -4751,6 +4752,57 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   } catch (err) {
     console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR APPROVAL] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN PATIENT DETAIL ================= */
+app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+
+    // Fetch patient from patients table
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        patient_id,
+        name,
+        email,
+        phone,
+        department,
+        title,
+        experience_years,
+        languages,
+        specialties,
+        status,
+        clinic_id,
+        clinic_code,
+        license_number,
+        role,
+        created_at,
+        updated_at
+      `)
+      .eq("clinic_id", req.clinicId)
+      .eq("patient_id", patientId)
+      .single();
+
+    if (error || !patient) {
+      console.error("[ADMIN PATIENT DETAIL] Error:", error);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      patient: patient
+    });
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[ADMIN PATIENT DETAIL] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
