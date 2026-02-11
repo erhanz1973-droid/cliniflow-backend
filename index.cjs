@@ -4570,7 +4570,7 @@ app.post("/api/register/doctor", async (req, res) => {
     const doctorPayload = {
       id: crypto.randomUUID(),
       patient_id: generatePatientIdFromName(name),
-      clinic_id: clinic.data.id,
+      clinic_id: clinic.id,
       clinic_code: clinicCode.trim(),
       name: name,
       full_name: name,
@@ -4712,8 +4712,8 @@ app.post("/api/register/patient", async (req, res) => {
       clinic_code: clinicCode.trim(),
       referral_code,
       status: "ACTIVE", // Patients are immediately ACTIVE
-      created_at: Date.now(),
-      updated_at: Date.now(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { data: insertedPatient, error: insertError } = await supabase
