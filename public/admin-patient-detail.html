@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Hasta Detay - Clinifly Admin</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 20px;
+      color: #fff;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 8px 16px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      background: var(--card);
+      color: #fff;
+    }
+    .nav-link.active {
+      background: var(--p);
+      color: #fff;
+    }
+    .nav-link.secondary {
+      background: transparent;
+      border: 1px solid var(--b);
+      color: var(--muted);
+    }
+    .nav-link.secondary:hover {
+      background: var(--card);
+      color: #fff;
+    }
+
+    .patient-detail-card {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      border: 1px solid var(--b);
+    }
+    .patient-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .patient-info h2 {
+      margin: 0 0 8px 0;
+      font-size: 20px;
+      color: #fff;
+    }
+    .patient-meta {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .meta-item {
+      background: var(--bg);
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .status {
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status.APPROVED { background: var(--g); color: #fff; }
+    .status.PENDING { background: var(--y); color: #000; }
+    .status.REJECTED { background: var(--r); color: #fff; }
+
+    .action-buttons {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background: var(--p);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+    .btn-success {
+      background: var(--g);
+      color: #fff;
+    }
+    .btn-success:hover {
+      background: #15803d;
+    }
+    .btn-secondary {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid var(--b);
+    }
+    .btn-secondary:hover {
+      background: var(--b);
+      color: #fff;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .info-item {
+      background: var(--bg);
+      padding: 16px;
+      border-radius: 8px;
+    }
+    .info-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .info-value {
+      font-size: 14px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .treatment-groups-section {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid var(--b);
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      margin: 0;
+    }
+
+    /* Modal Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+    }
+    .modal.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: var(--card);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--b);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      margin: 0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+    }
+    .modal-close:hover {
+      background: var(--b);
+      color: #fff;
+    }
+    .modal-body {
+      padding: 24px;
+    }
+    .modal-footer {
+      padding: 20px 24px;
+      border-top: 1px solid var(--b);
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 12px;
+      background: var(--bg);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--p);
+    }
+    .form-textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .doctor-selector {
+      background: var(--bg);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .doctor-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--card);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .doctor-item:hover {
+      background: var(--b);
+    }
+    .doctor-item.selected {
+      background: var(--p);
+      color: #fff;
+    }
+    .doctor-checkbox {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: 2px solid var(--b);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .doctor-item.selected .doctor-checkbox {
+      background: #fff;
+      color: var(--p);
+    }
+    .doctor-info {
+      flex: 1;
+    }
+    .doctor-name {
+      font-weight: 600;
+      color: #fff;
+    }
+    .doctor-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .radio-group {
+      display: flex;
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .radio-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .radio-input {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid var(--b);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .radio-item.selected .radio-input {
+      background: var(--p);
+      border-color: var(--p);
+    }
+    .radio-item.selected .radio-input::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: #fff;
+      border-radius: 50%;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+    }
+    .empty-state h3 {
+      margin: 0 0 8px 0;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          🏥 Clinifly Admin
+        </div>
+        <a href="/admin-dashboard.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link active">Hastalar</a>
+        <a href="/admin-doctor-applications.html" class="nav-link">Doktorlar</a>
+        <a href="/admin-treatment-groups.html" class="nav-link">Treatment Groups</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span id="lang-tr" class="active">TR</span>
+          <span>|</span>
+          <span id="lang-en">EN</span>
+        </div>
+        <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
+      </div>
+    </nav>
+
+    <header>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <button onclick="history.back()" class="btn btn-secondary" style="padding: 8px 16px;">
+          ← Geri
+        </button>
+        <h1>Hasta Detay</h1>
+      </div>
+    </header>
+
+    <main>
+      <div class="patient-detail-card">
+        <div class="patient-header">
+          <div class="patient-info">
+            <h2 id="patientName">Yükleniyor...</h2>
+            <div class="patient-meta">
+              <span class="meta-item" id="patientId">ID: -</span>
+              <span class="meta-item" id="patientPhone">📱 -</span>
+              <span class="meta-item" id="patientEmail">📧 -</span>
+              <span class="status" id="patientStatus">-</span>
+            </div>
+          </div>
+          <div class="action-buttons">
+            <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
+              ➕ Treatment Group Oluştur
+            </button>
+            <button class="btn btn-primary" onclick="openAssignPatientModal()">
+              👨‍⚕️ Hasta Doktora Ata
+            </button>
+            <button class="btn btn-primary" onclick="openTreatment()">
+              🦷 Treatment
+            </button>
+            <button class="btn btn-secondary" onclick="openChat()">
+              💬 Chat
+            </button>
+          </div>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="info-label">Klinik Kodu</div>
+            <div class="info-value" id="clinicCode">-</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Kayıt Tarihi</div>
+            <div class="info-value" id="createdAt">-</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Son Güncelleme</div>
+            <div class="info-value" id="updatedAt">-</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">Durum</div>
+            <div class="info-value" id="statusDetail">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="treatment-groups-section">
+        <div class="section-header">
+          <h3 class="section-title">Treatment Groups</h3>
+          <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
+            ➕ Yeni Group
+          </button>
+        </div>
+        <div id="treatmentGroupsList">
+          <div class="empty-state">
+            <h3>Treatment Group Yok</h3>
+            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Create Treatment Group Modal -->
+    <div id="createTreatmentGroupModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="modal-title">➕ Treatment Group Oluştur</h3>
+          <button class="modal-close" onclick="closeCreateTreatmentGroupModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <form id="createTreatmentGroupForm">
+            <div class="form-group">
+              <label class="form-label">Group Adı *</label>
+              <input type="text" class="form-input" id="groupName" required placeholder="Örn: Ortodonti Tedavisi">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Açıklama</label>
+              <textarea class="form-textarea" id="groupDescription" placeholder="Treatment group açıklaması..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Doktor Seçimi *</label>
+              <div id="doctorsList">
+                <div class="empty-state">
+                  <p>Doktorlar yükleniyor...</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group" id="primaryDoctorSection" style="display: none;">
+              <label class="form-label">Primary Doktor *</label>
+              <div id="primaryDoctorList"></div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeCreateTreatmentGroupModal()">İptal</button>
+          <button type="button" class="btn btn-success" onclick="createTreatmentGroup()">Oluştur</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Assign Patient to Doctor Modal -->
+    <div id="assignPatientModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="modal-title">👨‍⚕️ Hasta Doktora Ata</h3>
+          <button class="modal-close" onclick="closeAssignPatientModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div style="background: var(--bg); padding: 16px; border-radius: 8px; margin-bottom: 20px;">
+            <h4 style="margin: 0 0 8px 0; color: #fff;">Hasta Bilgisi</h4>
+            <p style="margin: 0; color: var(--muted);" id="assignPatientInfo">Yükleniyor...</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Doktor Seçimi *</label>
+            <div id="assignDoctorsList">
+              <div class="empty-state">
+                <p>Doktorlar yükleniyor...</p>
+              </div>
+            </div>
+          </div>
+
+          <div style="background: var(--card); border: 1px solid var(--b); border-radius: 8px; padding: 16px; margin-top: 20px;">
+            <h5 style="margin: 0 0 8px 0; color: #fff;">📋 Atama Kuralları</h5>
+            <ul style="margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px;">
+              <li>Hasta için aktif treatment group yoksa otomatik oluşturulur</li>
+              <li>Seçilen doktor group'a primary olarak eklenir</li>
+              <li>Doktor sadece üyesi olduğu group'larda işlem yapabilir</li>
+              <li>Treatment plan ve encounter hastasız oluşturulamaz</li>
+            </ul>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAssignPatientModal()">İptal</button>
+          <button type="button" class="btn btn-primary" onclick="assignPatientToDoctor()">Ata</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentPatient = null;
+    let selectedDoctors = new Set();
+    let primaryDoctorId = null;
+    let allDoctors = [];
+    let selectedAssignDoctorId = null;
+
+    // Get patient ID from URL
+    function getPatientId() {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('patientId');
+    }
+
+    // Load patient details
+    async function loadPatientDetails() {
+      const patientId = getPatientId();
+      if (!patientId) {
+        alert('Hasta ID bulunamadı');
+        window.location.href = '/admin-patients.html';
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch(`/api/admin/patients/${patientId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.ok) {
+          currentPatient = data.patient;
+          displayPatientDetails();
+          loadTreatmentGroups();
+        } else {
+          throw new Error(data.error || 'Hasta yüklenemedi');
+        }
+      } catch (error) {
+        console.error('Load patient error:', error);
+        alert('Hasta yüklenemedi: ' + error.message);
+        window.location.href = '/admin-patients.html';
+      }
+    }
+
+    // Display patient details
+    function displayPatientDetails() {
+      if (!currentPatient) return;
+
+      document.getElementById('patientName').textContent = currentPatient.name || '-';
+      document.getElementById('patientId').textContent = `ID: ${currentPatient.patient_id || currentPatient.id || '-'}`;
+      document.getElementById('patientPhone').textContent = `📱 ${currentPatient.phone || '-'}`;
+      document.getElementById('patientEmail').textContent = `📧 ${currentPatient.email || '-'}`;
+      
+      const statusElement = document.getElementById('patientStatus');
+      statusElement.textContent = currentPatient.status || '-';
+      statusElement.className = `status ${currentPatient.status || ''}`;
+      
+      document.getElementById('clinicCode').textContent = currentPatient.clinic_code || '-';
+      document.getElementById('createdAt').textContent = formatDate(currentPatient.created_at);
+      document.getElementById('updatedAt').textContent = formatDate(currentPatient.updated_at);
+      document.getElementById('statusDetail').textContent = getStatusText(currentPatient.status);
+    }
+
+    // Load treatment groups for this patient
+    async function loadTreatmentGroups() {
+      if (!currentPatient) return;
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch(`/api/treatment-groups?patientId=${currentPatient.id}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        displayTreatmentGroups(data.groups || []);
+      } catch (error) {
+        console.error('Load treatment groups error:', error);
+        document.getElementById('treatmentGroupsList').innerHTML = `
+          <div class="empty-state">
+            <h3>Treatment Groups Yüklenemedi</h3>
+            <p>Treatment groups yüklenirken hata oluştu.</p>
+          </div>
+        `;
+      }
+    }
+
+    // Display treatment groups
+    function displayTreatmentGroups(groups) {
+      const container = document.getElementById('treatmentGroupsList');
+      
+      if (groups.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>Treatment Group Yok</h3>
+            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = groups.map(group => `
+        <div class="doctor-selector">
+          <h4 style="margin: 0 0 8px 0; color: #fff;">${group.name}</h4>
+          <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 14px;">${group.description || 'Açıklama yok'}</p>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <span class="meta-item">👥 ${group.member_count || 0} doktor</span>
+            <span class="meta-item">📅 ${formatDate(group.created_at)}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Load doctors for selection
+    async function loadDoctors() {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch('/api/admin/doctor-applications', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        allDoctors = (data.doctors || []).filter(d => d.status === 'ACTIVE');
+        displayDoctors();
+      } catch (error) {
+        console.error('Load doctors error:', error);
+        document.getElementById('doctorsList').innerHTML = `
+          <div class="empty-state">
+            <p>Doktorlar yüklenemedi</p>
+          </div>
+        `;
+      }
+    }
+
+    // Load doctors for assignment
+    async function loadAssignDoctors() {
+      try {
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch('/api/admin/doctor-applications', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const activeDoctors = (data.doctors || []).filter(d => d.status === 'ACTIVE');
+        displayAssignDoctors(activeDoctors);
+      } catch (error) {
+        console.error('Load assign doctors error:', error);
+        document.getElementById('assignDoctorsList').innerHTML = `
+          <div class="empty-state">
+            <p>Doktorlar yüklenemedi</p>
+          </div>
+        `;
+      }
+    }
+
+    // Display doctors for selection
+    function displayDoctors() {
+      const container = document.getElementById('doctorsList');
+      
+      if (allDoctors.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>Aktif doktor bulunamadı</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = allDoctors.map(doctor => `
+        <div class="doctor-item" onclick="toggleDoctor('${doctor.id}')" data-doctor-id="${doctor.id}">
+          <div class="doctor-checkbox">
+            ${selectedDoctors.has(doctor.id) ? '✓' : ''}
+          </div>
+          <div class="doctor-info">
+            <div class="doctor-name">${doctor.name}</div>
+            <div class="doctor-meta">${doctor.department || 'Bilinmeyen'} • ${doctor.specialties || 'Genel'}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Display doctors for assignment
+    function displayAssignDoctors(doctors) {
+      const container = document.getElementById('assignDoctorsList');
+      
+      if (doctors.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <p>Aktif doktor bulunamadı</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = doctors.map(doctor => `
+        <div class="doctor-item ${selectedAssignDoctorId === doctor.id ? 'selected' : ''}" onclick="selectAssignDoctor('${doctor.id}')" data-doctor-id="${doctor.id}">
+          <div class="doctor-checkbox">
+            ${selectedAssignDoctorId === doctor.id ? '✓' : ''}
+          </div>
+          <div class="doctor-info">
+            <div class="doctor-name">${doctor.name}</div>
+            <div class="doctor-meta">${doctor.department || 'Bilinmeyen'} • ${doctor.specialties || 'Genel'}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Toggle doctor selection
+    function toggleDoctor(doctorId) {
+      if (selectedDoctors.has(doctorId)) {
+        selectedDoctors.delete(doctorId);
+        if (primaryDoctorId === doctorId) {
+          primaryDoctorId = null;
+        }
+      } else {
+        selectedDoctors.add(doctorId);
+      }
+      
+      displayDoctors();
+      updatePrimaryDoctorSection();
+    }
+
+    // Select doctor for assignment
+    function selectAssignDoctor(doctorId) {
+      selectedAssignDoctorId = doctorId;
+      displayAssignDoctors(allDoctors.filter(d => d.status === 'ACTIVE'));
+    }
+
+    // Update primary doctor section
+    function updatePrimaryDoctorSection() {
+      const section = document.getElementById('primaryDoctorSection');
+      const container = document.getElementById('primaryDoctorList');
+      
+      if (selectedDoctors.size === 0) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+      const selectedDoctorsList = allDoctors.filter(d => selectedDoctors.has(d.id));
+      
+      container.innerHTML = selectedDoctorsList.map(doctor => `
+        <div class="radio-item ${primaryDoctorId === doctor.id ? 'selected' : ''}" onclick="setPrimaryDoctor('${doctor.id}')">
+          <div class="radio-input"></div>
+          <div>${doctor.name} - ${doctor.department || 'Bilinmeyen'}</div>
+        </div>
+      `).join('');
+    }
+
+    // Set primary doctor
+    function setPrimaryDoctor(doctorId) {
+      primaryDoctorId = doctorId;
+      updatePrimaryDoctorSection();
+    }
+
+    // Open create treatment group modal
+    function openCreateTreatmentGroupModal() {
+      document.getElementById('createTreatmentGroupModal').classList.add('show');
+      loadDoctors();
+    }
+
+    // Close create treatment group modal
+    function closeCreateTreatmentGroupModal() {
+      document.getElementById('createTreatmentGroupModal').classList.remove('show');
+      // Reset form
+      document.getElementById('createTreatmentGroupForm').reset();
+      selectedDoctors.clear();
+      primaryDoctorId = null;
+      updatePrimaryDoctorSection();
+    }
+
+    // Open assign patient modal
+    function openAssignPatientModal() {
+      if (!currentPatient) return;
+      
+      document.getElementById('assignPatientInfo').textContent = 
+        `${currentPatient.name} (${currentPatient.patient_id}) - ${currentPatient.phone || 'No phone'}`;
+      
+      document.getElementById('assignPatientModal').classList.add('show');
+      loadAssignDoctors();
+    }
+
+    // Close assign patient modal
+    function closeAssignPatientModal() {
+      document.getElementById('assignPatientModal').classList.remove('show');
+      selectedAssignDoctorId = null;
+    }
+
+    // Assign patient to doctor
+    async function assignPatientToDoctor() {
+      if (!selectedAssignDoctorId) {
+        alert('Doktor seçmelisiniz');
+        return;
+      }
+
+      if (!currentPatient) {
+        alert('Hasta bilgisi bulunamadı');
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        
+        const response = await fetch('/api/admin/assign-patient', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            patientId: currentPatient.patient_id,
+            doctorId: selectedAssignDoctorId
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'Atama başarısız');
+        }
+
+        const assignmentType = data.data.assignmentType;
+        const groupName = data.data.treatmentGroup.name;
+        
+        alert(`Hasta başarıyla doktora atandı!\n\n${assignmentType === 'new_group' ? 'Yeni Treatment Group oluşturuldu: ' + groupName : 'Mevcut Treatment Group kullanıldı: ' + groupName}`);
+        
+        closeAssignPatientModal();
+        loadTreatmentGroups();
+        
+      } catch (error) {
+        console.error('Assign patient error:', error);
+        alert('Hasta atama başarısız: ' + error.message);
+      }
+    }
+
+    // Create treatment group
+    async function createTreatmentGroup() {
+      const groupName = document.getElementById('groupName').value.trim();
+      const groupDescription = document.getElementById('groupDescription').value.trim();
+
+      if (!groupName) {
+        alert('Group adı zorunludur');
+        return;
+      }
+
+      if (selectedDoctors.size === 0) {
+        alert('En az bir doktor seçmelisiniz');
+        return;
+      }
+
+      if (!primaryDoctorId) {
+        alert('Primary doktor seçmelisiniz');
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        
+        // Create treatment group
+        const groupResponse = await fetch('/api/treatment-groups', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: groupName,
+            description: groupDescription,
+            clinicId: currentPatient.clinic_id
+          })
+        });
+
+        if (!groupResponse.ok) {
+          throw new Error(`HTTP ${groupResponse.status}`);
+        }
+
+        const groupData = await groupResponse.json();
+        if (!groupData.ok) {
+          throw new Error(groupData.error || 'Group oluşturulamadı');
+        }
+
+        const groupId = groupData.group.id;
+
+        // Add doctors to group
+        for (const doctorId of selectedDoctors) {
+          const memberResponse = await fetch('/api/treatment-groups/members', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              groupId,
+              doctorId,
+              isPrimary: doctorId === primaryDoctorId
+            })
+          });
+
+          if (!memberResponse.ok) {
+            console.error(`Failed to add doctor ${doctorId} to group`);
+          }
+        }
+
+        // Assign patient to group
+        const assignmentResponse = await fetch('/api/patient-group-assignments', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            groupId,
+            patientId: currentPatient.id
+          })
+        });
+
+        if (!assignmentResponse.ok) {
+          console.error('Failed to assign patient to group');
+        }
+
+        alert('Treatment Group başarıyla oluşturuldu!');
+        closeCreateTreatmentGroupModal();
+        loadTreatmentGroups();
+        
+      } catch (error) {
+        console.error('Create treatment group error:', error);
+        alert('Treatment Group oluşturulamadı: ' + error.message);
+      }
+    }
+
+    // Utility functions
+    function formatDate(dateString) {
+      if (!dateString) return '-';
+      const date = new Date(dateString);
+      return date.toLocaleDateString('tr-TR') + ' ' + date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function getStatusText(status) {
+      const statusMap = {
+        'PENDING': 'Onay Bekliyor',
+        'APPROVED': 'Onaylı',
+        'ACTIVE': 'Aktif',
+        'REJECTED': 'Reddedildi'
+      };
+      return statusMap[status] || status;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function logout() {
+      localStorage.removeItem('admin_token');
+      window.location.href = '/admin-login.html';
+    }
+
+    function openTreatment() {
+      if (currentPatient) {
+        window.open(`/treatment.html?patientId=${currentPatient.id}`, '_blank');
+      }
+    }
+
+    function openChat() {
+      if (currentPatient) {
+        window.open(`/chat.html?patientId=${currentPatient.id}`, '_blank');
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+      loadPatientDetails();
+    });
+
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+      const modal = document.getElementById('createTreatmentGroupModal');
+      if (event.target === modal) {
+        closeCreateTreatmentGroupModal();
+      }
+    }
+  </script>
+</body>
+</html>
