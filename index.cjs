@@ -4563,11 +4563,15 @@ app.post("/api/register/doctor", async (req, res) => {
       .select()
       .single();
 
+    console.log("[DOCTOR REGISTER] Insert result:", { insertedPatient, insertError });
+
     if (insertError) {
+      console.error("[DOCTOR REGISTER] Insert error details:", insertError);
       return res.status(500).json({ 
         ok: false, 
         error: "registration_failed",
-        message: "Doktor kaydı başarısız oldu."
+        message: "Doktor kaydı başarısız oldu.",
+        details: insertError
       });
     }
 
