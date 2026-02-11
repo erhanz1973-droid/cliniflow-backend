@@ -1,1327 +1,254 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-  <meta http-equiv="Pragma" content="no-cache"/>
-  <meta http-equiv="Expires" content="0"/>
-  <title>Doktor Başvuruları - Clinifly Admin (FIXED v20260209)</title>
-  <script>
-    // Token check - redirect to login if not authenticated
-    (function() {
-      const token = localStorage.getItem("admin_token");
-      if (!token) {
-        window.location.href = "/admin-login.html";
-      }
-    })();
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script>
-    // Initialize Supabase
-    const supabase = supabase.createClient(
-      'https://swxinrwbylygoqdcbwbt.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3eGlucndieWx5Z29xZGNid2J0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzczMDQxNCwiZXhwIjoyMDgzMzA2NDE0fQ.hDrpZu7aaUKP0u3itxAP8SgqhH0ObqsHWn4Rjr3kxko'
-    );
-  </script>
-  <script src="/admin-i18n.js"></script>
+  <meta charset="utf-8" />
+  <title>Cliniflow Admin - Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      --bg:#111827;
-      --card:#1f2937;
-      --b:#374151;
-      --p:#2563eb;
-      --g:#16a34a;
-      --r:#dc2626;
-      --y:#f59e0b;
-      --muted:#a7b2c8;
-      --link:#6aa6ff;
-    }
-    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
-    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
-    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
-    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
-
-    .navbar {
+    body {
+      font-family: system-ui, -apple-system, Arial;
+      margin: 0;
+      background: #0b0f16;
+      color: #e6eaf2;
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 24px;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--b);
-      flex-wrap: wrap;
+      min-height: 100vh;
     }
-    .navbar-left {
-      display: flex;
-      align-items: center;
+    .sidebar {
+      width: 250px;
+      background: #1a2640;
+      border-right: 1px solid #2b3a58;
+      padding: 20px 0;
+    }
+    .sidebar h2 {
+      color: #ffffff;
+      font-size: 18px;
+      margin: 0 20px 20px 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #2b3a58;
+    }
+    .nav-item {
+      display: block;
+      color: #a7b2c8;
+      text-decoration: none;
+      padding: 12px 20px;
+      margin: 4px 0;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+    }
+    .nav-item:hover {
+      background: #2b3a58;
+      color: #ffffff;
+    }
+    .nav-item.active {
+      background: #3b4a68;
+      color: #6aa6ff;
+    }
+    .main-content {
+      flex: 1;
+      padding: 30px;
+      overflow-y: auto;
+    }
+    .dashboard-header {
+      margin-bottom: 30px;
+    }
+    .dashboard-header h1 {
+      font-size: 32px;
+      margin: 0 0 10px 0;
+      color: #ffffff;
+    }
+    .dashboard-header p {
+      color: #a7b2c8;
+      margin: 0;
+      font-size: 16px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: #1a2640;
+      border: 1px solid #2b3a58;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+    .stat-number {
+      font-size: 36px;
+      font-weight: bold;
+      color: #6aa6ff;
+      margin-bottom: 8px;
+    }
+    .stat-label {
+      color: #a7b2c8;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .quick-actions {
+      background: #1a2640;
+      border: 1px solid #2b3a58;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .quick-actions h3 {
+      margin: 0 0 20px 0;
+      color: #ffffff;
+      font-size: 18px;
+    }
+    .action-buttons {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 12px;
     }
-    .navbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 700;
-      font-size: 20px;
-      color: #fff;
-    }
-    .navbar-links {
-      display: flex;
-      gap: 16px;
-      align-items: center;
-    }
-    .navbar-link {
-      color: var(--muted);
+    .action-btn {
+      background: #3b4a68;
+      border: 1px solid #4b5a78;
+      color: #ffffff;
+      padding: 12px 20px;
+      border-radius: 8px;
       text-decoration: none;
-      padding: 8px 12px;
-      border-radius: 6px;
-      transition: all 0.2s;
+      display: block;
+      text-align: center;
+      transition: all 0.2s ease;
     }
-    .navbar-link:hover {
-      background: var(--card);
-      color: #fff;
+    .action-btn:hover {
+      background: #4b5a78;
+      border-color: #5b6a88;
     }
-    .navbar-link.active {
-      background: var(--p);
-      color: #fff;
+    .logout-btn {
+      background: #dc2626;
+      border: 1px solid #ef4444;
+      color: #ffffff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      text-decoration: none;
+      display: inline-block;
+      margin-top: 20px;
+      transition: all 0.2s ease;
     }
-
-    .stats-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
-    .stat-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; text-align:center; }
-    .stat-number{ font-size:32px; font-weight:700; color:#fff; margin-bottom:4px; }
-    .stat-label{ color:var(--muted); font-size:14px; }
-
-    .search-filter{ display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
-    .search-input{ flex:1; min-width:200px; background:var(--card); border:1px solid var(--b); color:#fff; padding:12px 16px; border-radius:8px; font-size:14px; }
-    .search-input::placeholder{ color:var(--muted); }
-    .filter-btn{ background:var(--card); border:1px solid var(--b); color:var(--muted); padding:12px 20px; border-radius:8px; font-size:14px; cursor:pointer; transition:all 0.2s; }
-    .filter-btn:hover{ background:var(--b); color:#fff; }
-    .filter-btn.active{ background:var(--p); color:#fff; border-color:var(--p); }
-
-    .doctor-grid{ display:grid; gap:16px; }
-    .doctor-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; display:flex; justify-content:space-between; align-items:center; transition:all 0.2s; }
-    .doctor-card:hover{ border-color:var(--p); transform:translateY(-1px); }
-    .doctor-info{ flex:1; }
-    .doctor-name{ font-size:18px; font-weight:600; color:#fff; margin-bottom:8px; }
-    .doctor-details{ color:var(--muted); font-size:14px; line-height:1.5; }
-    .doctor-details span{ display:block; margin-bottom:2px; }
-    .doctor-meta{ display:flex; align-items:center; gap:8px; margin-top:8px; }
-    .status-badge{ padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; text-transform:uppercase; }
-    .status-pending{ background:var(--y); color:#000; }
-    .status-approved{ background:var(--g); color:#fff; }
-    .status-rejected{ background:var(--r); color:#fff; }
-    .role-badge{ background:var(--p); color:#fff; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; }
-    .doctor-actions{ display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
-    .btn{ padding:8px 16px; border-radius:6px; font-size:14px; font-weight:600; text-decoration:none; text-align:center; cursor:pointer; transition:all 0.2s; border:none; }
-    .btn-primary{ background:var(--p); color:#fff; }
-    .btn-primary:hover{ background:#1d4ed8; }
-    .btn-success{ background:var(--g); color:#fff; }
-    .btn-success:hover{ background:#15803d; }
-    .btn-danger{ background:var(--r); color:#fff; }
-    .btn-danger:hover{ background:#b91c1c; }
-    .btn-secondary{ background:var(--card); color:var(--muted); border:1px solid var(--b); }
-    .btn-secondary:hover{ background:var(--b); color:#fff; }
-    .btn:disabled{ opacity:0.5; cursor:not-allowed; }
-
-    .empty-state{ text-align:center; padding:60px 20px; color:var(--muted); }
-    .empty-icon{ font-size:48px; margin-bottom:16px; opacity:0.5; }
-    .loading{ text-align:center; padding:40px; color:var(--muted); }
-    .error{ background:#3a1620; border:1px solid #5a2232; color:#ffd7df; padding:16px; border-radius:8px; margin-bottom:20px; }
-
-    @media (max-width:768px){
-      .wrap{ padding:12px; }
-      .doctor-card{ flex-direction:column; align-items:flex-start; gap:16px; }
-      .doctor-actions{ width:100%; flex-direction:row; justify-content:flex-end; }
-      .navbar{ flex-direction:column; align-items:flex-start; }
+    .logout-btn:hover {
+      background: #ef4444;
+      border-color: #f87171;
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="navbar">
-        <div class="navbar-left">
-          <div class="navbar-logo">
-            🏥 Clinifly Admin
-          </div>
-        </div>
-        <div class="navbar-links">
-        <a href="#doctors" class="navbar-link active" onclick="showSection('doctors')">Doktorlar</a>
-        <a href="#treatment-groups" class="navbar-link" onclick="showSection('treatment-groups')">🦷 Tedavi Grupları</a>
-        <a href="#patients" class="navbar-link" onclick="showSection('patients')">👥 Hastalar</a>
-      </div>
-      </div>
-      <h1>👨‍⚕️ Doktor Başvuruları</h1>
-    </header>
+  <div class="sidebar">
+    <h2>Cliniflow Admin</h2>
+    <a href="#dashboard" class="nav-item active">Dashboard</a>
+    <a href="#doctor-applications" class="nav-item">Doktor Başvuruları</a>
+    <a href="#patients" class="nav-item">Hastalar</a>
+    <a href="#clinics" class="nav-item">Klinikler</a>
+    <a href="#settings" class="nav-item">Ayarlar</a>
+  </div>
+
+  <div class="main-content">
+    <div class="dashboard-header">
+      <h1>Admin Dashboard</h1>
+      <p>Hoş geldiniz! Klinik yönetim paneline hoş geldiniz.</p>
+    </div>
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-number" id="pending-count">-</div>
-        <div class="stat-label">Bekleyen Başvuru</div>
+        <div class="stat-number" id="total-patients">0</div>
+        <div class="stat-label">Toplam Hasta</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="approved-count">-</div>
-        <div class="stat-label">Onaylanan Doktor</div>
+        <div class="stat-number" id="pending-doctors">0</div>
+        <div class="stat-label">Bekleyen Doktor</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="rejected-count">-</div>
-        <div class="stat-label">Reddedilen Başvuru</div>
+        <div class="stat-number" id="active-doctors">0</div>
+        <div class="stat-label">Aktif Doktor</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="total-count">-</div>
-        <div class="stat-label">Toplam Başvuru</div>
+        <div class="stat-number" id="total-clinics">0</div>
+        <div class="stat-label">Toplam Klinik</div>
       </div>
     </div>
 
-    <div class="search-filter">
-      <input type="text" class="search-input" id="search-input" placeholder="Doktor adı, email veya telefon ile ara...">
-      <select class="filter-btn" id="status-filter">
-        <option value="">Tüm Durumlar</option>
-        <option value="PENDING">Bekleyen</option>
-        <option value="ACTIVE">Onaylanan</option>
-        <option value="REJECTED">Reddedilen</option>
-      </select>
-      <button class="filter-btn" onclick="loadApplications()">🔄 Yenile</button>
-    </div>
-
-    <div id="error-container"></div>
-    <div id="loading-container" class="loading" style="display:none;">
-      <div>🔄 Yükleniyor...</div>
-    </div>
-    <div id="doctors-container" class="doctor-grid"></div>
-    <div id="empty-container" class="empty-state" style="display:none;">
-      <div class="empty-icon">📋</div>
-      <div>Henüz doktor başvurusu bulunmuyor</div>
-    </div>
-
-    <!-- Treatment Groups Section -->
-    <div id="treatment-groups-container" style="display:none;">
-      <div class="section-header">
-        <h2>🦷 Tedavi Grupları</h2>
-        <button class="btn btn-primary" onclick="showCreateGroupModal()">+ Yeni Grup Oluştur</button>
-      </div>
-
-      <div class="groups-grid" id="groups-grid"></div>
-      <div id="groups-empty" class="empty-state" style="display:none;">
-        <div class="empty-icon">🦷</div>
-        <div>Henüz tedavi grubu bulunmuyor</div>
+    <div class="quick-actions">
+      <h3>Hızlı İşlemler</h3>
+      <div class="action-buttons">
+        <a href="admin-doctor-applications.html" class="action-btn">Doktor Başvurularını İncele</a>
+        <a href="admin-patients.html" class="action-btn">Hasta Yönetimi</a>
+        <a href="admin-clinics.html" class="action-btn">Klinik Ayarları</a>
+        <a href="admin-settings.html" class="action-btn">Sistem Ayarları</a>
       </div>
     </div>
 
-    <!-- Patients Section -->
-    <div id="patients-container" style="display:none;">
-      <div class="section-header">
-        <h2>👥 Hastalar</h2>
-        <button class="btn btn-primary" onclick="showAssignPatientModal()">+ Hasta Ata</button>
-      </div>
-
-      <div class="patients-grid" id="patients-grid"></div>
-      <div id="patients-empty" class="empty-state" style="display:none;">
-        <div class="empty-icon">👥</div>
-        <div>Henüz hasta bulunmuyor</div>
-      </div>
-    </div>
+    <a href="#" onclick="logout()" class="logout-btn">Çıkış Yap</a>
   </div>
 
   <script>
-    let allDoctors = [];
-    let filteredDoctors = [];
-
-    async function loadApplications() {
-      const token = localStorage.getItem("admin_token");
-      const loadingContainer = document.getElementById("loading-container");
-      const errorContainer = document.getElementById("error-container");
-      const doctorsContainer = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
-
-      loadingContainer.style.display = "block";
-      errorContainer.innerHTML = "";
-      doctorsContainer.innerHTML = "";
-      emptyContainer.style.display = "none";
-
-      try {
-        const response = await fetch("/api/admin/doctor-applications", {
-          headers: {
-            "Authorization": "Bearer " + token
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.ok) {
-          allDoctors = data.doctors || [];
-          filteredDoctors = [...allDoctors];
-          updateStats();
-          renderDoctors();
-        } else {
-          throw new Error(data.error || "Başvurular yüklenemedi");
-        }
-      } catch (error) {
-        console.error("Load applications error:", error);
-        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
-      } finally {
-        loadingContainer.style.display = "none";
-      }
-    }
-
-    function updateStats() {
-      const pending = allDoctors.filter(d => d.status === "PENDING").length;
-      const approved = allDoctors.filter(d => d.status === "ACTIVE").length;
-      const rejected = allDoctors.filter(d => d.status === "REJECTED").length;
-      const total = allDoctors.length;
-
-      document.getElementById("pending-count").textContent = pending;
-      document.getElementById("approved-count").textContent = approved;
-      document.getElementById("rejected-count").textContent = rejected;
-      document.getElementById("total-count").textContent = total;
-    }
-
-    function renderDoctors() {
-      const container = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
-      
-      if (filteredDoctors.length === 0) {
-        container.style.display = "none";
-        emptyContainer.style.display = "flex";
-      } else {
-        container.style.display = "grid";
-        emptyContainer.style.display = "none";
-        
-        container.innerHTML = filteredDoctors.map(doctor => `
-          <div class="doctor-card" data-id="${doctor.doctor_id}">
-            <div class="doctor-header">
-              <div class="doctor-info">
-                <div class="doctor-name">${doctor.name}</div>
-                <div class="doctor-details">
-                  <span>📱 ${doctor.phone}</span>
-                  ${doctor.email ? `<span>📧 ${doctor.email}</span>` : ""}
-                  <span>🏥 Klinik: ${doctor.clinic_code}</span>
-                  <span>📅 ${new Date(doctor.created_at).toLocaleDateString("tr-TR")}</span>
-                </div>
-                <div class="doctor-meta">
-                  <span class="status-badge status-${doctor.status.toLowerCase()}">${getStatusText(doctor.status)}</span>
-                  <span class="role-badge">DOCTOR</span>
-                </div>
-              </div>
-              <div class="doctor-actions">
-                <button class="btn btn-sm btn-success" onclick="approveDoctor('${doctor.doctor_id}')" ${doctor.status === 'PENDING' ? '' : 'disabled'}>✅ Onayla</button>
-                <button class="btn btn-sm btn-danger" onclick="rejectDoctor('${doctor.doctor_id}')" ${doctor.status === 'PENDING' ? '' : 'disabled'}>❌ Reddet</button>
-                <button class="btn btn-sm btn-info" onclick="viewDetails('${doctor.doctor_id}')">👁 Detaylar</button>
-              </div>
-            </div>
-          </div>
-        `).join('');
-      }
-    }
-
-    function renderTreatmentGroups() {
-      const container = document.getElementById("groups-grid");
-      const emptyContainer = document.getElementById("groups-empty");
-      
-      if (filteredGroups.length === 0) {
-        container.style.display = "none";
-        emptyContainer.style.display = "flex";
-      } else {
-        container.style.display = "grid";
-        emptyContainer.style.display = "none";
-        
-        container.innerHTML = filteredGroups.map(group => `
-          <div class="group-card" data-id="${group.id}">
-            <div class="group-header">
-              <div class="group-info">
-                <div class="group-name">${group.group_name}</div>
-                <div class="group-status ${group.status.toLowerCase()}">${getStatusText(group.status)}</div>
-              </div>
-              <div class="group-actions">
-                <button class="btn btn-sm btn-info" onclick="viewGroupDetails('${group.id}')">👁 Detaylar</button>
-                <button class="btn btn-sm btn-warning" onclick="editGroup('${group.id}')">✏️ Düzenle</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteGroup('${group.id}')">🗑️ Sil</button>
-              </div>
-            </div>
-            <div class="group-stats">
-              <div class="stat">
-                <div class="stat-number">${group.member_count || 0}</div>
-                <div class="stat-label">Doktor</div>
-              </div>
-              <div class="stat">
-                <div class="stat-number">${group.patient_count || 0}</div>
-                <div class="stat-label">Hasta</div>
-              </div>
-            </div>
-          </div>
-        `).join('');
-      }
-    }
-
-    function renderPatients() {
-      const container = document.getElementById("patients-grid");
-      const emptyContainer = document.getElementById("patients-empty");
-      
-      if (filteredPatients.length === 0) {
-        container.style.display = "none";
-        emptyContainer.style.display = "flex";
-      } else {
-        container.style.display = "grid";
-        emptyContainer.style.display = "none";
-        
-        container.innerHTML = filteredPatients.map(patient => `
-          <div class="patient-card" data-id="${patient.id}">
-            <div class="patient-header">
-              <div class="patient-info">
-                <div class="patient-name">${patient.name}</div>
-                <div class="patient-details">
-                  <div>📞 ${patient.phone || '-'}</div>
-                  <div>🆔 ${patient.patient_id || patient.id}</div>
-                  <div>📅 ${formatDate(patient.created_at)}</div>
-                </div>
-              </div>
-              <div class="patient-actions">
-                <button class="btn btn-sm btn-primary" onclick="assignPatientToDoctor('${patient.patient_id || patient.id}')">
-                  �‍⚕️ Assign to Doctor
-                </button>
-                <button class="btn btn-sm btn-success" onclick="viewPatientTreatmentGroup('${patient.id}')">
-                  🦷 Treatment Group
-                </button>
-              </div>
-            </div>
-          </div>
-        `).join('');
-      }
-    }
-
-    // Assign patient to doctor
-    async function assignPatientToDoctor(patientId) {
-      const doctors = allDoctors.filter(d => d.status === 'ACTIVE');
-      if (doctors.length === 0) {
-        alert('Aktif doktor bulunamadı!');
+    // Check if admin is logged in
+    function checkAuth() {
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        window.location.href = 'admin-login.html';
         return;
       }
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>👨‍⚕️ Hasta Doktora Ata</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <div class="modal-body">
-            <div class="form-group">
-              <label>Doktor Seçimi</label>
-              <select id="doctor-select" class="form-control">
-                <option value="">Doktor seçin...</option>
-                ${doctors.map(doctor => `
-                  <option value="${doctor.id}">${doctor.name} - ${doctor.department || 'Bilinmeyen'}</option>
-                `).join('')}
-              </select>
-            </div>
-            <div class="form-group">
-              <label>
-                <input type="checkbox" id="auto-create-group" checked>
-                Otomatik Treatment Group oluştur
-              </label>
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="btn btn-secondary" onclick="closeModal()">İptal</button>
-            <button type="button" class="btn btn-primary" onclick="confirmAssignPatient('${patientId}')">Ata</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
+      
+      // Load dashboard stats
+      loadDashboardStats();
     }
 
-    // Confirm assign patient
-    async function confirmAssignPatient(patientId) {
-      const doctorId = document.getElementById('doctor-select').value;
-      const autoCreateGroup = document.getElementById('auto-create-group').checked;
-
-      if (!doctorId) {
-        alert('Doktor seçmelisiniz!');
-        return;
-      }
-
+    // Load dashboard statistics
+    async function loadDashboardStats() {
       try {
         const token = localStorage.getItem('admin_token');
-        const response = await fetch('/api/admin/assign-patient', {
-          method: 'POST',
+        
+        // Get pending doctors count
+        const doctorsResponse = await fetch('/api/admin/doctor-applications', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            patientId,
-            doctorId,
-            autoCreateGroup
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.ok) {
-          alert(`✅ Hasta başarıyla doktora atandı!\n${data.data.assignmentType === 'new_group' ? 'Yeni Treatment Group oluşturuldu.' : 'Mevcut Treatment Group kullanıldı.'}`);
-          closeModal();
-          loadPatients();
-        } else {
-          throw new Error(data.error || 'Atama başarısız');
-        }
-      } catch (error) {
-        console.error('Assign patient error:', error);
-        alert('❌ Hasta atama başarısız: ' + error.message);
-      }
-    }
-
-    // View patient treatment group
-    async function viewPatientTreatmentGroup(patientId) {
-      try {
-        const token = localStorage.getItem('admin_token');
-        const response = await fetch(`/api/admin/patients/${patientId}/treatment-group`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
           }
         });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
         
-        if (data.ok && data.treatmentGroup) {
-          const group = data.treatmentGroup;
-          const modal = document.createElement('div');
-          modal.className = 'modal';
-          modal.innerHTML = `
-            <div class="modal-content">
-              <div class="modal-header">
-                <h3>🦷 Treatment Group</h3>
-                <button class="close-btn" onclick="closeModal()">&times;</button>
-              </div>
-              <div class="modal-body">
-                <div class="form-group">
-                  <label>Group Adı</label>
-                  <div>${group.name}</div>
-                </div>
-                <div class="form-group">
-                  <label>Açıklama</label>
-                  <div>${group.description || '-'}</div>
-                </div>
-                <div class="form-group">
-                  <label>Durum</label>
-                  <div><span class="status ${group.status}">${getStatusText(group.status)}</span></div>
-                </div>
-                <div class="form-group">
-                  <label>Doktorlar</label>
-                  <div>
-                    ${group.members ? group.members.map(member => `
-                      <div>👨‍⚕️ ${member.doctor_name} ${member.is_primary ? '(Primary)' : ''}</div>
-                    `).join('') : 'Doktor bulunmuyor'}
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label>Oluşturulma Tarihi</label>
-                  <div>${formatDate(group.created_at)}</div>
-                </div>
-              </div>
-              <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">Kapat</button>
-              </div>
-            </div>
-          `;
-          document.body.appendChild(modal);
-        } else {
-          alert('Bu hastanın Treatment Group\'u bulunmuyor.');
-        }
-      } catch (error) {
-        console.error('View treatment group error:', error);
-        alert('❌ Treatment Group yüklenemedi: ' + error.message);
-      }
-    }
-
-    // Treatment Group Management
-    function showCreateGroupModal() {
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>🦷 Yeni Tedavi Grubu Oluştur</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <form id="create-group-form">
-            <div class="form-group">
-              <label for="group-name">Grup Adı</label>
-              <input type="text" id="group-name" required placeholder="Örn: 'Ortodonti Tedavi Grubu 1'">
-            </div>
-            <div class="form-group">
-              <label for="group-description">Açıklama</label>
-              <textarea id="group-description" rows="3" placeholder="Grup açıklaması..."></textarea>
-            </div>
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" onclick="closeModal()">İptal</button>
-              <button type="submit" class="btn btn-primary">Oluştur</button>
-            </div>
-          </form>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-      
-      // Handle form submission
-      document.getElementById('create-group-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        await createTreatmentGroup();
-      });
-    }
-
-    async function createTreatmentGroup() {
-      const token = localStorage.getItem("admin_token");
-      const groupName = document.getElementById('group-name').value.trim();
-      const description = document.getElementById('group-description').value.trim();
-      
-      if (!groupName) {
-        alert('Grup adı zorunludur.');
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/treatment-groups", {
-          method: "POST",
-          headers: {
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            group_name: groupName,
-            description: description
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.ok) {
-          allGroups.push(data.group);
-          filteredGroups = [...allGroups];
-          renderTreatmentGroups();
-          closeModal();
-          alert('✅ Tedavi grubu oluşturuldu!');
-        } else {
-          throw new Error(data.error || "Grup oluşturulamadı.");
-        }
-      } catch (error) {
-        console.error("Create group error:", error);
-        alert(`❌ Grup oluşturulamadı: ${error.message}`);
-      }
-    }
-
-    function editGroup(groupId) {
-      const group = allGroups.find(g => g.id === groupId);
-      if (!group) return;
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>🦷 Tedavi Grubu Düzenle</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <form id="edit-group-form">
-            <div class="form-group">
-              <label for="edit-group-name">Grup Adı</label>
-              <input type="text" id="edit-group-name" value="${group.group_name}" required>
-            </div>
-            <div class="form-group">
-              <label for="edit-group-description">Açıklama</label>
-              <textarea id="edit-group-description" rows="3">${group.description || ''}</textarea>
-            </div>
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" onclick="closeModal()">İptal</button>
-              <button type="submit" class="btn btn-primary">Kaydet</button>
-            </div>
-          </form>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-      
-      // Handle form submission
-      document.getElementById('edit-group-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        await updateTreatmentGroup(groupId);
-      });
-    }
-
-    async function updateTreatmentGroup(groupId) {
-      const token = localStorage.getItem("admin_token");
-      const groupName = document.getElementById('edit-group-name').value.trim();
-      const description = document.getElementById('edit-group-description').value.trim();
-      
-      if (!groupName) {
-        alert('Grup adı zorunludur.');
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/treatment-groups/${groupId}`, {
-          method: "PATCH",
-          headers: {
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            group_name: groupName,
-            description: description
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.ok) {
-          const index = allGroups.findIndex(g => g.id === groupId);
-          if (index !== -1) {
-            allGroups[index] = data.group;
-          }
-          filteredGroups = [...allGroups];
-          renderTreatmentGroups();
-          closeModal();
-          alert('✅ Grup güncellendi!');
-        } else {
-          throw new Error(data.error || "Grup güncellenemedi.");
-        }
-      } catch (error) {
-        console.error("Update group error:", error);
-        alert(`❌ Grup güncellenemedi: ${error.message}`);
-      }
-    }
-
-    async function deleteGroup(groupId) {
-      if (!confirm('Bu grubu silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
-        return;
-      }
-
-      try {
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch(`/api/treatment-groups/${groupId}`, {
-          method: "DELETE",
-          headers: {
-            "Authorization": "Bearer " + token
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.ok) {
-          allGroups = allGroups.filter(g => g.id !== groupId);
-          filteredGroups = filteredGroups.filter(g => g.id !== groupId);
-          renderTreatmentGroups();
-          alert('✅ Grup silindi!');
-        } else {
-          throw new Error(data.error || "Grup silinemedi.");
-        }
-      } catch (error) {
-        console.error("Delete group error:", error);
-        alert(`❌ Grup silinemedi: ${error.message}`);
-      }
-    }
-
-    async function showAssignPatientModal() {
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>👥 Hasta Gruba Ata</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <form id="assign-patient-form">
-            <div class="form-group">
-              <label for="group-select">Tedavi Grubu</label>
-              <select id="group-select" required>
-                <option value="">Grup seçin...</option>
-                ${allGroups.map(group => `<option value="${group.id}">${group.group_name}</option>`).join('')}
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="patient-select">Hasta</label>
-              <select id="patient-select" required>
-                <option value="">Hasta seçin...</option>
-                ${allPatients.map(patient => `<option value="${patient.id}">${patient.name} (${patient.phone})</option>`).join('')}
-              </select>
-            </div>
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" onclick="closeModal()">İptal</button>
-              <button type="submit" class="btn btn-primary">Ata</button>
-            </div>
-          </form>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-      
-      // Handle form submission
-      document.getElementById('assign-patient-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        await assignPatientToGroup();
-      });
-    }
-
-    async function assignPatientToGroup() {
-      const token = localStorage.getItem("admin_token");
-      const groupId = document.getElementById('group-select').value;
-      const patientId = document.getElementById('patient-select').value;
-      
-      if (!groupId || !patientId) {
-        alert('Lütfen alanları doldur.');
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/patient-group-assignments", {
-          method: "POST",
-          headers: {
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            treatment_group_id: groupId,
-            patient_id: patientId
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.ok) {
-          // Update patient's group assignments
-          const patient = allPatients.find(p => p.id === patientId);
-          if (patient) {
-            patient.treatment_groups = patient.treatment_groups || [];
-          }
+        if (doctorsResponse.ok) {
+          const doctorsData = await doctorsResponse.json();
+          const pendingDoctors = doctorsData.doctors?.filter(d => d.status === 'PENDING').length || 0;
+          const activeDoctors = doctorsData.doctors?.filter(d => d.status === 'ACTIVE').length || 0;
           
-          renderPatients();
-          closeModal();
-          alert('✅ Hasta gruba atandı!');
-        } else {
-          throw new Error(data.error || "Hasta atanamadı.");
+          document.getElementById('pending-doctors').textContent = pendingDoctors;
+          document.getElementById('active-doctors').textContent = activeDoctors;
         }
-      } catch (error) {
-        console.error("Assign patient error:", error);
-        alert(`❌ Hasta atanamadı: ${error.message}`);
-      }
-    }
-
-    async function unassignPatient(patientId) {
-      if (!confirm('Hastayı gruptan ayırmak istediğinizden emin misiniz?')) {
-        return;
-      }
-
-      try {
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch(`/api/patient-group-assignments/${patientId}`, {
-          method: "DELETE",
-          headers: {
-            "Authorization": "Bearer " + token
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
         
-        if (data.ok) {
-          // Update patient's group assignments
-          const patient = allPatients.find(p => p.id === patientId);
-          if (patient) {
-            patient.treatment_groups = [];
-          }
-          
-          renderPatients();
-          alert('✅ Hasta gruptan ayrıldı!');
-        } else {
-          throw new Error(data.error || "Hasta gruptan ayrıldırıldı.");
-        }
-      } catch (error) {
-        console.error("Unassign patient error:", error);
-        alert(`❌ Hasta gruptan ayrıldırıldı: ${error.message}`);
-      }
-    }
-
-    // View functions
-    function viewGroupDetails(groupId) {
-      const group = allGroups.find(g => g.id === groupId);
-      if (!group) return;
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>🦷 Grup Detayları</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <div class="details-content">
-            <div class="detail-row">
-              <strong>Grup Adı:</strong> ${group.group_name}
-            </div>
-            <div class="detail-row">
-              <strong>Açıklama:</strong> ${group.description || 'Açıklama bulunmuyor'}
-            </div>
-            <div class="detail-row">
-              <strong>Oluşturulma:</strong> ${new Date(group.created_at).toLocaleString("tr-TR")}
-            </div>
-            <div class="detail-row">
-              <strong>Durum:</strong> ${getStatusText(group.status)}
-            </div>
-            <div class="detail-row">
-              <strong>Üye Sayısı:</strong> ${group.member_count || 0}
-            </div>
-            <div class="detail-row">
-              <strong>Hasta Sayısı:</strong> ${group.patient_count || 0}
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal()">Kapat</button>
-          </div>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-    }
-
-    function viewPatientDetails(patientId) {
-      const patient = allPatients.find(p => p.id === patientId);
-      if (!patient) return;
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>👥 Hasta Detayları</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <div class="details-content">
-            <div class="detail-row">
-              <strong>Adı:</strong> ${patient.name}
-            </div>
-            <div class="detail-row">
-              <strong>Telefon:</strong> ${patient.phone}
-            </div>
-            <div class="detail-row">
-              <strong>Referral Kodu:</strong> ${patient.referralCode}
-            </div>
-            <div class="detail-row">
-              <strong>Kayıt:</strong> ${new Date(patient.created_at).toLocaleString("tr-TR")}
-            </div>
-            <div class="detail-row">
-              <strong>Gruplar:</strong> ${patient.treatment_groups?.length || 0} grup atanmış
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal()">Kapat</button>
-          </div>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-    }
-
-    function viewDetails(doctorId) {
-      const doctor = allDoctors.find(d => d.doctor_id === doctorId);
-      if (!doctor) return;
-
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>👨‍⚕️ Doktor Detayları</h3>
-            <button class="close-btn" onclick="closeModal()">&times;</button>
-          </div>
-          <div class="details-content">
-            <div class="detail-row">
-              <strong>Ad:</strong> ${doctor.name}
-            </div>
-            <div class="detail-row">
-              <strong>Telefon:</strong> ${doctor.phone}
-            </div>
-            <div class="detail-row">
-              <strong>Email:</strong> ${doctor.email || "-"}
-            </div>
-            <div class="detail-row">
-              <strong>Klinik Kodu:</strong> ${doctor.clinic_code}
-            </div>
-            <div class="detail-row">
-              <strong>Durum:</strong> ${getStatusText(doctor.status)}
-            </div>
-            <div class="detail-row">
-              <strong>Kayıt:</strong> ${new Date(doctor.created_at).toLocaleString("tr-TR")}
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal()">Kapat</button>
-          </div>
-        </div>
-      `;
-      
-      document.body.appendChild(modal);
-      modal.style.display = 'flex';
-    }
-
-    // Admin actions
-    async function approveDoctor(doctorId) {
-      if (!confirm("Bu doktoru onaylamak istediğinizden emin misiniz?")) {
-        return;
-      }
-
-      try {
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch(`/api/admin/approve-doctor`, {
-          method: "POST",
-          headers: {
-            "Authorization": "Bearer " + token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ doctorId })
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.ok) {
-          // Update doctor status
-          const doctor = allDoctors.find(d => d.doctor_id === doctorId);
-          if (doctor) {
-            doctor.status = 'ACTIVE';
-          }
-          renderDoctors();
-          alert('✅ Doktor onaylandı!');
-        } else {
-          throw new Error(data.error || "Doktor onaylanamadı.");
-        }
-      } catch (error) {
-        console.error("Approve doctor error:", error);
-        alert(`❌ Doktor onaylanamadı: ${error.message}`);
-      }
-    }
-
-    async function rejectDoctor(doctorId) {
-      if (!confirm("Bu doktor başvurusunu reddetmek istediğinizden emin misiniz?")) {
-        return;
-      }
-      
-      // TODO: Implement reject endpoint
-      alert("🔧 Reddetme özelliği yakında eklenecek");
-    }
-
-    // Filter functions
-    function filterDoctors() {
-      const searchTerm = document.getElementById("search-input").value.toLowerCase();
-      const statusFilter = document.getElementById("status-filter").value;
-
-      filteredDoctors = allDoctors.filter(doctor => {
-        const matchesSearch = !searchTerm || 
-          doctor.name.toLowerCase().includes(searchTerm) ||
-          (doctor.email && doctor.email.toLowerCase().includes(searchTerm)) ||
-          doctor.phone.includes(searchTerm);
-
-        const matchesStatus = !statusFilter || doctor.status === statusFilter;
-
-        return matchesSearch && matchesStatus;
-      });
-
-      renderDoctors();
-    }
-
-    function filterGroups() {
-      const searchTerm = document.getElementById("groups-search-input")?.value.toLowerCase() || '';
-      
-      filteredGroups = allGroups.filter(group => {
-        return group.group_name.toLowerCase().includes(searchTerm);
-      });
-
-      renderTreatmentGroups();
-    }
-
-    function filterPatients() {
-      const searchTerm = document.getElementById("patients-search-input")?.value.toLowerCase() || '';
-      
-      filteredPatients = allPatients.filter(patient => {
-        return patient.name.toLowerCase().includes(searchTerm) ||
-               patient.phone.includes(searchTerm);
-      });
-
-      renderPatients();
-    }
-
-    // Section switching
-    function showSection(section) {
-      // Hide all sections
-      document.getElementById('doctors-container').style.display = 'none';
-      document.getElementById('treatment-groups-container').style.display = 'none';
-      document.getElementById('patients-container').style.display = 'none';
-      document.getElementById('empty-container').style.display = 'none';
-      
-      // Show selected section
-      document.getElementById(`${section}-container`).style.display = 'block';
-      
-      // Update navbar active state
-      document.querySelectorAll('.navbar-link').forEach(link => {
-        link.classList.remove('active');
-      });
-      document.querySelector(`[onclick="showSection('${section}')`).classList.add('active');
-      
-      // Load appropriate data
-      if (section === 'doctors') {
-        loadApplications();
-      } else if (section === 'treatment-groups') {
-        loadTreatmentGroups();
-      } else if (section === 'patients') {
-        loadPatients();
-      }
-    }
-
-    // Load treatment groups
-    async function loadTreatmentGroups() {
-      const token = localStorage.getItem('admin_token');
-      const loadingContainer = document.getElementById('loading-container');
-      const errorContainer = document.getElementById('error-container');
-      const groupsContainer = document.getElementById('treatment-groups-container');
-      const emptyContainer = document.getElementById('empty-container');
-
-      // Show loading
-      if (loadingContainer) loadingContainer.style.display = 'block';
-      if (errorContainer) errorContainer.innerHTML = '';
-      if (emptyContainer) emptyContainer.style.display = 'none';
-
-      try {
-        const response = await fetch('/api/treatment-groups', {
+        // Get patients count
+        const patientsResponse = await fetch('/api/admin/patients', {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
         
-        if (data.ok && data.groups) {
-          renderTreatmentGroups(data.groups);
-        } else {
-          throw new Error(data.error || 'Failed to load treatment groups');
+        if (patientsResponse.ok) {
+          const patientsData = await patientsResponse.json();
+          const totalPatients = patientsData.list?.length || 0;
+          document.getElementById('total-patients').textContent = totalPatients;
         }
-      } catch (error) {
-        console.error('Load treatment groups error:', error);
-        if (errorContainer) {
-          errorContainer.innerHTML = `<div class="error">Failed to load treatment groups: ${error.message}</div>`;
-        }
-      } finally {
-        if (loadingContainer) loadingContainer.style.display = 'none';
-      }
-    }
-
-    // Render treatment groups
-    function renderTreatmentGroups(groups) {
-      const container = document.getElementById('treatment-groups-grid');
-      const emptyContainer = document.getElementById('treatment-groups-empty');
-      
-      if (!container) return;
-      
-      if (groups.length === 0) {
-        container.style.display = 'none';
-        if (emptyContainer) emptyContainer.style.display = 'flex';
-        return;
-      }
-
-      container.style.display = 'block';
-      if (emptyContainer) emptyContainer.style.display = 'none';
-      
-      container.innerHTML = groups.map(group => `
-        <div class="group-card" style="background: var(--card); border: 1px solid var(--b); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
-          <h4 style="margin: 0 0 8px 0; color: #fff;">${group.name}</h4>
-          <p style="margin: 0 0 8px 0; color: var(--muted); font-size: 14px;">${group.description || 'No description'}</p>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <span class="meta-item">👥 ${group.member_count || 0} members</span>
-            <span class="meta-item">📅 ${formatDate(group.created_at)}</span>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    // Load patients
-    async function loadPatients() {
-      const token = localStorage.getItem('admin_token');
-      const loadingContainer = document.getElementById('loading-container');
-      const errorContainer = document.getElementById('error-container');
-      const patientsContainer = document.getElementById('patients-container');
-      const emptyContainer = document.getElementById('empty-container');
-
-      // Show loading
-      if (loadingContainer) loadingContainer.style.display = 'block';
-      if (errorContainer) errorContainer.innerHTML = '';
-      if (emptyContainer) emptyContainer.style.display = 'none';
-
-      try {
-        const response = await fetch('/api/admin/patients', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
         
-        if (data.ok && data.patients) {
-          renderPatients(data.patients);
-        } else {
-          throw new Error(data.error || 'Failed to load patients');
-        }
+        // Set clinics count (hardcoded for now)
+        document.getElementById('total-clinics').textContent = '1';
+        
       } catch (error) {
-        console.error('Load patients error:', error);
-        if (errorContainer) {
-          errorContainer.innerHTML = `<div class="error">Failed to load patients: ${error.message}</div>`;
-        }
-      } finally {
-        if (loadingContainer) loadingContainer.style.display = 'none';
+        console.error('Dashboard stats error:', error);
       }
     }
 
-    // Render patients table
-    function renderPatients(patients) {
-      const container = document.getElementById('patients-grid');
-      const emptyContainer = document.getElementById('patients-empty');
-      
-      if (!container) return;
-      
-      if (patients.length === 0) {
-        container.style.display = 'none';
-        if (emptyContainer) emptyContainer.style.display = 'flex';
-        return;
-      }
-
-      container.style.display = 'block';
-      if (emptyContainer) emptyContainer.style.display = 'none';
-      
-      container.innerHTML = `
-        <table style="width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr style="background: var(--card); border-bottom: 1px solid var(--b);">
-              <th style="padding: 12px; text-align: left; color: #fff;">Name</th>
-              <th style="padding: 12px; text-align: left; color: #fff;">Phone</th>
-              <th style="padding: 12px; text-align: left; color: #fff;">Status</th>
-              <th style="padding: 12px; text-align: left; color: #fff;">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${patients.map(patient => `
-              <tr style="border-bottom: 1px solid var(--b);">
-                <td style="padding: 12px; color: #fff;">${patient.name || '-'}</td>
-                <td style="padding: 12px; color: var(--muted);">${patient.phone || '-'}</td>
-                <td style="padding: 12px;">
-                  <span class="status ${patient.status || 'PENDING'}">${getStatusText(patient.status || 'PENDING')}</span>
-                </td>
-                <td style="padding: 12px; color: var(--muted); font-size: 12px;">
-                  ${formatDate(patient.created_at)}
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
+    // Logout function
+    function logout() {
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('clinic_code');
+      localStorage.removeItem('clinic_name');
+      window.location.href = 'admin-login.html';
     }
 
-    function closeModal() {
-      const modal = document.querySelector('.modal');
-      if (modal) {
-        modal.remove();
-      }
-    }
-
-    function getStatusText(status) {
-      const statusMap = {
-        'PENDING': 'Beklemede',
-        'ACTIVE': 'Aktif',
-        'REJECTED': 'Reddedildi',
-        'INACTIVE': 'Pasif',
-        'APPROVED': 'Onaylı'
-      };
-      return statusMap[status] || status;
-    }
-
-    function formatDate(dateString) {
-      if (!dateString) return '-';
-      const date = new Date(dateString);
-      return date.toLocaleDateString('tr-TR') + ' ' + date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-    }
-
-    // Event listeners
-    document.getElementById("search-input").addEventListener("input", filterDoctors);
-    document.getElementById("status-filter").addEventListener("change", filterDoctors);
-    document.getElementById("groups-search-input")?.addEventListener("input", filterGroups);
-    document.getElementById("patients-search-input")?.addEventListener("input", filterPatients);
-
-    // Load on page load
-    document.addEventListener("DOMContentLoaded", () => {
-      // Check URL hash for routing
-      const hash = window.location.hash.substring(1); // Remove #
-      if (hash === 'patients') {
-        showSection('patients');
-      } else {
-        showSection('doctors'); // Default
-      }
-    });
-
-    // Handle hash changes
-    window.addEventListener('hashchange', () => {
-      const hash = window.location.hash.substring(1);
-      if (hash === 'patients') {
-        showSection('patients');
-      } else if (hash === 'doctors') {
-        showSection('doctors');
-      } else if (hash === 'treatment-groups') {
-        showSection('treatment-groups');
-      }
-    });
+    // Initialize
+    checkAuth();
   </script>
 </body>
 </html>
