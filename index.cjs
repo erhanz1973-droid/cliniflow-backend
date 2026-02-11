@@ -57,9 +57,6 @@ app.get("/admin-dashboard.html", (req, res) => {
   }
 });
 
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
-
 const cors = require("cors");
 const fs = require("fs");
 const { createClient } = require("@supabase/supabase-js");
@@ -526,9 +523,6 @@ app.get("/admin-referrals.html", (req, res) => {
     res.status(500).send(`Error: ${error.message}`);
   }
 });
-
-app.use(express.static(PUBLIC_DIR));
-app.use(express.static(ADMIN_DIR));
 
 /* ================= HELPERS ================= */
 function ensureDirs() {
@@ -8207,6 +8201,11 @@ app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
 // Patients routes (Admin only)
 const patientsRoutes = require('./server/routes/patients');
 app.use('/api/patients', patientsRoutes);
+
+// Serve static files from public directory (MOVED TO END)
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(PUBLIC_DIR));
+app.use(express.static(ADMIN_DIR));
 
 /* ================= START ================= */
 app.listen(PORT, () => {

@@ -1,5 +1,6 @@
 // Admin Authentication Middleware
 const { createClient } = require('@supabase/supabase-js');
+const jwt = require('jsonwebtoken');
 
 const supabase = createClient(
   process.env.SUPABASE_URL || 'https://swxinrwbylygoqbwbtwbt.supabase.co',
