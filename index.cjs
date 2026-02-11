@@ -2699,7 +2699,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
   try {
     console.log("[ADMIN PATIENTS] Request received");
 
-    // Get patients with required fields only
+    // Get patients with required fields only (exclude doctors)
     const { data: patients, error } = await supabase
       .from("patients")
       .select(`
@@ -2710,6 +2710,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
         created_at
       `)
       .eq("clinic_id", req.admin.clinicId)
+      .eq("role", "PATIENT") // Only show patients, not doctors
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -3379,6 +3380,75 @@ app.get("/api/admin/test", adminAuth, async (req, res) => {
     message: "Admin auth working",
     admin: req.admin 
   });
+});
+
+/* ================= ADMIN DOCTOR APPROVAL ================= */
+app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
+  try {
+    const { doctorId } = req.body || {};
+
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId_required" });
+    }
+
+    const trimmedDoctorId = String(doctorId).trim();
+    const clinicId = req.admin?.clinicId;
+
+    if (!clinicId) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_found"
+      });
+    }
+
+    console.log("[ADMIN APPROVE DOCTOR] Approving doctor:", { 
+      doctorId: trimmedDoctorId, 
+      clinicId: clinicId,
+      clinicCode: req.admin.clinicCode
+    });
+
+    // Doctor bul (sadece bu klinik için)
+    const { data: doctor, error: findError } = await supabase
+      .from("doctors")
+      .select("*")
+      .eq("clinic_id", clinicId)
+      .eq("doctor_id", trimmedDoctorId)
+      .single();
+
+    if (findError || !doctor) {
+      console.error("[ADMIN APPROVE DOCTOR] Doctor not found:", findError);
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    // Doctor durumunu APPROVED yap
+    const { data: updatedDoctor, error: updateError } = await supabase
+      .from("doctors")
+      .update({ 
+        status: "APPROVED", 
+        approved_at: new Date().toISOString() 
+      })
+      .eq("id", doctor.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[ADMIN APPROVE DOCTOR] Update error:", updateError);
+      return res.status(500).json({ ok: false, error: "approval_failed" });
+    }
+
+    console.log("[ADMIN APPROVE DOCTOR] Doctor approved successfully:", updatedDoctor.full_name);
+
+    res.json({
+      ok: true,
+      doctorId: updatedDoctor.doctor_id,
+      status: updatedDoctor.status,
+      message: "Doctor approved successfully",
+    });
+
+  } catch (err) {
+    console.error("[ADMIN APPROVE DOCTOR] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
 });
 
 /* ================= ADMIN APPROVE ================= */
@@ -4552,90 +4622,66 @@ app.post("/api/register/doctor", async (req, res) => {
       specialties,
     } = req.body || {};
 
-    // Validation - ONLY required fields
     if (!clinicCode || !phone || !name) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
-    // Check clinic
-    console.log("[DOCTOR REGISTER] Looking up clinic with code:", clinicCode.trim());
-    
+    // 1️⃣ Clinic check
     const { data: clinic, error: clinicError } = await supabase
       .from("clinics")
-      .select("*")
+      .select("id, clinic_code")
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    console.log("[DOCTOR REGISTER] Clinic lookup result:", { clinic, clinicError });
-
-    if (clinicError) {
-      console.error("[DOCTOR REGISTER] Clinic lookup error:", clinicError);
-      return res.status(500).json({ ok: false, error: "internal_error" });
-    }
-
-    if (!clinic) {
-      console.error("[DOCTOR REGISTER] Clinic not found for code:", clinicCode);
+    if (clinicError || !clinic) {
       return res.status(400).json({
         ok: false,
-        error: "invalid_clinic_code",
-        message: "Geçersiz klinik kodu"
+        error: "invalid_clinic_code"
       });
     }
 
-    // Create doctor in PATIENTS table with ONLY whitelist fields
-    console.log("[DOCTOR REGISTER] Creating doctor in table PATIENTS with role:", "DOCTOR");
-    
+    // 2️⃣ Insert into DOCTORS table
     const doctorPayload = {
       id: crypto.randomUUID(),
-      patient_id: await generatePatientIdFromName(name),
+      doctor_id: `d_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       clinic_id: clinic.id,
-      clinic_code: clinicCode.trim(),
-      name: name,
+      clinic_code: clinic.clinic_code,
       full_name: name,
       email: email?.trim() || null,
       phone: phone.trim(),
       license_number: licenseNumber || "DEFAULT_LICENSE",
-      department: department || "General",
-      specialties: specialties || "General",
+      department: department || null,
+      specialties: specialties || null,
       status: "PENDING",
       role: "DOCTOR",
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
-    console.log("[DOCTOR REGISTER] Doctor payload:", JSON.stringify(doctorPayload, null, 2));
-
-    const { data: insertedPatient, error: insertError } = await supabase
-      .from("patients")
+    const { data: insertedDoctor, error: insertError } = await supabase
+      .from("doctors")
       .insert(doctorPayload)
       .select()
       .single();
 
-    console.log("[DOCTOR REGISTER] Insert result:", { insertedPatient, insertError });
-
     if (insertError) {
-      console.error("[DOCTOR REGISTER] Insert error details:", insertError);
-      return res.status(500).json({ 
-        ok: false, 
+      console.error("[DOCTOR REGISTER] Insert error:", insertError);
+      return res.status(500).json({
+        ok: false,
         error: "registration_failed",
-        message: "Doktor kaydı başarısız oldu.",
-        details: insertError
+        details: insertError.message
       });
     }
 
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      doctorId: insertedPatient.id,
-      patientId: insertedPatient.patient_id,
-      full_name: name,
-      phone: phone,
-      email: email,
-      status: "PENDING",
-      role: "DOCTOR"
+      doctorId: insertedDoctor.doctor_id,
+      status: insertedDoctor.status
     });
 
   } catch (err) {
-    console.error("[DOCTOR REGISTER] Error:", err);
+    console.error("[DOCTOR REGISTER] Fatal error:", err);
     res.status(500).json({ ok: false, error: "registration_failed" });
   }
 });
