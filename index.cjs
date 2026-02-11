@@ -458,25 +458,53 @@ app.get("/admin-patients.html", (req, res) => {
   }
 });
 
+app.get("/admin-treatment-create.html", (req, res) => {
+  try {
+    const filePath = path.join(ADMIN_DIR, "admin-treatment-create.html");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`
+        <html>
+          <head><title>Admin Treatment Create Sayfası Bulunamadı</title></head>
+          <body>
+            <h1>Admin Treatment Create Sayfası Bulunamadı</h1>
+            <p>admin-treatment-create.html dosyası bulunamadı.</p>
+            <p>File path: ${filePath}</p>
+            <p>ADMIN_DIR: ${ADMIN_DIR}</p>
+            <p>__dirname: ${__dirname}</p>
+          </body>
+        </html>
+      `);
+    }
+    
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-treatment-create.html:", error);
+    res.status(500).send("Internal Server Error");
+  }
+});
+
 app.get("/admin-treatment.html", (req, res) => {
   try {
     const filePath = path.join(PUBLIC_DIR, "admin-treatment.html");
     if (!fs.existsSync(filePath)) {
       return res.status(404).send(`
         <html>
-          <head><title>Admin Treatment - Not Found</title></head>
-          <body style="font-family: system-ui; padding: 40px; text-align: center;">
+          <head><title>Admin Treatment Sayfası Bulunamadı</title></head>
+          <body>
             <h1>Admin Treatment Sayfası Bulunamadı</h1>
             <p>admin-treatment.html dosyası bulunamadı.</p>
+            <p>File path: ${filePath}</p>
+            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
+            <p>__dirname: ${__dirname}</p>
           </body>
         </html>
       `);
     }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
+    
+    res.sendFile(filePath);
+  } catch (error) {
     console.error("[ROUTE] Error serving admin-treatment.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    res.status(500).send("Internal Server Error");
   }
 });
 
