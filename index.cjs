@@ -4583,6 +4583,8 @@ app.post("/api/register/doctor", async (req, res) => {
     }
 
     // Create doctor in PATIENTS table with ONLY whitelist fields
+    console.log("[DOCTOR REGISTER] Creating doctor in table PATIENTS with role:", "DOCTOR");
+    
     const doctorPayload = {
       id: crypto.randomUUID(),
       patient_id: await generatePatientIdFromName(name),
@@ -4599,6 +4601,8 @@ app.post("/api/register/doctor", async (req, res) => {
       role: "DOCTOR",
       created_at: new Date().toISOString(),
     };
+
+    console.log("[DOCTOR REGISTER] Doctor payload:", JSON.stringify(doctorPayload, null, 2));
 
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
@@ -4720,6 +4724,8 @@ app.post("/api/register/patient", async (req, res) => {
     const referral_code = generateReferralCode();
 
     // Create patient with ACTIVE status
+    console.log("[PATIENT REGISTER] Creating patient in table PATIENTS with role:", "PATIENT");
+    
     const newPatient = {
       patient_id,
       name: patientName,
@@ -4731,6 +4737,8 @@ app.post("/api/register/patient", async (req, res) => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
+    console.log("[PATIENT REGISTER] Patient payload:", JSON.stringify(newPatient, null, 2));
 
     const { data: insertedPatient, error: insertError } = await supabase
       .from("patients")
