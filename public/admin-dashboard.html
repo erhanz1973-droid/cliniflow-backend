@@ -1,65 +1,147 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <title>Cliniflow Admin - Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard - Clinifly Admin</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
   <style>
-    body {
-      font-family: system-ui, -apple-system, Arial;
-      margin: 0;
-      background: #0b0f16;
-      color: #e6eaf2;
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
       display: flex;
-      min-height: 100vh;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
     }
-    .sidebar {
-      width: 250px;
-      background: #1a2640;
-      border-right: 1px solid #2b3a58;
-      padding: 20px 0;
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
-    .sidebar h2 {
-      color: #ffffff;
-      font-size: 18px;
-      margin: 0 20px 20px 20px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid #2b3a58;
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    .nav-item {
-      display: block;
-      color: #a7b2c8;
-      text-decoration: none;
-      padding: 12px 20px;
-      margin: 4px 0;
-      border-radius: 6px;
-      transition: all 0.2s ease;
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
     }
-    .nav-item:hover {
-      background: #2b3a58;
-      color: #ffffff;
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
     }
-    .nav-item.active {
-      background: #3b4a68;
-      color: #6aa6ff;
-    }
-    .main-content {
-      flex: 1;
-      padding: 30px;
-      overflow-y: auto;
-    }
-    .dashboard-header {
-      margin-bottom: 30px;
-    }
-    .dashboard-header h1 {
-      font-size: 32px;
-      margin: 0 0 10px 0;
-      color: #ffffff;
-    }
-    .dashboard-header p {
-      color: #a7b2c8;
-      margin: 0;
+    .navbar-clinic-name {
       font-size: 16px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      background: rgba(55, 65, 81, 0.2);
+      border: 1px solid var(--b);
+    }
+    .nav-link.secondary:hover {
+      background: rgba(55, 65, 81, 0.3);
+      border-color: var(--b);
+    }
+    .nav-badge {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: var(--r);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 4px;
+      border-radius: 999px;
+      min-width: 16px;
+      text-align: center;
+    }
+    .lang-toggle {
+      display: flex;
+      background: rgba(55, 65, 81, 0.2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .lang-toggle span {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      background: var(--p);
+      color: white;
+    }
+
+    /* Dashboard Styles */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
     }
     .stats-grid {
       display: grid;
@@ -68,187 +150,213 @@
       margin-bottom: 30px;
     }
     .stat-card {
-      background: #1a2640;
-      border: 1px solid #2b3a58;
+      background: var(--card);
+      border: 1px solid var(--b);
       border-radius: 12px;
       padding: 24px;
       text-align: center;
+      transition: all 0.2s;
     }
-    .stat-number {
-      font-size: 36px;
-      font-weight: bold;
-      color: #6aa6ff;
-      margin-bottom: 8px;
+    .stat-card:hover {
+      border-color: var(--p);
+      transform: translateY(-2px);
     }
-    .stat-label {
-      color: #a7b2c8;
+    .stat-card h3 {
       font-size: 14px;
+      color: var(--muted);
+      margin: 0 0 12px 0;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-    .quick-actions {
-      background: #1a2640;
-      border: 1px solid #2b3a58;
+    .stat-card p {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--p);
+      margin: 0;
+    }
+    #monthlyStatsTable {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--b);
       border-radius: 12px;
-      padding: 24px;
+      overflow: hidden;
     }
-    .quick-actions h3 {
-      margin: 0 0 20px 0;
-      color: #ffffff;
-      font-size: 18px;
+    #monthlyStatsTable th,
+    #monthlyStatsTable td {
+      padding: 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--b);
     }
-    .action-buttons {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
+    #monthlyStatsTable th {
+      background: rgba(55, 65, 81, 0.5);
+      font-weight: 600;
+      color: #e6eaf2;
     }
-    .action-btn {
-      background: #3b4a68;
-      border: 1px solid #4b5a78;
-      color: #ffffff;
-      padding: 12px 20px;
-      border-radius: 8px;
-      text-decoration: none;
-      display: block;
-      text-align: center;
-      transition: all 0.2s ease;
+    #monthlyStatsTable tbody tr:hover {
+      background: rgba(55, 65, 81, 0.2);
     }
-    .action-btn:hover {
-      background: #4b5a78;
-      border-color: #5b6a88;
-    }
-    .logout-btn {
-      background: #dc2626;
-      border: 1px solid #ef4444;
-      color: #ffffff;
-      padding: 12px 20px;
-      border-radius: 8px;
-      text-decoration: none;
-      display: inline-block;
-      margin-top: 20px;
-      transition: all 0.2s ease;
-    }
-    .logout-btn:hover {
-      background: #ef4444;
-      border-color: #f87171;
+    #monthlyStatsTable tbody tr:last-child td {
+      border-bottom: none;
     }
   </style>
 </head>
 <body>
-  <div class="sidebar">
-    <h2>Cliniflow Admin</h2>
-    <a href="#dashboard" class="nav-item active">Dashboard</a>
-    <a href="#doctor-applications" class="nav-item">Doktor Başvuruları</a>
-    <a href="#patients" class="nav-item">Hastalar</a>
-    <a href="#clinics" class="nav-item">Klinikler</a>
-    <a href="#settings" class="nav-item">Ayarlar</a>
-  </div>
+  <div class="wrap">
+    <header>
+      <h1 data-i18n="dashboard.title">Admin Dashboard</h1>
+      <div id="usageBadge" style="display:none; padding:6px 10px; border:1px solid #334155; border-radius:999px; background:#0b1220; color:#e6eaf2; font-size:12px; font-weight:800; margin-top:12px;"></div>
+    </header>
 
-  <div class="main-content">
-    <div class="dashboard-header">
-      <h1>Admin Dashboard</h1>
-      <p>Hoş geldiniz! Klinik yönetim paneline hoş geldiniz.</p>
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
     </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin-dashboard.html" class="nav-link active" data-i18n="dashboard.nav.dashboard">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink">
+          <span data-i18n="dashboard.nav.patients">Patients</span>
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-doctor-applications-v2.html" class="nav-link" id="doctorApplicationsNavLink">
+          <span>Doctor Applications</span>
+          <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" id="chatNavLink">
+          <span data-i18n="dashboard.nav.chat">Chat</span>
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
+          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
+        </div>
+      </div>
+    </nav>
 
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-number" id="total-patients">0</div>
-        <div class="stat-label">Toplam Hasta</div>
+    <div class="container">
+      <h1>Dashboard</h1>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <h3>Monthly New Patients</h3>
+          <p id="monthlyPatients">0</p>
+        </div>
+
+        <div class="stat-card">
+          <h3>Monthly Treatments</h3>
+          <p id="monthlyTreatments">0</p>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-number" id="pending-doctors">0</div>
-        <div class="stat-label">Bekleyen Doktor</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number" id="active-doctors">0</div>
-        <div class="stat-label">Aktif Doktor</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number" id="total-clinics">0</div>
-        <div class="stat-label">Toplam Klinik</div>
-      </div>
+
+      <table id="monthlyStatsTable">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Patients</th>
+            <th>Treatments</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
-
-    <div class="quick-actions">
-      <h3>Hızlı İşlemler</h3>
-      <div class="action-buttons">
-        <a href="admin-doctor-applications.html" class="action-btn">Doktor Başvurularını İncele</a>
-        <a href="admin-patients.html" class="action-btn">Hasta Yönetimi</a>
-        <a href="admin-clinics.html" class="action-btn">Klinik Ayarları</a>
-        <a href="admin-settings.html" class="action-btn">Sistem Ayarları</a>
-      </div>
-    </div>
-
-    <a href="#" onclick="logout()" class="logout-btn">Çıkış Yap</a>
   </div>
 
   <script>
-    // Check if admin is logged in
-    function checkAuth() {
-      const token = localStorage.getItem('admin_token');
-      if (!token) {
-        window.location.href = 'admin-login.html';
-        return;
-      }
-      
-      // Load dashboard stats
-      loadDashboardStats();
-    }
+    // Dashboard functionality
+    const API = window.location.origin;
 
-    // Load dashboard statistics
     async function loadDashboardStats() {
       try {
-        const token = localStorage.getItem('admin_token');
-        
-        // Get pending doctors count
-        const doctorsResponse = await fetch('/api/admin/doctor-applications', {
+        const token = localStorage.getItem("admin_token");
+        if (!token) {
+          window.location.href = "/admin-login.html";
+          return;
+        }
+
+        const response = await fetch(`${API}/api/admin/stats`, {
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
           }
         });
-        
-        if (doctorsResponse.ok) {
-          const doctorsData = await doctorsResponse.json();
-          const pendingDoctors = doctorsData.doctors?.filter(d => d.status === 'PENDING').length || 0;
-          const activeDoctors = doctorsData.doctors?.filter(d => d.status === 'ACTIVE').length || 0;
-          
-          document.getElementById('pending-doctors').textContent = pendingDoctors;
-          document.getElementById('active-doctors').textContent = activeDoctors;
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
+
+        const data = await response.json();
         
-        // Get patients count
-        const patientsResponse = await fetch('/api/admin/patients', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        // Update monthly stats
+        document.getElementById("monthlyPatients").textContent = data.monthlyPatients || 0;
+        document.getElementById("monthlyTreatments").textContent = data.monthlyTreatments || 0;
         
-        if (patientsResponse.ok) {
-          const patientsData = await patientsResponse.json();
-          const totalPatients = patientsData.list?.length || 0;
-          document.getElementById('total-patients').textContent = totalPatients;
+        // Update monthly table
+        const tbody = document.querySelector("#monthlyStatsTable tbody");
+        tbody.innerHTML = "";
+        
+        if (data.monthlyData && data.monthlyData.length > 0) {
+          data.monthlyData.forEach(month => {
+            const row = tbody.insertRow();
+            row.insertCell(0).textContent = month.month;
+            row.insertCell(1).textContent = month.patients;
+            row.insertCell(2).textContent = month.treatments;
+          });
         }
-        
-        // Set clinics count (hardcoded for now)
-        document.getElementById('total-clinics').textContent = '1';
-        
       } catch (error) {
-        console.error('Dashboard stats error:', error);
+        console.error("Failed to load dashboard stats:", error);
+        document.getElementById("monthlyPatients").textContent = "Error";
+        document.getElementById("monthlyTreatments").textContent = "Error";
       }
     }
 
-    // Logout function
-    function logout() {
-      localStorage.removeItem('admin_token');
-      localStorage.removeItem('clinic_code');
-      localStorage.removeItem('clinic_name');
-      window.location.href = 'admin-login.html';
+    // Load clinic name
+    async function loadClinicName() {
+      try {
+        const token = localStorage.getItem("admin_token");
+        if (!token) return;
+
+        const response = await fetch(`${API}/api/admin/clinic`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const clinic = await response.json();
+          const name = clinic.branding?.clinicName || clinic.name || "Clinic";
+          
+          const navbarClinicName = document.getElementById("navbarClinicName");
+          if (navbarClinicName) {
+            navbarClinicName.textContent = name;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load clinic name:', error);
+        const navbarClinicName = document.getElementById("navbarClinicName");
+        if (navbarClinicName) {
+          navbarClinicName.textContent = "Clinic";
+        }
+      }
     }
 
     // Initialize
-    checkAuth();
+    document.addEventListener("DOMContentLoaded", () => {
+      loadDashboardStats();
+      loadClinicName();
+      
+      // Initialize i18n
+      if (window.i18n) {
+        window.i18n.updatePage();
+      }
+    });
   </script>
 </body>
 </html>

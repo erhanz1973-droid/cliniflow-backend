@@ -243,7 +243,7 @@
     </div>
 
     <div class="nav">
-      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+      <a href="/admin-dashboard.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
     </div>
   </div>
 
@@ -366,7 +366,7 @@
         console.log("[LOGIN] Login successful, redirecting to dashboard...");
         
         // Redirect immediately to correct port
-        window.location.href = window.location.origin + "/admin.html";
+        window.location.href = window.location.origin + "/admin-dashboard.html";
       } else {
         setMsg(i18n.t("login.errors.loginFailed"), "err");
         submitBtn.disabled = false;
@@ -507,7 +507,7 @@
           
           // Redirect to dashboard
           setTimeout(() => {
-            window.location.href = window.location.origin + "/admin.html";
+            window.location.href = window.location.origin + "/admin-dashboard.html";
           }, 1000);
         } else {
           setOTPMsg(i18n.t("login.errors.otpFailed"), "err");

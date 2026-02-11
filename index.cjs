@@ -1961,6 +1961,83 @@ app.post("/api/admin/register", async (req, res) => {
   }
 });
 
+/* ================= ADMIN STATS ================= */
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "insufficient_permissions" });
+    }
+
+    // Get current month and year
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    // Calculate monthly patients
+    const { data: monthlyPatients, error: patientsError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("status", "APPROVED")
+      .gte("created_at", new Date(currentYear, currentMonth, 1).toISOString())
+      .lt("created_at", new Date(currentYear, currentMonth + 1, 1).toISOString());
+
+    // Calculate monthly treatments
+    const { data: monthlyTreatments, error: treatmentsError } = await supabase
+      .from("treatments")
+      .select("*")
+      .gte("created_at", new Date(currentYear, currentMonth, 1).toISOString())
+      .lt("created_at", new Date(currentYear, currentMonth + 1, 1).toISOString());
+
+    // Get last 6 months data
+    const monthlyData = [];
+    for (let i = 5; i >= 0; i--) {
+      const month = new Date(currentYear, currentMonth - i, 1);
+      const monthName = month.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      
+      const monthStart = new Date(month.getFullYear(), month.getMonth(), 1).toISOString();
+      const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 1).toISOString();
+
+      const { data: monthPatients } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("status", "APPROVED")
+        .gte("created_at", monthStart)
+        .lt("created_at", monthEnd);
+
+      const { data: monthTreatments } = await supabase
+        .from("treatments")
+        .select("*")
+        .gte("created_at", monthStart)
+        .lt("created_at", monthEnd);
+
+      monthlyData.push({
+        month: monthName,
+        patients: monthPatients?.length || 0,
+        treatments: monthTreatments?.length || 0
+      });
+    }
+
+    res.json({
+      ok: true,
+      monthlyPatients: monthlyPatients?.length || 0,
+      monthlyTreatments: monthlyTreatments?.length || 0,
+      monthlyData
+    });
+
+  } catch (err) {
+    console.error("[ADMIN STATS] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN LOGIN ================= */
 app.post("/api/admin/login", async (req, res) => {
   try {
