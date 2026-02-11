@@ -3240,9 +3240,34 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     const targetPatientId = patientId || requestId;
     const trimmedPatientId = String(targetPatientId).trim();
 
+    // CLINIC FALLBACK LOGIC FOR DEV/TEST
+    let clinicId = req.admin?.clinicId;
+    
+    // DEV / TEST fallback - use patient's clinic_id if admin clinic not available
+    if (!clinicId && trimmedPatientId) {
+      console.log("[ADMIN APPROVE] Using patient clinic fallback");
+      const { data: patient, error: patientError } = await supabase
+        .from("patients")
+        .select("clinic_id")
+        .eq("patient_id", trimmedPatientId)
+        .single();
+      
+      if (!patientError && patient) {
+        clinicId = patient.clinic_id;
+        console.log("[ADMIN APPROVE] Found clinic from patient:", clinicId);
+      }
+    }
+
+    if (!clinicId) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_found"
+      });
+    }
+
     console.log("[ADMIN APPROVE] Approving patient:", { 
       targetPatientId: trimmedPatientId, 
-      clinicId: req.admin.clinicId,
+      clinicId: clinicId,
       clinicCode: req.admin.clinicCode
     });
 
@@ -3250,7 +3275,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     const { data: patient, error: findError } = await supabase
       .from("patients")
       .select("*")
-      .eq("clinic_id", req.admin.clinicId)
+      .eq("clinic_id", clinicId)
       .eq("patient_id", trimmedPatientId)
       .single();
 
