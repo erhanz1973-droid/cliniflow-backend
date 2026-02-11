@@ -4585,7 +4585,7 @@ app.post("/api/register/doctor", async (req, res) => {
     // Create doctor in PATIENTS table with ONLY whitelist fields
     const doctorPayload = {
       id: crypto.randomUUID(),
-      patient_id: generatePatientIdFromName(name),
+      patient_id: await generatePatientIdFromName(name),
       clinic_id: clinic.id,
       clinic_code: clinicCode.trim(),
       name: name,
