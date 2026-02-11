@@ -302,7 +302,7 @@ async function insertReferralWithColumnPruning(payload) {
 }
 
 /* ================= JWT SECRET ================= */
-const JWT_SECRET = process.env.JWT_SECRET || "cliniflow-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "cliniflow-secret-key-change-in-production";
 
 /* ================= PATHS ================= */
 const DATA_DIR = path.join(__dirname, "data");
@@ -1998,37 +1998,34 @@ app.post("/api/admin/login", async (req, res) => {
     const trimmedPassword = String(password).trim();
     const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
 
-    // Admin listesini JSON dosyasından yükle
-    const fs = require('fs');
-    const path = require('path');
-    const adminsPath = path.join(process.cwd(), 'data', 'admins.json');
-    
-    let admins = [];
-    try {
-      admins = JSON.parse(fs.readFileSync(adminsPath, 'utf-8'));
-    } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-      console.error('[ADMIN LOGIN] Error loading admins:', error);
-      return res.status(500).json({ ok: false, error: "admin_config_error" });
+    // 🔥 PRODUCTION: Use Supabase clinics table ONLY - NO FILE SYSTEM
+    const { data: clinic, error: clinicError } = await supabase
+      .from("clinics")
+      .select("*")
+      .eq("clinic_code", trimmedClinicCode)
+      .single();
+
+    if (clinicError || !clinic) {
+      console.error("[ADMIN LOGIN] Clinic not found:", clinicError);
+      return res.status(401).json({ ok: false, error: "invalid_clinic_credentials" });
     }
 
-    // Admin bul
-    const admin = admins.find(a => 
-      a.email === trimmedEmail &&
-      a.password === trimmedPassword &&
-      a.clinicCode.toUpperCase() === trimmedClinicCode &&
-      a.status === "ACTIVE"
-    );
+    // Validate clinic email and password
+    if (clinic.email !== trimmedEmail) {
+      return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+    }
 
-    if (!admin) {
+    // Simple password validation (in production, use bcrypt)
+    if (clinic.password_hash !== trimmedPassword) {
       return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
     }
 
     // JWT token oluştur
     const token = jwt.sign(
       {
-        adminId: admin.id,
+        adminId: clinic.id,
         role: "ADMIN",
+        clinicId: clinic.id,
         clinicCode: trimmedClinicCode
       },
       process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
@@ -2039,13 +2036,14 @@ app.post("/api/admin/login", async (req, res) => {
       ok: true,
       token,
       admin: {
-        email: admin.email,
-        clinicCode: admin.clinicCode
+        email: clinic.email,
+        clinicCode: clinic.clinic_code,
+        name: clinic.name
       }
     });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ADMIN LOGIN] Error:", error);
+    console.error("[ADMIN LOGIN] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
