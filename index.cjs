@@ -43,12 +43,12 @@ app.get("/admin.html", (req, res) => {
 app.get("/admin-dashboard.html", (req, res) => {
   try {
     console.log("[ROUTE] /admin-dashboard.html requested - serving admin dashboard");
-    const filePath = path.join(__dirname, "admin.html");
+    const filePath = path.join(__dirname, "public/admin-dashboard.html");
     
     // Add cache-busting headers
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     
     res.sendFile(filePath);
   } catch (error) {

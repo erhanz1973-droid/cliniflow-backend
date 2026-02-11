@@ -1,1 +1,0 @@
-[{"id": 1, "email": "admin@clinifly.net", "password": "erhancan123", "clinicCode": "ERHANCAN", "role": "ADMIN", "status": "ACTIVE"}, {"id": 2, "email": "admin@cliniflow.com", "password": "admin123", "clinicCode": "TEST", "role": "ADMIN", "status": "ACTIVE"}]
