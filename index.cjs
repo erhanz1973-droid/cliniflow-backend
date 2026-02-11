@@ -4514,6 +4514,8 @@ app.post("/api/register/doctor", async (req, res) => {
       name,
       email,
       licenseNumber,
+      department,
+      specialties,
     } = req.body || {};
 
     // Validation - ONLY required fields
@@ -4552,6 +4554,8 @@ app.post("/api/register/doctor", async (req, res) => {
       email: email?.trim() || null,
       phone: phone.trim(),
       license_number: licenseNumber || "DEFAULT_LICENSE",
+      department: department || "General",
+      specialties: specialties || "General",
       status: "PENDING",
       role: "DOCTOR",
       created_at: new Date().toISOString(),
