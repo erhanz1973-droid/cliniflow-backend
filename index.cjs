@@ -21,23 +21,7 @@ const app = express();
 // We explicitly disable ETag generation globally; admin endpoints are always dynamic.
 app.set("etag", false);
 
-// admin.html route - serve doctor applications (MUST be before static middleware)
-app.get("/admin.html", (req, res) => {
-  try {
-    console.log("[ROUTE] /admin.html requested - serving doctor applications");
-    const filePath = path.join(__dirname, "admin.html");
-    
-    // Add cache-busting headers
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error("[ROUTE] Error serving admin.html:", error);
-    res.status(500).send("Internal server error");
-  }
-});
+// Static middleware will serve admin.html from public/
 
 // admin-dashboard.html route - serve admin dashboard (MUST be before static middleware)
 app.get("/admin-dashboard.html", (req, res) => {
