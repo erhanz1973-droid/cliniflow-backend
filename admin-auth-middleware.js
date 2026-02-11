@@ -55,7 +55,7 @@ function verifyAdminToken(req) {
       adminId: decoded.adminId,
       role: decoded.role,
       clinicCode: decoded.clinicCode,
-      clinicId: decoded.clinicId || 1 // Fallback clinicId
+      clinicId: decoded.clinicId // Remove fallback, use actual value
     };
   } catch (error) {
     console.error("[ADMIN] Token verification error:", error);
@@ -84,7 +84,7 @@ function adminAuth(req, res, next) {
     adminId: verification.adminId,
     role: verification.role,
     clinicCode: verification.clinicCode,
-    clinicId: verification.clinicId || 1 // Fallback clinicId
+    clinicId: verification.clinicId // Remove fallback, use actual value
   };
 
   console.log("[ADMIN MIDDLEWARE] Success, admin:", req.admin);

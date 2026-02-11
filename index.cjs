@@ -7264,7 +7264,7 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
     res.removeHeader("ETag");
 
     const status = String(req.query.status || "").trim().toUpperCase();
-    console.log(`[ADMIN REFERRALS] Fetching referrals for clinic_id: ${req.clinicId}, clinic_code: ${req.clinicCode}, status filter: ${status || "ALL"}`);
+    console.log(`[ADMIN REFERRALS] Fetching referrals for clinic_id: ${req.admin?.clinicId}, clinic_code: ${req.admin?.clinicCode}, status filter: ${status || "ALL"}`);
 
     const normalizeReferralStatus = (value) => {
       const raw = String(value || "").trim().toUpperCase();
@@ -7283,7 +7283,7 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       const { data: byId, error: byIdError } = await supabase
         .from("referrals")
         .select("*")
-        .eq("clinic_id", req.clinicId)
+        .eq("clinic_id", req.admin?.clinicId)
         .order("created_at", { ascending: false });
 
       if (byIdError) {
@@ -7294,14 +7294,14 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
         return { data: byId, error: null, source: "clinic_id" };
       }
 
-      if (!req.clinicCode) {
+      if (!req.admin?.clinicCode) {
         return { data: byId || [], error: null, source: "clinic_id" };
       }
 
       const { data: byCode, error: byCodeError } = await supabase
         .from("referrals")
         .select("*")
-        .eq("clinic_code", req.clinicCode)
+        .eq("clinic_code", req.admin?.clinicCode)
         .order("created_at", { ascending: false });
 
       if (byCodeError) {
