@@ -311,7 +311,6 @@ const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 const TRAVEL_DIR = path.join(DATA_DIR, "travel");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
-const ADMIN_DIR = path.join(__dirname, "cliniflow-admin", "public");
 
 /* ================= HELPER FUNCTIONS ================= */
 
@@ -460,16 +459,16 @@ app.get("/admin-patients.html", (req, res) => {
 
 app.get("/admin-treatment-create.html", (req, res) => {
   try {
-    const filePath = path.join(ADMIN_DIR, "admin-treatment-create.html");
+    const filePath = path.join(PUBLIC_DIR, "admin-treatment-create.html");
     if (!fs.existsSync(filePath)) {
       return res.status(404).send(`
         <html>
-          <head><title>Admin Treatment Create Sayfası Bulunamadı</title></head>
+          <head><title>404 - Admin Treatment Create Bulunamadı</title></head>
           <body>
             <h1>Admin Treatment Create Sayfası Bulunamadı</h1>
             <p>admin-treatment-create.html dosyası bulunamadı.</p>
             <p>File path: ${filePath}</p>
-            <p>ADMIN_DIR: ${ADMIN_DIR}</p>
+            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
             <p>__dirname: ${__dirname}</p>
           </body>
         </html>
@@ -8279,7 +8278,6 @@ app.use('/api/patients', patientsRoutes);
 // Serve static files from public directory (MOVED TO END)
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(PUBLIC_DIR));
-app.use(express.static(ADMIN_DIR));
 
 /* ================= START ================= */
 app.listen(PORT, () => {
