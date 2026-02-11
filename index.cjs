@@ -2230,11 +2230,22 @@ app.get("/api/health", async (req, res) => {
       .select("clinic_code, name")
       .limit(1);
     
+    // Test patients table schema
+    const { data: testPatient, error: patientError } = await supabase
+      .from("patients")
+      .select("license_number, department, specialties, full_name, role, clinic_id")
+      .limit(1);
+    
     res.json({ 
       ok: true, 
       message: "Backend is healthy",
       supabase_connected: !error,
-      sample_clinic: clinics?.[0] || null
+      sample_clinic: clinics?.[0] || null,
+      patients_schema_test: {
+        success: !patientError,
+        error: patientError?.message || null,
+        columns_found: testPatient?.[0] || null
+      }
     });
   } catch (err) {
     res.status(500).json({ 
