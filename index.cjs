@@ -4547,23 +4547,28 @@ app.post("/api/register/doctor", async (req, res) => {
     }
 
     // Check clinic
+    console.log("[DOCTOR REGISTER] Looking up clinic with code:", clinicCode.trim());
+    
     const { data: clinic, error: clinicError } = await supabase
       .from("clinics")
       .select("*")
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    if (!clinic) {
-      return res.status(400).json({
-        ok: false,
-        error: "invalid_clinic",
-        message: "Geçersiz klinik kodu"
-      });
-    }
+    console.log("[DOCTOR REGISTER] Clinic lookup result:", { clinic, clinicError });
 
     if (clinicError) {
       console.error("[DOCTOR REGISTER] Clinic lookup error:", clinicError);
       return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    if (!clinic) {
+      console.error("[DOCTOR REGISTER] Clinic not found for code:", clinicCode);
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_clinic_code",
+        message: "Geçersiz klinik kodu"
+      });
     }
 
     // Create doctor in PATIENTS table with ONLY whitelist fields
