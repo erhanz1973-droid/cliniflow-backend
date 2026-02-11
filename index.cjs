@@ -4734,6 +4734,7 @@ app.post("/api/register/patient", async (req, res) => {
       clinic_code: clinicCode.trim(),
       referral_code,
       status: "ACTIVE", // Patients are immediately ACTIVE
+      role: "PATIENT", // Explicitly set role
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
