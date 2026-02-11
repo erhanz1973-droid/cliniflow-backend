@@ -7280,10 +7280,20 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       String(error?.message || "").toLowerCase().includes("clinic_code");
 
     const fetchReferralsByClinic = async () => {
+      const clinicId = req.admin?.clinicId;
+      const clinicCode = req.admin?.clinicCode;
+      
+      console.log("[ADMIN REFERRALS] Using clinicId:", clinicId, "clinicCode:", clinicCode);
+      
+      if (!clinicId) {
+        console.error("ClinicId missing in admin referrals endpoint");
+        return res.status(400).json({ ok: false, error: "clinic_missing" });
+      }
+
       const { data: byId, error: byIdError } = await supabase
         .from("referrals")
         .select("*")
-        .eq("clinic_id", req.admin?.clinicId)
+        .eq("clinic_id", clinicId)
         .order("created_at", { ascending: false });
 
       if (byIdError) {
@@ -7294,14 +7304,14 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
         return { data: byId, error: null, source: "clinic_id" };
       }
 
-      if (!req.admin?.clinicCode) {
+      if (!clinicCode) {
         return { data: byId || [], error: null, source: "clinic_id" };
       }
 
       const { data: byCode, error: byCodeError } = await supabase
         .from("referrals")
         .select("*")
-        .eq("clinic_code", req.admin?.clinicCode)
+        .eq("clinic_code", clinicCode)
         .order("created_at", { ascending: false });
 
       if (byCodeError) {
