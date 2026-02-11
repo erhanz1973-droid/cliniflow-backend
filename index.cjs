@@ -1961,6 +1961,45 @@ app.post("/api/admin/register", async (req, res) => {
   }
 });
 
+/* ================= ADMIN RECENT TREATMENTS ================= */
+app.get("/api/admin/recent-treatments", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role !== "ADMIN") {
+      return res.status(403).json({ ok: false, error: "insufficient_permissions" });
+    }
+
+    // Get recent treatments with patient and doctor info
+    const { data: treatments, error } = await supabase
+      .from("treatments")
+      .select(`
+        *,
+        patient:patient_id(name, full_name),
+        doctor:doctor_id(name, full_name)
+      `)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      console.error("[RECENT TREATMENTS] Error:", error);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch" });
+    }
+
+    res.json(treatments || []);
+
+  } catch (err) {
+    console.error("[RECENT TREATMENTS] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN STATS ================= */
 app.get("/api/admin/stats", async (req, res) => {
   try {
