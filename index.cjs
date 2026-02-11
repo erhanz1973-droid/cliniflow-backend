@@ -2222,6 +2222,29 @@ app.post("/api/patient/login", async (req, res) => {
   }
 });
 
+// Health check endpoint
+app.get("/api/health", async (req, res) => {
+  try {
+    const { data: clinics, error } = await supabase
+      .from("clinics")
+      .select("clinic_code, name")
+      .limit(1);
+    
+    res.json({ 
+      ok: true, 
+      message: "Backend is healthy",
+      supabase_connected: !error,
+      sample_clinic: clinics?.[0] || null
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      ok: false, 
+      message: "Backend health check failed",
+      error: err.message 
+    });
+  }
+});
+
 /* ================= PUBLIC CLINIC INFO (GET) ================= */
 // Hasta uygulaması için public endpoint - clinic code ile clinic bilgilerini döner
 app.get("/api/clinic/:clinicCode", async (req, res) => {
