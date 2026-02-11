@@ -4528,7 +4528,7 @@ app.post("/api/register/doctor", async (req, res) => {
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    if (!clinic?.data) {
+    if (!clinic) {
       return res.status(400).json({
         ok: false,
         error: "invalid_clinic",
@@ -4589,6 +4589,12 @@ app.post("/api/register/doctor", async (req, res) => {
   }
 });
 
+/* ================= TEST ENDPOINT ================= */
+app.post("/api/test-register", async (req, res) => {
+  console.log("[TEST] Full request body:", JSON.stringify(req.body, null, 2));
+  res.json({ ok: true, received: req.body });
+});
+
 /* ================= PATIENT REGISTRATION ================= */
 app.post("/api/register/patient", async (req, res) => {
   try {
@@ -4601,7 +4607,8 @@ app.post("/api/register/patient", async (req, res) => {
       inviterReferralCode,
     } = req.body || {};
 
-    console.log("[PATIENT REGISTER] Request received:", {
+    console.log("[PATIENT REGISTER] Full request body:", JSON.stringify(req.body, null, 2));
+    console.log("[PATIENT REGISTER] Parsed fields:", {
       clinicCode,
       phone,
       patientName,
@@ -4611,8 +4618,25 @@ app.post("/api/register/patient", async (req, res) => {
     });
 
     // Validation
+    console.log("[PATIENT REGISTER] Validation check:", {
+      hasClinicCode: !!clinicCode,
+      hasPhone: !!phone,
+      hasPatientName: !!patientName,
+      clinicCode: clinicCode,
+      phone: phone,
+      patientName: patientName
+    });
+    
     if (!clinicCode || !phone || !patientName) {
-      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_required_fields",
+        details: {
+          clinicCode: !!clinicCode,
+          phone: !!phone,
+          patientName: !!patientName
+        }
+      });
     }
 
     // Check clinic
@@ -4622,7 +4646,7 @@ app.post("/api/register/patient", async (req, res) => {
       .eq("clinic_code", clinicCode.trim())
       .single();
 
-    if (!clinic?.data) {
+    if (clinicError || !clinic) {
       return res.status(400).json({
         ok: false,
         error: "invalid_clinic",
@@ -4634,7 +4658,7 @@ app.post("/api/register/patient", async (req, res) => {
     const { data: existingPatients, error: countError } = await supabase
       .from("patients")
       .select("patient_id")
-      .eq("clinic_id", clinic.id);
+      .eq("clinic_code", clinicCode.trim());
 
     if (countError) {
       console.error("[PATIENT REGISTER] Count error:", countError);
@@ -4642,11 +4666,7 @@ app.post("/api/register/patient", async (req, res) => {
     }
 
     const patientCount = existingPatients?.length || 0;
-    const maxPatients = clinic.max_patients || 10;
-
-    if (patientCount >= maxPatients) {
-      return res.status(400).json({ ok: false, error: "clinic_full" });
-    }
+    // Remove max patients check since clinics table doesn't have max_patients column
 
     // Generate patient ID
     const patient_id = generatePatientIdFromName(patientName);
@@ -4654,18 +4674,15 @@ app.post("/api/register/patient", async (req, res) => {
 
     // Create patient with ACTIVE status
     const newPatient = {
-      name,
+      patient_id,
       name: patientName,
       phone: phone.trim(),
-      email: email?.trim() || null,
-      clinic_id: clinic.id,
+      email: email?.trim() || '',
       clinic_code: clinicCode.trim(),
       referral_code,
       status: "ACTIVE", // Patients are immediately ACTIVE
-      role: "PATIENT", // Explicitly PATIENT
-      status: "PENDING",
-      role: "DOCTOR",
-      created_at: new Date().toISOString(),
+      created_at: Date.now(),
+      updated_at: Date.now(),
     };
 
     const { data: insertedPatient, error: insertError } = await supabase
