@@ -7,7 +7,7 @@ ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_status_check;
 -- Create proper check constraint for status column
 ALTER TABLE patients 
 ADD CONSTRAINT patients_status_check 
-CHECK (status IN ('ACTIVE', 'PENDING', 'REJECTED', 'SUSPENDED'));
+CHECK (status IN ('ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'));
 
 -- Verify the constraint was added
 SELECT constraint_name, check_clause
