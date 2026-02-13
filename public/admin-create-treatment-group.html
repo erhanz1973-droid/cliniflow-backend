@@ -92,18 +92,18 @@
 
       <div id="form-container" style="display:none;">
         <div class="form-group">
-          <label class="form-label" for="patient-select">Hasta Seçimi *</label>
-          <select id="patient-select" class="form-input" required>
+          <label class="form-label" for="patientSelect">Hasta Seçimi *</label>
+          <select id="patientSelect" class="form-input" required>
             <option value="">Hasta seçin...</option>
           </select>
         </div>
 
-        <form id="treatment-group-form">
+        <form id="createTreatmentGroupForm">
           <div class="form-group">
-            <label class="form-label" for="group-name">Grup Adı *</label>
+            <label class="form-label" for="groupName">Grup Adı *</label>
             <input 
               type="text" 
-              id="group-name" 
+              id="groupName" 
               class="form-input" 
               placeholder="Tedavi grubu adını girin..."
               required
@@ -111,9 +111,9 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="group-description">Açıklama</label>
+            <label class="form-label" for="description">Açıklama</label>
             <textarea 
-              id="group-description" 
+              id="description" 
               class="form-input form-textarea" 
               placeholder="Tedavi grubu açıklaması (opsiyonel)..."
             ></textarea>
@@ -213,7 +213,7 @@
 
     // Render patients dropdown
     function renderPatients() {
-      const patientSelect = document.getElementById('patient-select');
+      const patientSelect = document.getElementById('patientSelect');
       
       if (!Array.isArray(patients) || patients.length === 0) {
         console.warn("Patients list empty");  // 🔍 Debug
@@ -359,8 +359,9 @@
         document.getElementById("loading").style.display = "none";
         document.getElementById("form-container").style.display = "block";
 
-        // Setup form submission
-        document.getElementById("treatment-group-form").addEventListener("submit", handleSubmit);
+        // Setup form submission with correct form ID
+        const form = document.getElementById("createTreatmentGroupForm");
+        form.addEventListener("submit", handleSubmit);
 
       } catch (error) {
         console.error("Initialize error:", error);
@@ -369,52 +370,49 @@
       }
     }
 
+    // Initialize when DOM is ready
+    document.addEventListener("DOMContentLoaded", initializePage);
+
     // Handle form submission
-    async function handleSubmit(event) {
-      event.preventDefault();
+    async function handleSubmit(e) {
+      e.preventDefault();
       
       try {
         hideMessages();
         
         console.log("SUBMIT START");
 
-        // Get elements with correct IDs
-        const patientEl = document.getElementById("patient-select");
-        const nameEl = document.getElementById("group-name");
-        const descEl = document.getElementById("group-description");
-
-        console.log("patientEl:", patientEl);
-        console.log("nameEl:", nameEl);
-        console.log("descEl:", descEl);
-
+        // Get form values with correct IDs
+        const patientId = document.getElementById("patientSelect")?.value;
+        const name = document.getElementById("groupName")?.value;
+        const description = document.getElementById("description")?.value;
+        
         // Get selected doctors from checkboxes
         const doctorIds = Array.from(
-          document.querySelectorAll('input[name="doctor_ids"]:checked')
+          document.querySelectorAll("input[name='doctor_ids']:checked")
         ).map(el => el.value);
 
-        // Get primary doctor
+        // Get primary doctor from radio buttons
         const primaryDoctorId = document.querySelector(
-          'input[name="primary_doctor"]:checked'
+          "input[name='primary_doctor']:checked"
         )?.value;
 
-        // Create payload
-        const payload = {
-          patient_id: patientEl?.value,
-          doctor_ids: doctorIds,
-          primary_doctor_id: primaryDoctorId,
-          name: nameEl?.value,
-          description: descEl?.value
-        };
-
-        console.log("PAYLOAD:", payload);
+        // Debug logging
+        console.log({
+          patientId,
+          doctorIds,
+          primaryDoctorId,
+          name,
+          description
+        });
 
         // Validation
-        if (!payload.patient_id) {
+        if (!patientId) {
           showError("Hasta seçmelisiniz");
           return;
         }
 
-        if (!payload.name?.trim()) {
+        if (!name?.trim()) {
           showError("Grup adı zorunludur");
           return;
         }
@@ -447,7 +445,13 @@
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+            patient_id: patientId,
+            doctor_ids: doctorIds,
+            primary_doctor_id: primaryDoctorId,
+            name: name.trim(),
+            description: description?.trim() || null
+          })
         });
 
         const data = await response.json();
