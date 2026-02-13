@@ -5661,7 +5661,6 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
     }
 
     // 3. Create treatment group if not exists
-    let treatmentGroupId;
     const { data: existingGroup, error: groupError } = await supabase
       .from("treatment_groups")
       .select("id")
@@ -5675,6 +5674,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       return res.status(500).json({ ok: false, error: "group_check_failed" });
     }
 
+    let treatmentGroupId;
     if (existingGroup) {
       return res.status(400).json({
         ok: false,
@@ -5699,7 +5699,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       return res.status(500).json({ ok: false, error: "group_creation_failed" });
     }
 
-    const treatmentGroupId = newGroup.id;
+    treatmentGroupId = newGroup.id;
     console.log("[ADMIN ASSIGN PATIENT] Created new group:", treatmentGroupId);
     }
 
