@@ -5047,8 +5047,7 @@ app.post("/api/register/patient", async (req, res) => {
     );
 
     console.log("[PATIENT REGISTER] Patient registered successfully:", {
-      name,
-      name: patientName,
+      patientName: patientName,
       role: "PATIENT",
       status: "ACTIVE"
     });
