@@ -91,14 +91,14 @@
       <div id="success" class="success" style="display:none;"></div>
 
       <div id="form-container" style="display:none;">
-        <div class="form-group">
-          <label class="form-label" for="patientSelect">Hasta Seçimi *</label>
-          <select id="patientSelect" class="form-input" required>
-            <option value="">Hasta seçin...</option>
-          </select>
-        </div>
-
         <form id="createTreatmentGroupForm">
+          <div class="form-group">
+            <label class="form-label" for="patientSelect">Hasta Seçimi *</label>
+            <select id="patientSelect" class="form-input" required>
+              <option value="">Hasta seçin...</option>
+            </select>
+          </div>
+
           <div class="form-group">
             <label class="form-label" for="groupName">Grup Adı *</label>
             <input 
@@ -121,7 +121,7 @@
 
           <div class="form-group">
             <label class="form-label">Doktor Seçimi *</label>
-            <div class="doctors-list" id="doctors-list">
+            <div class="doctors-list" id="doctorList">
               <div class="loading">Doktorlar yükleniyor...</div>
             </div>
           </div>
@@ -282,16 +282,16 @@
 
     // Render doctors list
     function renderDoctors() {
-      const doctorsList = document.getElementById("doctors-list");
+      const doctorsList = document.getElementById("doctorList");
       
       if (!Array.isArray(doctors) || doctors.length === 0) {
-        console.warn("Doctors list empty");  // 
+        console.warn("Doctors list empty");  // 🔍 Debug
         doctorsList.innerHTML = "<div style='text-align:center; color:var(--muted); padding:20px;'>Aktif doktor bulunamadı</div>";
         return;
       }
 
       doctorsList.innerHTML = doctors.map(doctor => {
-        console.log("Rendering doctor:", doctor);  // 
+        console.log("Rendering doctor:", doctor);  // 🔍 Debug
         const doctorName = doctor.full_name || doctor.name || "İsimsiz Doktor";
         const department = doctor.department || "Bölüm belirtilmemiş";
         const isSelected = selectedDoctors.has(doctor.id);
@@ -380,9 +380,11 @@
       try {
         hideMessages();
         
-        console.log("SUBMIT START");
+        console.log("DEBUG ELEMENTS:");
+        console.log("patientSelect:", document.getElementById("patientSelect"));
+        console.log("groupName:", document.getElementById("groupName"));
+        console.log("description:", document.getElementById("description"));
 
-        // Get form values with correct IDs
         const patientId = document.getElementById("patientSelect")?.value;
         const name = document.getElementById("groupName")?.value;
         const description = document.getElementById("description")?.value;
@@ -392,12 +394,8 @@
           document.querySelectorAll("input[name='doctor_ids']:checked")
         ).map(el => el.value);
 
-        // Get primary doctor from radio buttons
-        const primaryDoctorId = document.querySelector(
-          "input[name='primary_doctor']:checked"
-        )?.value;
+        const primaryDoctorId = doctorIds[0];
 
-        // Debug logging
         console.log({
           patientId,
           doctorIds,
@@ -406,29 +404,8 @@
           description
         });
 
-        // Validation
-        if (!patientId) {
-          showError("Hasta seçmelisiniz");
-          return;
-        }
-
-        if (!name?.trim()) {
-          showError("Grup adı zorunludur");
-          return;
-        }
-
-        if (doctorIds.length === 0) {
-          showError("En az bir doktor seçmelisiniz");
-          return;
-        }
-
-        if (!primaryDoctorId) {
-          showError("Birincil doktor seçmelisiniz");
-          return;
-        }
-
-        if (!doctorIds.includes(primaryDoctorId)) {
-          showError("Birincil doktor seçili doktorlar arasında olmalıdır");
+        if (!patientId || !name || doctorIds.length === 0) {
+          alert("Form eksik!");
           return;
         }
 
