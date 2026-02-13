@@ -4709,7 +4709,36 @@ app.post("/api/register/doctor", async (req, res) => {
       });
     }
 
-    // 2️⃣ Insert into DOCTORS table
+    // 2️⃣ Clinic-based duplicate check
+    const { data: existingDoctor } = await supabase
+      .from("doctors")
+      .select("id")
+      .eq("clinic_id", clinic.id)
+      .eq("email", email?.trim())
+      .single();
+
+    if (existingDoctor) {
+      return res.status(400).json({
+        ok: false,
+        error: "doctor_already_registered_in_this_clinic"
+      });
+    }
+
+    const { data: existingPhoneDoctor } = await supabase
+      .from("doctors")
+      .select("id")
+      .eq("clinic_id", clinic.id)
+      .eq("phone", phone.trim())
+      .single();
+
+    if (existingPhoneDoctor) {
+      return res.status(400).json({
+        ok: false,
+        error: "doctor_phone_already_registered_in_this_clinic"
+      });
+    }
+
+    // 3️⃣ Insert into DOCTORS table
     const doctorPayload = {
       id: crypto.randomUUID(),
       doctor_id: `d_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
