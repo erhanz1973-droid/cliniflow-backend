@@ -3576,10 +3576,10 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    // Hasta durumunu APPROVED yap
+    // Hasta durumunu ACTIVE yap
     const { data: updatedPatient, error: updateError } = await supabase
       .from("patients")
-      .update({ status: "APPROVED" })
+      .update({ status: "ACTIVE" })
       .eq("id", patient.id)
       .select()
       .single();
