@@ -6174,83 +6174,17 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
       clinicId: req.admin.clinicId 
     });
 
-    // Debug: Check total doctors first
-    const { data: allDoctors, error: allError } = await supabase
-      .from("doctors")
-      .select("id, name, full_name, role, status, clinic_id")
-      .eq("clinic_id", req.admin.clinicId);
-
-    console.log("[ADMIN DOCTORS] All doctors in clinic:", allDoctors?.length || 0);
-    console.log("[ADMIN DOCTORS] All doctors data:", allDoctors);
-
-    // Try different field combinations for flexibility
-    let doctors = [];
-    let error = null;
-
-    // Try with name field first
-    const result1 = await supabase
-      .from("doctors")
+    // 🔥 CRITICAL: Use patients table - NOT doctors table
+    // All users (doctors and patients) are stored in patients table
+    const { data: doctors, error } = await supabase
+      .from("patients")
       .select("id, name, department")
       .eq("clinic_id", req.admin.clinicId)
       .eq("role", "DOCTOR")
       .eq("status", "ACTIVE")
       .order("name", { ascending: true });
 
-    if (!result1.error && result1.data) {
-      doctors = result1.data;
-    } else {
-      // Try with full_name field
-      const result2 = await supabase
-        .from("doctors")
-        .select("id, full_name, department")
-        .eq("clinic_id", req.admin.clinicId)
-        .eq("role", "DOCTOR")
-        .eq("status", "ACTIVE")
-        .order("full_name", { ascending: true });
-
-      if (!result2.error && result2.data) {
-        // Map full_name to name for consistency
-        doctors = result2.data.map(d => ({
-          id: d.id,
-          name: d.full_name,
-          department: d.department
-        }));
-      } else {
-        // Try with different status values (lowercase)
-        const result3 = await supabase
-          .from("doctors")
-          .select("id, name, department")
-          .eq("clinic_id", req.admin.clinicId)
-          .eq("role", "DOCTOR")
-          .eq("status", "active")
-          .order("name", { ascending: true });
-
-        if (!result3.error && result3.data) {
-          doctors = result3.data;
-        } else {
-          // Try with full_name and lowercase status
-          const result4 = await supabase
-            .from("doctors")
-            .select("id, full_name, department")
-            .eq("clinic_id", req.admin.clinicId)
-            .eq("role", "DOCTOR")
-            .eq("status", "active")
-            .order("full_name", { ascending: true });
-
-          if (!result4.error && result4.data) {
-            doctors = result4.data.map(d => ({
-              id: d.id,
-              name: d.full_name,
-              department: d.department
-            }));
-          } else {
-            error = result1.error || result2.error || result3.error || result4.error;
-          }
-        }
-      }
-    }
-
-    console.log("[ADMIN DOCTORS] Final doctors count:", doctors.length);
+    console.log("[ADMIN DOCTORS] Final doctors count:", doctors?.length || 0);
     console.log("[ADMIN DOCTORS] Final doctors data:", doctors);
 
     if (error) {
@@ -6266,6 +6200,50 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   } catch (err) {
     console.error("[ADMIN DOCTORS] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DEBUG CLINIC DOCTORS ================= */
+app.get("/debug/clinic-doctors", adminAuth, async (req, res) => {
+  try {
+    console.log("[DEBUG CLINIC DOCTORS] Request received");
+    console.log("[DEBUG CLINIC DOCTORS] Admin info:", { 
+      adminId: req.admin.id, 
+      clinicId: req.admin.clinicId 
+    });
+
+    // Get all doctors from patients table
+    const { data, error } = await supabase
+      .from("patients")
+      .select("id, name, role, status, department")
+      .eq("clinic_id", req.admin.clinicId)
+      .eq("role", "DOCTOR");
+
+    console.log("[DEBUG CLINIC DOCTORS] Raw data:", data);
+    console.log("[DEBUG CLINIC DOCTORS] Error:", error);
+
+    // Get all users in clinic for comparison
+    const { data: allUsers, error: allError } = await supabase
+      .from("patients")
+      .select("id, name, role, status")
+      .eq("clinic_id", req.admin.clinicId);
+
+    console.log("[DEBUG CLINIC DOCTORS] All users in clinic:", allUsers?.length || 0);
+    console.log("[DEBUG CLINIC DOCTORS] All users data:", allUsers);
+
+    res.json({ 
+      data: data || [],
+      error,
+      allUsers: allUsers || [],
+      clinicId: req.admin.clinicId
+    });
+
+  } catch (err) {
+    console.error("[DEBUG CLINIC DOCTORS] Error:", err);
+    res.status(500).json({ 
+      data: [], 
+      error: "internal_error" 
+    });
   }
 });
 
