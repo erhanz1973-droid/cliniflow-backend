@@ -6187,7 +6187,7 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
       .select("id, name, department, status")
       .eq("clinic_id", req.admin.clinicId)
       .eq("role", "DOCTOR")
-      .eq("status", "ACTIVE");
+      .in("status", ["APPROVED", "ACTIVE"]);
 
     if (error) {
       console.error("[ADMIN DOCTORS] Error:", error);
