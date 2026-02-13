@@ -373,29 +373,45 @@
       try {
         hideMessages();
 
-        // Get selected patient ID from dropdown
-        const selectedPatientId = document.getElementById("patient-select").value;
+        // Get form values with correct IDs
+        const patientId = document.getElementById("patient-select").value;
+        const name = document.getElementById("group-name").value.trim();
+        const description = document.getElementById("group-description").value.trim();
+        
+        // Get selected doctors from checkboxes
+        const doctorIds = Array.from(
+          document.querySelectorAll('input[type="checkbox"]:checked')
+        ).map(cb => cb.value);
+        
+        // Get primary doctor from radio buttons or first selected
+        const primaryDoctorId = primaryDoctorId || doctorIds[0];
         
         // Debug logging
-        console.log("Selected patient ID:", selectedPatientId);
-        console.log("Selected patient ID format:", selectedPatientId ? selectedPatientId.length : 'null');
-        console.log("Is UUID format:", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedPatientId));
+        console.log("Form submission data:", {
+          patientId,
+          doctorIds,
+          primaryDoctorId,
+          name,
+          description
+        });
+        
+        console.log("Patient select element:", document.getElementById("patient-select"));
+        console.log("Group name element:", document.getElementById("group-name"));
+        console.log("Description element:", document.getElementById("group-description"));
+        console.log("Selected checkboxes:", document.querySelectorAll('input[type="checkbox"]:checked'));
 
         // Validation
-        const groupName = document.getElementById("group-name").value.trim();
-        const groupDescription = document.getElementById("group-description").value.trim();
-
-        if (!selectedPatientId) {
+        if (!patientId) {
           showError("Hasta seçmelisiniz");
           return;
         }
 
-        if (!groupName) {
+        if (!name) {
           showError("Grup adı zorunludur");
           return;
         }
 
-        if (selectedDoctors.size === 0) {
+        if (doctorIds.length === 0) {
           showError("En az bir doktor seçmelisiniz");
           return;
         }
@@ -405,7 +421,7 @@
           return;
         }
 
-        if (!selectedDoctors.has(primaryDoctorId)) {
+        if (!doctorIds.includes(primaryDoctorId)) {
           showError("Birincil doktor seçili doktorlar arasında olmalıdır");
           return;
         }
@@ -423,11 +439,11 @@
             Authorization: "Bearer " + token,
           },
           body: JSON.stringify({
-            patient_id: selectedPatientId,
-            doctor_ids: Array.from(selectedDoctors),
+            patient_id: patientId,
+            doctor_ids: doctorIds,
             primary_doctor_id: primaryDoctorId,
-            name: groupName,
-            description: groupDescription || null
+            name: name,
+            description: description || null
           })
         });
 
