@@ -1763,8 +1763,8 @@ async function checkPatientApproved(patientId, clinicId) {
       return { approved: false, error: "patient_not_found" };
     }
 
-    if (patient.status !== "APPROVED" && patient.status !== "ACTIVE") {
-      console.log(`[CHECK STATUS] Patient ${patientId} status is ${patient.status}, not APPROVED or ACTIVE`);
+    if (patient.status !== "ACTIVE") {
+      console.log(`[CHECK STATUS] Patient ${patientId} status is ${patient.status}, not ACTIVE`);
       return { approved: false, error: "patient_not_approved", status: patient.status };
     }
 
@@ -2024,7 +2024,7 @@ app.get("/api/admin/stats", async (req, res) => {
     const { data: monthlyPatients, error: patientsError } = await supabase
       .from("patients")
       .select("*")
-      .eq("status", "APPROVED")
+      .eq("status", "ACTIVE")
       .gte("created_at", new Date(currentYear, currentMonth, 1).toISOString())
       .lt("created_at", new Date(currentYear, currentMonth + 1, 1).toISOString());
 
@@ -2047,7 +2047,7 @@ app.get("/api/admin/stats", async (req, res) => {
       const { data: monthPatients } = await supabase
         .from("patients")
         .select("*")
-        .eq("status", "APPROVED")
+        .eq("status", "ACTIVE")
         .gte("created_at", monthStart)
         .lt("created_at", monthEnd);
 
@@ -3576,10 +3576,10 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    // Hasta durumunu APPROVED yap
+    // Hasta durumunu ACTIVE yap
     const { data: updatedPatient, error: updateError } = await supabase
       .from("patients")
-      .update({ status: "APPROVED" })
+      .update({ status: "ACTIVE" })
       .eq("id", patient.id)
       .select()
       .single();
@@ -4097,7 +4097,7 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
         id: patient.id,
         patientId: patient.name,
         name: patient.name,
-        status: patient.status === "APPROVED" ? "Active" : "Pending",
+        status: patient.status === "ACTIVE" ? "Active" : "Pending",
         lastVisit: patient.last_visit,
       }
     });
@@ -4812,7 +4812,7 @@ app.post("/api/doctor/login", async (req, res) => {
       .from("doctors")
       .select("*")
       .eq("clinic_code", clinicCode.trim())
-      .eq("status", "APPROVED");
+      .eq("status", "ACTIVE");
 
     if (email) {
       query = query.eq("email", email.trim());
@@ -6414,7 +6414,7 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
     }
 
     // 3. APPROVED kontrolü - Admin ve Doctor için bypass, patient için zorunlu
-    if (!isAdmin && patientData.role !== "DOCTOR" && patientData.status !== "APPROVED") {
+    if (!isAdmin && patientData.role !== "DOCTOR" && patientData.status !== "ACTIVE") {
       return res.status(403).json({ ok: false, error: "CHAT_LOCKED", message: "Chat is only available after patient approval" });
     }
 
