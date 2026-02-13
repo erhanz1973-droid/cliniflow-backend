@@ -5026,7 +5026,7 @@ app.post("/api/register/patient", async (req, res) => {
     // Create JWT token for patient
     const patientToken = jwt.sign(
       { 
-        patientId: name, 
+        patientId: patient_id, // ✅ Use patient_id instead of name
         clinicId: clinic.id,
         clinicCode: clinicCode.trim(),
         role: "PATIENT",
