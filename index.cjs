@@ -5357,6 +5357,168 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
   }
 });
 
+/* ================= ADMIN TREATMENT GROUPS CREATE ================= */
+app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
+  try {
+    const { patient_id, doctor_ids, name, description } = req.body || {};
+
+    // Validation
+    if (!patient_id || !doctor_ids || !Array.isArray(doctor_ids) || doctor_ids.length === 0) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_required_fields" 
+      });
+    }
+
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "name_required" 
+      });
+    }
+
+    // Check if patient exists and is ACTIVE
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("id, status, clinic_id")
+      .eq("patient_id", patient_id)
+      .eq("clinic_id", req.admin.clinicId)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found" 
+      });
+    }
+
+    if (patient.status !== "ACTIVE") {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "patient_not_active" 
+      });
+    }
+
+    // Check if all doctors exist and are ACTIVE
+    const { data: doctors, error: doctorsError } = await supabase
+      .from("doctors")
+      .select("id, name, status, clinic_id")
+      .in("id", doctor_ids)
+      .eq("clinic_id", req.admin.clinicId)
+      .eq("status", "ACTIVE");
+
+    if (doctorsError) {
+      return res.status(500).json({ 
+        ok: false, 
+        error: "doctors_check_failed" 
+      });
+    }
+
+    if (doctors.length !== doctor_ids.length) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "some_doctors_not_found_or_inactive" 
+      });
+    }
+
+    // Generate UUID for treatment group
+    const treatment_group_id = crypto.randomUUID();
+
+    // Start transaction
+    const { data: treatmentGroup, error: groupError } = await supabase
+      .from("treatment_groups")
+      .insert({
+        id: treatment_group_id,
+        clinic_id: req.admin.clinicId,
+        patient_id: patient_id,
+        name: name.trim(),
+        description: description?.trim() || "",
+        status: "ACTIVE",
+        created_by_admin_id: req.admin.id,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (groupError) {
+      console.error("[TREATMENT GROUPS CREATE] Group creation error:", groupError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "group_creation_failed" 
+      });
+    }
+
+    // Add doctors to treatment group members
+    const memberInserts = doctor_ids.map((doctor_id, index) => ({
+      treatment_group_id: treatment_group_id,
+      doctor_id: doctor_id,
+      role: doctor_ids[0] === doctor_id ? "PRIMARY" : "MEMBER", // First doctor is PRIMARY
+      status: "ACTIVE",
+      joined_at: new Date().toISOString()
+    }));
+
+    const { data: members, error: membersError } = await supabase
+      .from("treatment_group_members")
+      .insert(memberInserts)
+      .select();
+
+    if (membersError) {
+      console.error("[TREATMENT GROUPS CREATE] Members insertion error:", membersError);
+      
+      // Rollback: Delete the treatment group
+      await supabase
+        .from("treatment_groups")
+        .delete()
+        .eq("id", treatment_group_id);
+
+      return res.status(500).json({ 
+        ok: false, 
+        error: "members_creation_failed" 
+      });
+    }
+
+    // Get doctors details for response
+    const { data: doctorsDetails, error: detailsError } = await supabase
+      .from("doctors")
+      .select("id, name, department")
+      .in("id", doctor_ids);
+
+    const responseDoctors = doctorsDetails?.map(doctor => ({
+      id: doctor.id,
+      name: doctor.name,
+      department: doctor.department,
+      role: doctor_ids[0] === doctor.id ? "PRIMARY" : "MEMBER"
+    })) || [];
+
+    const response = {
+      ok: true,
+      group: {
+        id: treatment_group_id,
+        patient_id: patient_id,
+        name: name.trim(),
+        description: description?.trim() || "",
+        status: "ACTIVE",
+        doctors: responseDoctors
+      }
+    };
+
+    console.log("[TREATMENT GROUPS CREATE] Success:", {
+      treatment_group_id,
+      patient_id,
+      doctor_count: doctor_ids.length
+    });
+
+    res.json(response);
+
+  } catch (err) {
+    console.error("[TREATMENT GROUPS CREATE] Error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error" 
+    });
+  }
+});
+
 /* ================= ADMIN TASK ASSIGNMENT ================= */
 app.post("/api/admin/tasks", adminAuth, async (req, res) => {
   try {
