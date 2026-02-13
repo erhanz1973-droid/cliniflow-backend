@@ -7770,6 +7770,18 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN REFERRALS (POST) ================= */
+app.post("/api/admin/referrals", adminAuth, async (req, res) => {
+  try {
+    // Forward to GET handler for consistency
+    req.method = "GET";
+    return app._router.handle(req, res);
+  } catch (err) {
+    console.error("[ADMIN REFERRALS POST] Error:", err);
+    return res.status(500).json({ ok: false, error: "internal_error", details: err.message });
+  }
+});
+
 /* ================= ADMIN REFERRAL APPROVE ================= */
 app.patch("/api/admin/referrals/:referralId/approve", adminAuth, async (req, res) => {
   try {
