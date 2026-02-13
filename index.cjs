@@ -5360,7 +5360,13 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
 /* ================= ADMIN TREATMENT GROUPS CREATE ================= */
 app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
-    const { patient_id, doctor_ids, primary_doctor_id, name, description } = req.body;
+    const {
+      patient_id,
+      doctor_ids,
+      primary_doctor_id,
+      name,
+      description
+    } = req.body;
 
     console.log("REQ.ADMIN FULL:", req.admin);  // 🔍 Debug full admin object
 
@@ -5377,14 +5383,29 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       adminId
     });
 
+    // Validation for required fields
+    if (!patient_id || !doctor_ids?.length || !primary_doctor_id || !name) {
+      console.error("[TREATMENT GROUPS CREATE] Missing fields:", {
+        patient_id: !!patient_id,
+        doctor_ids: !!doctor_ids?.length,
+        primary_doctor_id: !!primary_doctor_id,
+        name: !!name
+      });
+      return res.status(400).json({
+        ok: false,
+        error: "missing_fields",
+        details: "patient_id, doctor_ids, primary_doctor_id, and name are required"
+      });
+    }
+
     const { data, error } = await supabase.rpc(
       "create_treatment_group_atomic",
       {
-        p_admin_id: adminId,  // ✅ Use correct adminId
+        p_admin_id: adminId,
         p_clinic_id: clinicId,
         p_patient_id: patient_id,
         p_name: name,
-        p_description: description,
+        p_description: description || "",
         p_doctor_ids: doctor_ids,
         p_primary_doctor_id: primary_doctor_id
       }
