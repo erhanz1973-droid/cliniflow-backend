@@ -7851,24 +7851,29 @@ app.get("/favicon.ico", (req, res) => {
 // 🔥 CRITICAL: UNIFIED OTP VERIFICATION WITH TYPE-BASED RESPONSES
 app.post("/auth/verify-otp", async (req, res) => {
   try {
-    const { otp, phone, email, sessionId, type } = req.body || {};
+    const { otp, phone, email, sessionId, type, role } = req.body || {};
 
     console.log("[OTP VERIFY] Request received:", {
       otp,
       phone,
       email,
       sessionId,
-      type
+      type,
+      role
     });
 
-    // 🔥 HARD VALIDATION: Type is REQUIRED
-    if (!type || !["patient", "doctor", "admin"].includes(type)) {
+    // 🔥 FLEXIBLE VALIDATION: Accept both type and role
+    const userType = type || role;
+    if (!userType || !["patient", "doctor", "admin", "PATIENT", "DOCTOR", "ADMIN"].includes(userType)) {
       return res.status(400).json({ 
         ok: false, 
         error: "invalid_type",
         message: "Type is required and must be: patient | doctor | admin" 
       });
     }
+
+    // Normalize type to lowercase
+    const normalizedType = userType.toLowerCase();
 
     // Validation
     if (!otp || !phone) {
@@ -7885,9 +7890,9 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     // DEV bypass for OTP verification
     if (process.env.NODE_ENV !== "production") {
-      console.log("[OTP VERIFY] DEV mode: Accepting any OTP for type:", type);
+      console.log("[OTP VERIFY] DEV mode: Accepting any OTP for type:", normalizedType);
       
-      if (type === "patient") {
+      if (normalizedType === "patient") {
         // Check if this is a DEV_PATIENT request
         if (sessionId === "DEV_PATIENT") {
           console.log("[OTP VERIFY] DEV_PATIENT mode: Creating mock patient");
@@ -7970,7 +7975,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           role: "PATIENT",
           status: patient.status
         });
-      } else if (type === "doctor") {
+      } else if (normalizedType === "doctor") {
         // Find doctor by phone for DEV mode
         const { data: doctor, error: doctorError } = await supabase
           .from("patients")
@@ -8014,7 +8019,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           role: "DOCTOR",
           status: doctor.status
         });
-      } else if (type === "admin") {
+      } else if (normalizedType === "admin") {
         // Find admin by phone for DEV mode
         const { data: clinic, error: clinicError } = await supabase
           .from("clinics")
@@ -8111,7 +8116,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         role: "PATIENT",
         status: patient.status
       });
-    } else if (type === "doctor") {
+    } else if (normalizedType === "doctor") {
       // Find doctor by phone
       const { data: doctor, error: doctorError } = await supabase
         .from("patients")
@@ -8155,7 +8160,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         role: "DOCTOR",
         status: doctor.status
       });
-    } else if (type === "admin") {
+    } else if (normalizedType === "admin") {
       // Find clinic by phone (admin)
       const { data: clinic, error: clinicError } = await supabase
         .from("clinics")
