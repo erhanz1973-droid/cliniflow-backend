@@ -5007,8 +5007,8 @@ app.post("/api/register/patient", async (req, res) => {
 
         if (referrer) {
           await supabase.from("referrals").insert({
-            referrer_id: referrer.name,
-            referred_id: name,
+            referrer_id: referrer.patient_id, // ✅ Use patient_id instead of name
+            referred_id: patient_id,
             referral_code: inviterReferralCode,
             status: "pending",
           });
