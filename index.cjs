@@ -3579,10 +3579,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     // Hasta durumunu APPROVED yap
     const { data: updatedPatient, error: updateError } = await supabase
       .from("patients")
-      .update({ 
-        status: "APPROVED",
-        approved_at: new Date().toISOString()
-      })
+      .update({ status: "APPROVED" })
       .eq("id", patient.id)
       .select()
       .single();
