@@ -8103,6 +8103,8 @@ app.get("/favicon.ico", (req, res) => {
 /* ================= OTP VERIFICATION ================= */
 // 🔥 CRITICAL: UNIFIED OTP VERIFICATION WITH TYPE-BASED RESPONSES
 app.post("/auth/verify-otp", async (req, res) => {
+  console.log("[OTP VERIFY] Route hit");
+  
   try {
     const { otp, phone, email, sessionId, type, role } = req.body || {};
 
@@ -8191,9 +8193,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           .from("patients")
           .select("*")
           .eq("phone", normalizedPhone)
-          .single();
+          .maybeSingle();
 
-        if (patientError || !patient) {
+        if (!patient) {
           return res.status(404).json({ 
             ok: false, 
             error: "patient_not_found",
@@ -8234,9 +8236,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           .from("doctors")
           .select("*")
           .eq("phone", normalizedPhone)
-          .single();
+          .maybeSingle();
 
-        if (doctorError || !doctor) {
+        if (!doctor) {
           return res.status(404).json({ 
             ok: false, 
             error: "doctor_not_found",
@@ -8278,9 +8280,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           .from("clinics")
           .select("*")
           .eq("phone", normalizedPhone)
-          .single();
+          .maybeSingle();
 
-        if (!clinic?.data) {
+        if (!clinic) {
           return res.status(404).json({ 
             ok: false, 
             error: "clinic_not_found",
