@@ -5047,7 +5047,8 @@ app.post("/api/register/patient", async (req, res) => {
     );
 
     console.log("[PATIENT REGISTER] Patient registered successfully:", {
-      patientName: patientName,
+      patientId: insertedPatient.patient_id,
+      name: insertedPatient.name,
       role: "PATIENT",
       status: "ACTIVE"
     });
@@ -5055,14 +5056,14 @@ app.post("/api/register/patient", async (req, res) => {
     res.json({
       ok: true,
       message: "Patient registration successful.",
-      patientId: insertedPatient.patient_id, // ✅ Use insertedPatient.patient_id
-      referralCode: referral_code,
+      patientId: patient_id, // ✅ Use patient_id from insert result
+      referralCode: referral_code, // ✅ Use generated referral_code
       name: patientName, // ✅ Use patientName from request
-      phone: phone,
-      email: email,
-      status: "ACTIVE",
-      role: "PATIENT",
-      token: patientToken,
+      phone: phone, // ✅ Use phone from request
+      email: email, // ✅ Use email from request
+      status: "ACTIVE", // ✅ Use constant status
+      role: "PATIENT", // ✅ Use constant role
+      token: patientToken, // ✅ Use generated token
     });
   } catch (err) {
     console.error("[PATIENT REGISTER] Error:", err);
