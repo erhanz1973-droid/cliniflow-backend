@@ -5701,7 +5701,10 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 
     treatmentGroupId = newGroup.id;
     console.log("[ADMIN ASSIGN PATIENT] Created new group:", treatmentGroupId);
-    }
+  } catch (error) {
+    console.error("[ADMIN ASSIGN PATIENT] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
 
     // 4. Add doctor to treatment group as primary member
     const { error: memberError } = await supabase
