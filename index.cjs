@@ -5041,7 +5041,7 @@ app.post("/api/register/patient", async (req, res) => {
     res.json({
       ok: true,
       message: "Patient registration successful.",
-      patientId: name,
+      patientId: patient_id, // ✅ Use patient_id instead of name
       referralCode: referral_code,
       name: patientName,
       phone: phone,
