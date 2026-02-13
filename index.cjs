@@ -4923,10 +4923,10 @@ app.post("/api/register/patient", async (req, res) => {
       });
     }
 
-    // Check clinic limits
+    // Check clinic limits and phone duplicate
     const { data: existingPatients, error: countError } = await supabase
       .from("patients")
-      .select("patient_id")
+      .select("patient_id, phone")
       .eq("clinic_code", clinicCode.trim());
 
     if (countError) {
@@ -4935,6 +4935,17 @@ app.post("/api/register/patient", async (req, res) => {
     }
 
     const patientCount = existingPatients?.length || 0;
+    
+    // Check for phone duplicate
+    const phoneExists = existingPatients?.some(p => p.phone === phone.trim());
+    if (phoneExists) {
+      return res.status(400).json({
+        ok: false,
+        error: "phone_already_exists",
+        message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır."
+      });
+    }
+    
     // Remove max patients check since clinics table doesn't have max_patients column
 
     // Generate patient ID
