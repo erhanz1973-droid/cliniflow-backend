@@ -3687,7 +3687,7 @@ app.get("/api/patient/me", async (req, res) => {
 
       const response = {
         ok: true,
-        patientId: patient.name,
+        patientId: patient.patient_id, // ✅ Use patient_id instead of name
         referralCode: patient.referral_code || null,
         name: patient.name || "",
         phone: patient.phone || "",
