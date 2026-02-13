@@ -1002,11 +1002,11 @@
 
         const successMessage = window.i18n ? window.i18n.t('patients.approveSuccess') : '✅ Hasta onaylandı';
         alert(successMessage);
-        loadPatients();
+        loadPatients(); // Refresh patient list after approval
       } catch (error) {
         console.error('Approve error:', error);
-        const message = window.i18n ? window.i18n.t('patients.errors.approveFailed', { error: error.message }) : '❌ Onaylama hatası: ' + error.message;
-        showError(message);
+        const errorMessage = window.i18n ? window.i18n.t('patients.errors.approveFailed') : '❌ Onaylama başarısız';
+        showError(errorMessage);
       }
     }
 
