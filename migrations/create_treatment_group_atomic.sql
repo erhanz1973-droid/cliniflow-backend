@@ -29,7 +29,7 @@ begin
     p_patient_id,
     p_name,
     p_description,
-    'ACTIVE',
+    'active',
     p_admin_id
   )
   returning id into v_group_id;
@@ -51,7 +51,7 @@ begin
         when v_doctor_id = p_primary_doctor_id then 'PRIMARY'
         else 'MEMBER'
       end,
-      'ACTIVE',
+      'active',
       now()
     );
   end loop;
