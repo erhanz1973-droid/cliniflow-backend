@@ -153,7 +153,13 @@
     }
 
     function getAdminToken() {
-      return localStorage.getItem('adminToken');
+      const token = localStorage.getItem('adminToken');
+      if (!token) {
+        // Redirect to login if no token
+        window.location.href = '/admin-login.html';
+        return null;
+      }
+      return token;
     }
 
     function showError(message) {
