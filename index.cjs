@@ -5795,6 +5795,35 @@ app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN DOCTOR LIST ================= */
+// 🔥 CRITICAL: Use doctors table - NOT patients table
+app.get("/admin/doctor-list", adminAuth, async (req, res) => {
+  try {
+    console.log("[ADMIN DOCTOR LIST] Request received");
+    console.log("[ADMIN DOCTOR LIST] Admin info:", req.admin);
+
+    // 🔥 CRITICAL: Get doctors from doctors table - NOT patients table
+    const { data: doctors, error } = await supabase
+      .from("doctors")
+      .select("*")
+      .in("status", ["PENDING", "ACTIVE"])
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DOCTOR LIST] Error:", error);
+      return res.status(500).json({ ok: false, error: "fetch_failed" });
+    }
+
+    res.json({
+      ok: true,
+      doctors: doctors || [],
+    });
+  } catch (err) {
+    console.error("[DOCTOR LIST] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= STATIC SERVING ================= */
 app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   try {
