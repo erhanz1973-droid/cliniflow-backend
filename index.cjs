@@ -6269,6 +6269,43 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ICD-10 DENTAL CODES ================= */
+app.get("/api/icd10/dental", async (req, res) => {
+  try {
+    console.log("[ICD10 DENTAL] Request received");
+
+    const { data: codes, error } = await supabase
+      .from("icd10_dental_codes")
+      .select("code, parent_code, description")
+      .order("code", { ascending: true });
+
+    if (error) {
+      console.error("[ICD10 DENTAL] Error:", error);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch_codes" });
+    }
+
+    // Group codes by hierarchy
+    const mainCategories = codes.filter(code => !code.parent_code);
+    const subCodes = codes.filter(code => code.parent_code);
+
+    const hierarchicalCodes = mainCategories.map(category => ({
+      code: category.code,
+      description: category.description,
+      subCodes: subCodes.filter(sub => sub.parent_code === category.code)
+    }));
+
+    res.json({
+      ok: true,
+      codes: codes || [],
+      hierarchical: hierarchicalCodes
+    });
+
+  } catch (err) {
+    console.error("[ICD10 DENTAL] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
@@ -6370,6 +6407,169 @@ app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ACTIVE PATIENTS] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR INITIAL EXAMINATION ================= */
+app.post("/api/doctor/initial-examination", async (req, res) => {
+  try {
+    const { treatment_group_id, patient_id, general_notes, teeth } = req.body || {};
+
+    console.log("[DOCTOR INITIAL EXAMINATION] Request received:", {
+      treatment_group_id,
+      patient_id,
+      teeth_count: teeth?.length || 0
+    });
+
+    // 1️⃣ verifyDoctorToken
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    if (!decoded || !decoded.doctorId) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const doctorId = decoded.doctorId;
+
+    // 2️⃣ doctor treatment_group_member mı?
+    const { data: member, error: memberError } = await supabase
+      .from("treatment_group_members")
+      .select("role, status")
+      .eq("treatment_group_id", treatment_group_id)
+      .eq("doctor_id", doctorId)
+      .single();
+
+    if (memberError || !member) {
+      return res.status(403).json({ ok: false, error: "not_group_member" });
+    }
+
+    // 3️⃣ role PRIMARY mi?
+    if (member.role !== "PRIMARY") {
+      return res.status(403).json({ ok: false, error: "not_primary_doctor" });
+    }
+
+    // 4️⃣ group.status = ACTIVE mi?
+    const { data: group, error: groupError } = await supabase
+      .from("treatment_groups")
+      .select("status")
+      .eq("id", treatment_group_id)
+      .single();
+
+    if (groupError || !group || group.status !== "ACTIVE") {
+      return res.status(403).json({ ok: false, error: "group_not_active" });
+    }
+
+    // 5️⃣ Aynı group için daha önce exam var mı?
+    const { data: existingExam, error: existingError } = await supabase
+      .from("initial_examinations")
+      .select("id")
+      .eq("treatment_group_id", treatment_group_id)
+      .single();
+
+    if (existingExam) {
+      return res.status(409).json({ ok: false, error: "exam_already_exists" });
+    }
+
+    // Validation
+    if (!treatment_group_id || !patient_id || !teeth || !Array.isArray(teeth) || teeth.length === 0) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    // Validate tooth numbers (11-48)
+    const validToothNumbers = [];
+    for (let i = 1; i <= 4; i++) {
+      for (let j = 1; j <= 8; j++) {
+        validToothNumbers.push(`${i}${j}`);
+      }
+    }
+
+    for (const tooth of teeth) {
+      if (!tooth.tooth_number || !validToothNumbers.includes(tooth.tooth_number)) {
+        return res.status(400).json({ ok: false, error: "invalid_tooth_number" });
+      }
+      if (!tooth.icd10_code) {
+        return res.status(400).json({ ok: false, error: "missing_icd10_code" });
+      }
+    }
+
+    // 🔥 ATOMIC INSERT LOGIC
+    console.log("[DOCTOR INITIAL EXAMINATION] Starting atomic insert");
+
+    // Create initial examination
+    const { data: exam, error: examError } = await supabase
+      .from("initial_examinations")
+      .insert({
+        treatment_group_id,
+        patient_id,
+        doctor_id: doctorId,
+        general_notes: general_notes || "",
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (examError) {
+      console.error("[DOCTOR INITIAL EXAMINATION] Exam creation error:", examError);
+      return res.status(500).json({ ok: false, error: "exam_creation_failed" });
+    }
+
+    console.log("[DOCTOR INITIAL EXAMINATION] Exam created:", exam.id);
+
+    // Create teeth records
+    const teethPayload = teeth.map(t => ({
+      initial_examination_id: exam.id,
+      tooth_number: t.tooth_number,
+      icd10_code: t.icd10_code,
+      diagnosis_note: t.diagnosis_note || ""
+    }));
+
+    const { error: teethError } = await supabase
+      .from("initial_exam_teeth")
+      .insert(teethPayload);
+
+    if (teethError) {
+      console.error("[DOCTOR INITIAL EXAMINATION] Teeth insertion error:", teethError);
+      
+      // Rollback: Delete the examination
+      await supabase
+        .from("initial_examinations")
+        .delete()
+        .eq("id", exam.id);
+
+      return res.status(500).json({ ok: false, error: "teeth_creation_failed" });
+    }
+
+    console.log("[DOCTOR INITIAL EXAMINATION] Success:", {
+      exam_id: exam.id,
+      teeth_count: teeth.length
+    });
+
+    res.json({
+      ok: true,
+      examination: {
+        id: exam.id,
+        treatment_group_id,
+        patient_id,
+        doctor_id: doctorId,
+        general_notes,
+        teeth: teeth,
+        created_at: exam.created_at
+      }
+    });
+
+  } catch (err) {
+    console.error("[DOCTOR INITIAL EXAMINATION] Error:", err);
+    
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+    
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
