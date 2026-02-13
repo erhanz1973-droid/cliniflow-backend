@@ -5055,9 +5055,9 @@ app.post("/api/register/patient", async (req, res) => {
     res.json({
       ok: true,
       message: "Patient registration successful.",
-      patientId: patient_id, // ✅ Use patient_id instead of name
+      patientId: insertedPatient.patient_id, // ✅ Use insertedPatient.patient_id
       referralCode: referral_code,
-      name: patientName,
+      name: patientName, // ✅ Use patientName from request
       phone: phone,
       email: email,
       status: "ACTIVE",
@@ -5067,9 +5067,9 @@ app.post("/api/register/patient", async (req, res) => {
   } catch (err) {
     console.error("[PATIENT REGISTER] Error:", err);
 
-    return res.status(400).json({
+    return res.status(500).json({
       ok: false,
-      error: err.message || "registration_failed"
+      error: "registration_failed"
     });
   }
 });
