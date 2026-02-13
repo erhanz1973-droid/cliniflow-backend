@@ -3134,7 +3134,7 @@ app.post("/api/register", async (req, res) => {
         name: String(patientName).trim(), // fullName veya name
         phone: String(phone).trim(),
         role: role, // Add role information
-        status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // CRITICAL: Set status based on role
+        status: "ACTIVE", // AUTO-APPROVE: All users are now ACTIVE
         department: role === "DOCTOR" ? department : null,
         specialties: role === "DOCTOR" ? specialties : [],
         title: role === "DOCTOR" ? title : null,
@@ -3155,7 +3155,7 @@ app.post("/api/register", async (req, res) => {
           name: String(patientName).trim(), // fullName veya name
           phone: String(phone).trim(),
           role: role, // Add role information
-          status: role === "DOCTOR" ? "PENDING" : "ACTIVE", // CRITICAL: Set status based on role
+          status: "ACTIVE", // AUTO-APPROVE: All users are now ACTIVE
           department: role === "DOCTOR" ? department : null,
           specialties: role === "DOCTOR" ? specialties : [],
           title: role === "DOCTOR" ? title : null,
@@ -3321,7 +3321,7 @@ app.post("/api/register", async (req, res) => {
         clinicCode: trimmedClinicCode,
         role: role, // DOCTOR or PATIENT
         roleType: role, // Same as role for consistency
-        status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE") // Set status based on role
+        status: newPatient.status || "ACTIVE", // AUTO-APPROVE: Default to ACTIVE
       },
       JWT_SECRET,
       { expiresIn: "30d" }
@@ -3339,7 +3339,7 @@ app.post("/api/register", async (req, res) => {
       requestId: newPatient.name, // Backward compatibility
       name: finalName, // Name from request (patientName)
       phone: String(newPatient.phone || phone || "").trim(),
-      status: newPatient.status || (role === "DOCTOR" ? "PENDING" : "ACTIVE"), // Set status based on role
+      status: newPatient.status || "ACTIVE", // AUTO-APPROVE: Default to ACTIVE
       role: role, // Add role to response
     });
   } catch (err) {
