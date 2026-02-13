@@ -39,7 +39,8 @@ function verifyAdminToken(req) {
       ok: true,
       adminId: decoded.adminId,
       role: decoded.role,
-      clinicCode: decoded.clinicCode
+      clinicCode: decoded.clinicCode,
+      clinicId: decoded.clinicId   // ✅ EKLE
     };
   } catch (error) {
     console.error("[ADMIN] Token verification error:", error);
@@ -63,7 +64,8 @@ function adminAuth(req, res, next) {
   req.admin = {
     adminId: verification.adminId,
     role: verification.role,
-    clinicCode: verification.clinicCode
+    clinicCode: verification.clinicCode,
+    clinicId: verification.clinicId   // ✅ EKLE
   };
 
   next();
