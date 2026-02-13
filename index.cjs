@@ -7978,7 +7978,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       } else if (normalizedType === "doctor") {
         // Find doctor by phone for DEV mode
         const { data: doctor, error: doctorError } = await supabase
-          .from("patients")
+          .from("doctors")
           .select("*")
           .eq("phone", normalizedPhone)
           .single();
@@ -8119,7 +8119,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     } else if (normalizedType === "doctor") {
       // Find doctor by phone
       const { data: doctor, error: doctorError } = await supabase
-        .from("patients")
+        .from("doctors")
         .select("*")
         .eq("phone", normalizedPhone)
         .single();
