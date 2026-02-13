@@ -5362,8 +5362,10 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
     const { patient_id, doctor_ids, primary_doctor_id, name, description } = req.body;
 
+    console.log("REQ.ADMIN FULL:", req.admin);  // 🔍 Debug full admin object
+
     const clinicId = req.admin.clinicId;
-    const adminId = req.admin.id;
+    const adminId = req.admin.adminId || req.admin.id;  // 🎯 Try both properties
 
     console.log("[TREATMENT GROUPS CREATE] Request:", {
       patient_id,
@@ -5378,13 +5380,13 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     const { data, error } = await supabase.rpc(
       "create_treatment_group_atomic",
       {
+        p_admin_id: adminId,  // ✅ Use correct adminId
         p_clinic_id: clinicId,
         p_patient_id: patient_id,
-        p_doctor_ids: doctor_ids,
-        p_primary_doctor_id: primary_doctor_id,
         p_name: name,
         p_description: description,
-        p_admin_id: adminId
+        p_doctor_ids: doctor_ids,
+        p_primary_doctor_id: primary_doctor_id
       }
     );
 
