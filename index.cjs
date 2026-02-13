@@ -6169,14 +6169,89 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
 app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   try {
     console.log("[ADMIN DOCTORS] Request received");
+    console.log("[ADMIN DOCTORS] Admin info:", { 
+      adminId: req.admin.id, 
+      clinicId: req.admin.clinicId 
+    });
 
-    const { data: doctors, error } = await supabase
+    // Debug: Check total doctors first
+    const { data: allDoctors, error: allError } = await supabase
+      .from("doctors")
+      .select("id, name, full_name, role, status, clinic_id")
+      .eq("clinic_id", req.admin.clinicId);
+
+    console.log("[ADMIN DOCTORS] All doctors in clinic:", allDoctors?.length || 0);
+    console.log("[ADMIN DOCTORS] All doctors data:", allDoctors);
+
+    // Try different field combinations for flexibility
+    let doctors = [];
+    let error = null;
+
+    // Try with name field first
+    const result1 = await supabase
       .from("doctors")
       .select("id, name, department")
       .eq("clinic_id", req.admin.clinicId)
       .eq("role", "DOCTOR")
       .eq("status", "ACTIVE")
       .order("name", { ascending: true });
+
+    if (!result1.error && result1.data) {
+      doctors = result1.data;
+    } else {
+      // Try with full_name field
+      const result2 = await supabase
+        .from("doctors")
+        .select("id, full_name, department")
+        .eq("clinic_id", req.admin.clinicId)
+        .eq("role", "DOCTOR")
+        .eq("status", "ACTIVE")
+        .order("full_name", { ascending: true });
+
+      if (!result2.error && result2.data) {
+        // Map full_name to name for consistency
+        doctors = result2.data.map(d => ({
+          id: d.id,
+          name: d.full_name,
+          department: d.department
+        }));
+      } else {
+        // Try with different status values (lowercase)
+        const result3 = await supabase
+          .from("doctors")
+          .select("id, name, department")
+          .eq("clinic_id", req.admin.clinicId)
+          .eq("role", "DOCTOR")
+          .eq("status", "active")
+          .order("name", { ascending: true });
+
+        if (!result3.error && result3.data) {
+          doctors = result3.data;
+        } else {
+          // Try with full_name and lowercase status
+          const result4 = await supabase
+            .from("doctors")
+            .select("id, full_name, department")
+            .eq("clinic_id", req.admin.clinicId)
+            .eq("role", "DOCTOR")
+            .eq("status", "active")
+            .order("full_name", { ascending: true });
+
+          if (!result4.error && result4.data) {
+            doctors = result4.data.map(d => ({
+              id: d.id,
+              name: d.full_name,
+              department: d.department
+            }));
+          } else {
+            error = result1.error || result2.error || result3.error || result4.error;
+          }
+        }
+      }
+    }
+
+    console.log("[ADMIN DOCTORS] Final doctors count:", doctors.length);
+    console.log("[ADMIN DOCTORS] Final doctors data:", doctors);
 
     if (error) {
       console.error("[ADMIN DOCTORS] Error:", error);
