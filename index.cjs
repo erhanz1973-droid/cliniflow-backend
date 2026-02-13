@@ -530,8 +530,8 @@ app.get("/admin-referrals.html", (req, res) => {
     res.sendFile(path.resolve(filePath));
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-referrals.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    console.error("[ROUTE] Error serving admin-referrals.html:", err);
+    res.status(500).send(`Error: ${err.message}`);
   }
 });
 
@@ -4985,13 +4985,23 @@ app.post("/api/register/patient", async (req, res) => {
     if (insertError) {
       console.error("[PATIENT REGISTER] Insert error:", insertError);
       
-      // Handle duplicate phone error
+      // Handle duplicate constraint errors
       if (insertError.code === '23505') {
-        return res.status(400).json({
-          ok: false,
-          error: "phone_already_exists",
-          message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır."
-        });
+        if (insertError.message.includes('patients_email_unique')) {
+          return res.status(400).json({
+            ok: false,
+            error: "email_already_exists",
+            message: "Bu e-posta adresi ile zaten bir kayıt bulunmaktadır."
+          });
+        }
+        
+        if (insertError.message.includes('patients_phone_unique')) {
+          return res.status(400).json({
+            ok: false,
+            error: "phone_already_exists",
+            message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır."
+          });
+        }
       }
       
       return res.status(500).json({
@@ -6382,6 +6392,10 @@ app.get("/api/patient/:patientId/messages", async (req, res) => {
     }
 
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "missing_patient_id" });
+    }
+    
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
       .select("id, status, clinic_id, role")
