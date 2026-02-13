@@ -19,10 +19,10 @@ begin
   insert into treatment_groups (
     clinic_id,
     patient_id,
-    name,
+    group_name,
     description,
     status,
-    created_by_admin_id
+    created_by_doctor_id
   )
   values (
     p_clinic_id,
