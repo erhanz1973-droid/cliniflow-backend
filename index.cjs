@@ -4784,6 +4784,68 @@ app.post("/api/register/doctor", async (req, res) => {
   }
 });
 
+/* ================= DOCTOR LOGIN ================= */
+app.post("/api/doctor/login", async (req, res) => {
+  try {
+    const { email, phone, clinicCode } = req.body || {};
+
+    if (!clinicCode || (!email && !phone)) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_required_fields"
+      });
+    }
+
+    let query = supabase
+      .from("doctors")
+      .select("*")
+      .eq("clinic_code", clinicCode.trim())
+      .eq("status", "APPROVED");
+
+    if (email) {
+      query = query.eq("email", email.trim());
+    }
+
+    if (phone) {
+      query = query.eq("phone", phone.trim());
+    }
+
+    const { data: doctor, error } = await query.single();
+
+    if (error || !doctor) {
+      return res.status(401).json({
+        ok: false,
+        error: "invalid_credentials"
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        doctorId: doctor.id,
+        clinicId: doctor.clinic_id,
+        clinicCode: doctor.clinic_code,
+        role: "DOCTOR"
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    res.json({
+      ok: true,
+      token,
+      doctor: {
+        id: doctor.id,
+        full_name: doctor.full_name,
+        clinic_code: doctor.clinic_code
+      }
+    });
+
+  } catch (err) {
+    console.error("DOCTOR_LOGIN_ERROR:", err);
+    res.status(500).json({ ok:false, error:"internal_error" });
+  }
+});
+
 /* ================= TEST ENDPOINT ================= */
 app.post("/api/test-register", async (req, res) => {
   console.log("[TEST] Full request body:", JSON.stringify(req.body, null, 2));
