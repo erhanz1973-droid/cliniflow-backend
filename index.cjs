@@ -5394,6 +5394,7 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
 
     if (error) {
       console.error("RPC Error:", error);
+      console.error("FULL RPC ERROR:", JSON.stringify(error, null, 2));
       return res.status(500).json({
         ok: false,
         error: "group_creation_failed",
