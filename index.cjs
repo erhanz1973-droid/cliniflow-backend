@@ -5846,7 +5846,7 @@ app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
     const { data: doctors, error } = await supabase
       .from("doctors")
       .select("*")
-      .in("status", ["PENDING", "ACTIVE"])
+      .in("status", ["PENDING", "ACTIVE", "APPROVED"])
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -5875,7 +5875,7 @@ app.get("/admin/doctor-list", adminAuth, async (req, res) => {
     const { data: doctors, error } = await supabase
       .from("doctors")
       .select("*")
-      .in("status", ["PENDING", "ACTIVE"])
+      .in("status", ["PENDING", "ACTIVE", "APPROVED"])
       .order("created_at", { ascending: false });
 
     if (error) {
