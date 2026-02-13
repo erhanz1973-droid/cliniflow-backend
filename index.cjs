@@ -4979,6 +4979,16 @@ app.post("/api/register/patient", async (req, res) => {
 
     if (insertError) {
       console.error("[PATIENT REGISTER] Insert error:", insertError);
+      
+      // Handle duplicate phone error
+      if (insertError.code === '23505') {
+        return res.status(400).json({
+          ok: false,
+          error: "phone_already_exists",
+          message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır."
+        });
+      }
+      
       return res.status(500).json({
         ok: false,
         error: "registration_failed",
@@ -5041,9 +5051,12 @@ app.post("/api/register/patient", async (req, res) => {
       token: patientToken,
     });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[PATIENT REGISTER] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    console.error("[PATIENT REGISTER] Error:", err);
+
+    return res.status(400).json({
+      ok: false,
+      error: err.message || "registration_failed"
+    });
   }
 });
 
