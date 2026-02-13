@@ -4977,13 +4977,13 @@ app.get("/api/doctor/me", async (req, res) => {
 
     const { clinicId, doctorId } = v.decoded;
 
-    // Fetch doctor from patients table
+    // Fetch doctor from doctors table
     const { data: doctor, error } = await supabase
-      .from("patients")
+      .from("doctors")
       .select(`
         id,
-        patient_id,
-        name,
+        doctor_id,
+        full_name,
         email,
         phone,
         department,
@@ -5011,7 +5011,7 @@ app.get("/api/doctor/me", async (req, res) => {
       ok: true,
       doctor: {
         doctorId: doctor.id,
-        name: doctor.name,
+        name: doctor.full_name,
         email: doctor.email,
         phone: doctor.phone,
         department: doctor.department,
