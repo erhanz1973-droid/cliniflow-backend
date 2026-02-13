@@ -7697,7 +7697,7 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       ref.status = normalizeReferralStatus(ref.status);
     });
     
-    console.log(`[ADMIN REFERRALS] Found ${filteredReferrals?.length || 0} referral(s) after filter for clinic_id: ${req.clinicId}`);
+    console.log(`[ADMIN REFERRALS] Found ${filteredReferrals?.length || 0} referral(s) after filter for clinic_id: ${req.admin?.clinicId}`);
 
     // Frontend formatına dönüştür
     // UUID'leri patient_id (TEXT) formatına çevir
