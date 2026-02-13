@@ -209,7 +209,8 @@
     function renderPatients() {
       const patientSelect = document.getElementById('patient-select');
       
-      if (patients.length === 0) {
+      if (!Array.isArray(patients) || patients.length === 0) {
+        console.warn("Patients list empty");  // 🔍 Debug
         patientSelect.innerHTML = '<option value="">Hasta bulunamadı</option>';
         return;
       }
@@ -219,9 +220,10 @@
       
       // Add patient options with UUID as value
       patients.forEach(patient => {
+        console.log("Rendering patient:", patient);  // 🔍 Debug
         const option = document.createElement('option');
-        option.value = patient.id;  
-        option.textContent = `${patient.name || patient.fullName || 'İsimsiz'} (${patient.patient_id || patient.patientId || 'ID Yok'})`;
+        option.value = patient.id;  // ✅ Use UUID (patients.id)
+        option.textContent = `${patient.name || "İsimsiz Hasta"} (${patient.patient_id})`;
         patientSelect.appendChild(option);
       });
 
@@ -261,6 +263,7 @@
         const data = await response.json();
         if (data.ok) {
           doctors = data.doctors || [];
+          console.log("Doctors API response:", doctors);  // 
           renderDoctors();
         } else {
           throw new Error(data.error || "Doktorlar yüklenemedi");
@@ -275,31 +278,38 @@
     function renderDoctors() {
       const doctorsList = document.getElementById("doctors-list");
       
-      if (doctors.length === 0) {
+      if (!Array.isArray(doctors) || doctors.length === 0) {
+        console.warn("Doctors list empty");  // 
         doctorsList.innerHTML = "<div style='text-align:center; color:var(--muted); padding:20px;'>Aktif doktor bulunamadı</div>";
         return;
       }
 
-      doctorsList.innerHTML = doctors.map(doctor => `
-        <div class="doctor-item ${selectedDoctors.has(doctor.id) ? 'selected' : ''}" 
-             onclick="toggleDoctor('${doctor.id}')">
-          <div class="doctor-checkbox">
-            <input type="checkbox" 
-                   ${selectedDoctors.has(doctor.id) ? 'checked' : ''} 
-                   onclick="event.stopPropagation(); toggleDoctor('${doctor.id}')" />
-          </div>
-          <div class="doctor-info">
-            <div class="doctor-name">${doctor.name}</div>
-            <div class="doctor-department">${doctor.department || 'Bölüm belirtilmemiş'}</div>
-          </div>
-          ${selectedDoctors.has(doctor.id) ? `
-            <div class="doctor-badge ${primaryDoctorId === doctor.id ? 'badge-primary' : 'badge-secondary'}"
-                 onclick="event.stopPropagation(); setPrimaryDoctor('${doctor.id}')">
-              ${primaryDoctorId === doctor.id ? 'Birincil' : 'Seç'}
+      doctorsList.innerHTML = doctors.map(doctor => {
+        console.log("Rendering doctor:", doctor);  // 
+        const doctorName = doctor.full_name || doctor.name || "İsimsiz Doktor";
+        const department = doctor.department || "Bölüm belirtilmemiş";
+        const isSelected = selectedDoctors.has(doctor.id);
+        const isPrimary = primaryDoctorId === doctor.id;
+        
+        return `
+          <div class="doctor-item ${isSelected ? 'selected' : ''}" 
+               onclick="toggleDoctor('${doctor.id}')">
+            <div class="doctor-checkbox">
+              <input type="checkbox" 
+                     ${isSelected ? 'checked' : ''} 
+                     onclick="event.stopPropagation(); toggleDoctor('${doctor.id}')" />
             </div>
-          ` : ''}
-        </div>
-      `).join('');
+            <div class="doctor-info">
+              <div class="doctor-name">${doctorName}</div>
+              <div class="doctor-department">${department}</div>
+              ${isPrimary ? '<div class="doctor-primary">Birincil Doktor</div>' : ''}
+            </div>
+            <div class="doctor-actions">
+              ${isSelected ? `<button class="btn-set-primary" onclick="event.stopPropagation(); setPrimaryDoctor('${doctor.id}')">Birincil Yap</button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join("");
     }
 
     // Toggle doctor selection
