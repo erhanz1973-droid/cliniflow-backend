@@ -5744,12 +5744,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
     console.log("[ADMIN ASSIGN PATIENT] Success:", { treatmentGroupId, patient_id, doctor_id });
 
     res.status(200).json({
-    res.status(200).json({      ok: true,      treatment_group_id: treatmentGroupId,      message: "Patient assigned to treatment group successfully"    });  } catch (error) {    console.error("[ADMIN ASSIGN PATIENT] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
-/* ================= ADD DOCTOR TO TREATMENT GROUP ================= */
+    res.status(200).json({      ok: true,      treatment_group_id: treatmentGroupId,      message: "Patient assigned to treatment group successfully"    });/* ================= ADD DOCTOR TO TREATMENT GROUP ================= */
 app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (req, res) => {
   try {
     const { groupId } = req.params;
