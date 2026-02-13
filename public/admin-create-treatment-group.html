@@ -302,6 +302,8 @@
                onclick="toggleDoctor('${doctor.id}')">
             <div class="doctor-checkbox">
               <input type="checkbox" 
+                     name="doctor_ids"
+                     value="${doctor.id}"
                      ${isSelected ? 'checked' : ''} 
                      onclick="event.stopPropagation(); toggleDoctor('${doctor.id}')" />
             </div>
@@ -312,6 +314,7 @@
             </div>
             <div class="doctor-actions">
               ${isSelected ? `<button class="btn-set-primary" onclick="event.stopPropagation(); setPrimaryDoctor('${doctor.id}')">Birincil Yap</button>` : ''}
+              ${isSelected ? `<input type="radio" name="primary_doctor" value="${doctor.id}" ${isPrimary ? 'checked' : ''} />` : ''}
             </div>
           </div>
         `;
@@ -372,41 +375,46 @@
       
       try {
         hideMessages();
-
-        // Get form values with correct IDs
-        const patientId = document.getElementById("patient-select").value;
-        const name = document.getElementById("group-name").value.trim();
-        const description = document.getElementById("group-description").value.trim();
         
+        console.log("SUBMIT START");
+
+        // Get elements with correct IDs
+        const patientEl = document.getElementById("patient-select");
+        const nameEl = document.getElementById("group-name");
+        const descEl = document.getElementById("group-description");
+
+        console.log("patientEl:", patientEl);
+        console.log("nameEl:", nameEl);
+        console.log("descEl:", descEl);
+
         // Get selected doctors from checkboxes
         const doctorIds = Array.from(
-          document.querySelectorAll('input[type="checkbox"]:checked')
-        ).map(cb => cb.value);
-        
-        // Get primary doctor from radio buttons or first selected
-        const primaryDoctorId = primaryDoctorId || doctorIds[0];
-        
-        // Debug logging
-        console.log("Form submission data:", {
-          patientId,
-          doctorIds,
-          primaryDoctorId,
-          name,
-          description
-        });
-        
-        console.log("Patient select element:", document.getElementById("patient-select"));
-        console.log("Group name element:", document.getElementById("group-name"));
-        console.log("Description element:", document.getElementById("group-description"));
-        console.log("Selected checkboxes:", document.querySelectorAll('input[type="checkbox"]:checked'));
+          document.querySelectorAll('input[name="doctor_ids"]:checked')
+        ).map(el => el.value);
+
+        // Get primary doctor
+        const primaryDoctorId = document.querySelector(
+          'input[name="primary_doctor"]:checked'
+        )?.value;
+
+        // Create payload
+        const payload = {
+          patient_id: patientEl?.value,
+          doctor_ids: doctorIds,
+          primary_doctor_id: primaryDoctorId,
+          name: nameEl?.value,
+          description: descEl?.value
+        };
+
+        console.log("PAYLOAD:", payload);
 
         // Validation
-        if (!patientId) {
+        if (!payload.patient_id) {
           showError("Hasta seçmelisiniz");
           return;
         }
 
-        if (!name) {
+        if (!payload.name?.trim()) {
           showError("Grup adı zorunludur");
           return;
         }
@@ -436,15 +444,10 @@
         const response = await fetch("/api/admin/treatment-groups", {
           method: "POST",
           headers: {
-            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
           },
-          body: JSON.stringify({
-            patient_id: patientId,
-            doctor_ids: doctorIds,
-            primary_doctor_id: primaryDoctorId,
-            name: name,
-            description: description || null
-          })
+          body: JSON.stringify(payload)
         });
 
         const data = await response.json();
