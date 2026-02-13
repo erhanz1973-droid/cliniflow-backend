@@ -8458,13 +8458,13 @@ app.post("/auth/verify-otp", async (req, res) => {
 
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[OTP VERIFY] Error:", error);
-    console.error("[OTP VERIFY] Error stack:", error.stack);
+    console.error("[OTP VERIFY] Error:", err);
+    console.error("[OTP VERIFY] Error stack:", err?.stack);
     console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId, type });
     res.status(500).json({ 
       ok: false, 
       error: "internal_error",
-      message: error.message 
+      message: err?.message || "Unknown error"
     });
   }
 });
