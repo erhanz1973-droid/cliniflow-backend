@@ -1139,8 +1139,12 @@
     }
 
     function openTreatment(patientId) {
+      // Get the actual patient object to find the UUID (id field)
+      const patient = ALL_PATIENTS.find(p => (p.patientId || p.patient_id || '') === patientId);
+      const actualPatientId = patient?.id || patientId; // Use UUID (id) if available
+      
       setSelectedPatient(patientId, getPatientNameById(patientId));
-      window.location.href = `/admin-create-treatment-group.html?patientId=${encodeURIComponent(patientId)}`;
+      window.location.href = `/admin-create-treatment-group.html?patientId=${encodeURIComponent(actualPatientId)}`;
     }
 
     function openChat(patientId) {
