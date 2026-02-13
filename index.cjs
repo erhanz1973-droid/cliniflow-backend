@@ -5749,8 +5749,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       message: "Patient assigned to treatment group successfully"
     });
 
-  } catch (error) {
-    console.error("[ADMIN ASSIGN PATIENT] Error:", error);
+  } catch (error) {    console.error("[ADMIN ASSIGN PATIENT] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
