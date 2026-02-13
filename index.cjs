@@ -8332,9 +8332,14 @@ app.post("/auth/verify-otp", async (req, res) => {
         .from("patients")
         .select("*")
         .eq("phone", normalizedPhone)
-        .single();
+        .maybeSingle();
 
-      if (patientError || !patient) {
+      // DEV mode logging
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[OTP VERIFY] Supabase result:", { patient, patientError });
+      }
+
+      if (!patient) {
         return res.status(404).json({ 
           ok: false, 
           error: "patient_not_found",
@@ -8375,9 +8380,9 @@ app.post("/auth/verify-otp", async (req, res) => {
         .from("doctors")
         .select("*")
         .eq("phone", normalizedPhone)
-        .single();
+        .maybeSingle();
 
-      if (doctorError || !doctor) {
+      if (!doctor) {
         return res.status(404).json({ 
           ok: false, 
           error: "doctor_not_found",
@@ -8419,9 +8424,9 @@ app.post("/auth/verify-otp", async (req, res) => {
         .from("clinics")
         .select("*")
         .eq("phone", normalizedPhone)
-        .single();
+        .maybeSingle();
 
-      if (!clinic?.data) {
+      if (!clinic) {
         return res.status(404).json({ 
           ok: false, 
           error: "clinic_not_found",
@@ -8456,15 +8461,13 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
 
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[OTP VERIFY] Error:", err);
-    console.error("[OTP VERIFY] Error stack:", err?.stack);
-    console.error("[OTP VERIFY] Request data:", { otp, phone, email, sessionId, type });
-    res.status(500).json({ 
-      ok: false, 
+  } catch (error) {
+    console.error("[OTP VERIFY] ERROR:", error);
+
+    return res.status(500).json({
+      ok: false,
       error: "internal_error",
-      message: err?.message || "Unknown error"
+      message: error?.message || "Unknown error"
     });
   }
 });
