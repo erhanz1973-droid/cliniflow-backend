@@ -5743,7 +5743,7 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 
     console.log("[ADMIN ASSIGN PATIENT] Success:", { treatmentGroupId, patient_id, doctor_id });
 
-    res.json({
+    res.status(200).json({
       ok: true,
       treatment_group_id: treatmentGroupId,
       message: "Patient assigned to treatment group successfully"
