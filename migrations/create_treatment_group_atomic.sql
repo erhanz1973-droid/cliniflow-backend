@@ -30,7 +30,7 @@ begin
     p_name,
     p_description,
     'ACTIVE',
-    p_admin_id
+    p_primary_doctor_id
   )
   returning id into v_group_id;
 
