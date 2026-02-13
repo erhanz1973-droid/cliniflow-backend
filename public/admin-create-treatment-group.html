@@ -377,70 +377,58 @@
     async function handleSubmit(e) {
       e.preventDefault();
       
+      console.log("FORM SUBMIT STARTED");
+      
       try {
-        hideMessages();
+        // Basic form data collection
+        const formData = new FormData(document.getElementById("createTreatmentGroupForm"));
+        console.log("FormData entries:", Array.from(formData.entries()));
         
-        console.log("DEBUG ELEMENTS:");
-        console.log("patientSelect:", document.getElementById("patientSelect"));
-        console.log("groupName:", document.getElementById("groupName"));
-        console.log("description:", document.getElementById("description"));
-
-        // Get form values explicitly
-        const patientSelectEl = document.getElementById("patientSelect");
-        const groupNameEl = document.getElementById("groupName");
-        const descriptionEl = document.getElementById("description");
+        // Manual collection
+        const patientId = document.getElementById("patientSelect")?.value || "";
+        const name = document.getElementById("groupName")?.value || "";
+        const description = document.getElementById("description")?.value || "";
         
-        const patientId = patientSelectEl?.value;
-        const name = groupNameEl?.value;
-        const description = descriptionEl?.value;
+        // Get selected doctors
+        const checkboxes = document.querySelectorAll('input[name="doctor_ids"]:checked');
+        const doctorIds = Array.from(checkboxes).map(cb => cb.value);
+        const primaryDoctorId = doctorIds[0] || "";
         
-        console.log("FORM VALUES:");
-        console.log("patientId:", patientId);
-        console.log("name:", name);
-        console.log("description:", description);
-        
-        // Get selected doctors from checkboxes
-        const doctorCheckboxes = document.querySelectorAll("input[name='doctor_ids']:checked");
-        console.log("Found doctor checkboxes:", doctorCheckboxes.length);
-        console.log("Doctor checkboxes:", doctorCheckboxes);
-        
-        const doctorIds = Array.from(doctorCheckboxes).map(el => el.value);
-        console.log("Doctor IDs:", doctorIds);
-
-        const primaryDoctorId = doctorIds[0];
-        console.log("Primary doctor ID:", primaryDoctorId);
-
-        console.log({
+        console.log("MANUAL COLLECTION:", {
           patientId,
-          doctorIds,
-          primaryDoctorId,
           name,
-          description
+          description,
+          doctorIds,
+          primaryDoctorId
         });
-
-        if (!patientId || !name || doctorIds.length === 0) {
-          alert("Form eksik!");
-          return;
-        }
-
-        // Create payload explicitly
+        
+        // Create payload
         const payload = {
           patient_id: patientId,
           doctor_ids: doctorIds,
           primary_doctor_id: primaryDoctorId,
           name: name.trim(),
-          description: description?.trim() || ""
+          description: description.trim()
         };
-
-        console.log("Submitting payload:", payload);
-
-        // Disable submit button
-        const submitBtn = document.getElementById("submit-btn");
-        submitBtn.disabled = true;
-        submitBtn.textContent = "Oluşturuluyor...";
-
-        // Create treatment group
-        const token = getAdminToken();
+        
+        console.log("FINAL PAYLOAD:", payload);
+        
+        // Validation
+        if (!payload.patient_id || !payload.name || !payload.doctor_ids.length) {
+          alert("Lütfen tüm zorunlu alanları doldurun");
+          return;
+        }
+        
+        // Get token
+        const token = localStorage.getItem('adminToken');
+        if (!token) {
+          alert("Admin token bulunamadı");
+          return;
+        }
+        
+        console.log("SENDING REQUEST...");
+        
+        // Send request
         const response = await fetch("/api/admin/treatment-groups", {
           method: "POST",
           headers: {
@@ -449,31 +437,23 @@
           },
           body: JSON.stringify(payload)
         });
-
+        
+        console.log("RESPONSE STATUS:", response.status);
         const data = await response.json();
-
+        console.log("RESPONSE DATA:", data);
+        
         if (data.ok) {
-          showSuccess("Tedavi grubu başarıyla oluşturuldu! Yönlendiriliyorsunuz...");
-          setTimeout(() => {
-            window.location.href = "/admin-patients.html";
-          }, 2000);
+          alert("Tedavi grubu başarıyla oluşturuldu!");
+          window.location.href = "/admin-patients.html";
         } else {
-          throw new Error(data.error || "Tedavi grubu oluşturulamadı");
+          alert("Hata: " + (data.error || "Bilinmeyen hata"));
         }
-
+        
       } catch (error) {
-        console.error("Create treatment group error:", error);
-        showError("Tedavi grubu oluşturulamadı: " + error.message);
-      } finally {
-        // Re-enable submit button
-        const submitBtn = document.getElementById("submit-btn");
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Tedavi Grubu Oluştur";
+        console.error("SUBMIT ERROR:", error);
+        alert("Hata: " + error.message);
       }
     }
-
-    // Initialize when DOM is ready
-    document.addEventListener("DOMContentLoaded", initializePage);
   </script>
 </body>
 </html>
