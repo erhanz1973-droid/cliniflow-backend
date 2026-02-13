@@ -797,12 +797,7 @@
       patientsGrid.style.display = 'none';
 
       try {
-        const res = await fetch(`${API_BASE}/api/admin/patients`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json'
-          }
-        });
+        const res = await adminFetch(`${API_BASE}/api/admin/patients`);
 
         if (!res.ok) {
           if (res.status === 401) {
@@ -985,13 +980,8 @@
       }
 
       try {
-        const res = await fetch(`${API_BASE}/api/admin/approve`, {
+        const res = await adminFetch(`${API_BASE}/api/admin/approve`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
           body: JSON.stringify({ patientId })
         });
 
@@ -1033,12 +1023,7 @@
         const plan = clinic.subscriptionPlan || 'FREE';
         
         // Get current approved patients count
-        const patientsRes = await fetch(`${API_BASE}/api/admin/patients?status=APPROVED`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json'
-          }
-        });
+        const patientsRes = await adminFetch(`${API_BASE}/api/admin/patients?status=APPROVED`);
 
         if (!patientsRes.ok) {
           return { canApprove: true }; // If we can't check, allow approval
@@ -1246,6 +1231,31 @@
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...extra,
       };
+    }
+
+    // ✅ adminFetch wrapper with automatic Authorization header
+    async function adminFetch(url, options = {}) {
+      const token = getAdminToken();
+      if (!token) {
+        throw new Error('Admin token required');
+      }
+
+      const defaultOptions = {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...options.headers
+        }
+      };
+
+      const mergedOptions = {
+        ...defaultOptions,
+        ...options,
+        headers: defaultOptions.headers
+      };
+
+      return fetch(url, mergedOptions);
     }
 
     let previousUnreadCount = 0;
