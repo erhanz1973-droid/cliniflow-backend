@@ -91,8 +91,11 @@
       <div id="success" class="success" style="display:none;"></div>
 
       <div id="form-container" style="display:none;">
-        <div class="patient-info">
-          <strong>Hasta ID:</strong> <span id="patient-id"></span>
+        <div class="form-group">
+          <label class="form-label" for="patient-select">Hasta Seçimi *</label>
+          <select id="patient-select" class="form-input" required>
+            <option value="">Hasta seçin...</option>
+          </select>
         </div>
 
         <form id="treatment-group-form">
@@ -141,32 +144,94 @@
     let doctors = [];
     let selectedDoctors = new Set();
     let primaryDoctorId = null;
+    let patients = [];
 
-    // Get URL parameters
+    // Utility functions
     function getUrlParameter(name) {
       const urlParams = new URLSearchParams(window.location.search);
       return urlParams.get(name);
     }
 
-    // Get admin token
     function getAdminToken() {
-      return localStorage.getItem("admin_token");
+      return localStorage.getItem('adminToken');
     }
 
-    // Show error message
     function showError(message) {
-      const errorEl = document.getElementById("error");
+      const errorEl = document.getElementById('error');
       errorEl.textContent = message;
-      errorEl.style.display = "block";
-      document.getElementById("success").style.display = "none";
+      errorEl.style.display = 'block';
+      setTimeout(() => {
+        errorEl.style.display = 'none';
+      }, 5000);
     }
 
-    // Show success message
     function showSuccess(message) {
-      const successEl = document.getElementById("success");
+      const successEl = document.getElementById('success');
       successEl.textContent = message;
-      successEl.style.display = "block";
-      document.getElementById("error").style.display = "none";
+      successEl.style.display = 'block';
+      setTimeout(() => {
+        successEl.style.display = 'none';
+      }, 5000);
+    }
+
+    // Load patients
+    async function loadPatients() {
+      try {
+        const token = getAdminToken();
+        if (!token) {
+          throw new Error("Admin token bulunamadı");
+        }
+
+        const response = await fetch("/api/admin/patients", {
+          headers: {
+            Authorization: "Bearer " + token,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Hastalar yüklenemedi");
+        }
+
+        const data = await response.json();
+        if (data.ok) {
+          patients = data.patients || [];
+          renderPatients();
+        } else {
+          throw new Error(data.error || "Hastalar yüklenemedi");
+        }
+      } catch (error) {
+        console.error("Load patients error:", error);
+        showError("Hastalar yüklenemedi: " + error.message);
+      }
+    }
+
+    // Render patients dropdown
+    function renderPatients() {
+      const patientSelect = document.getElementById('patient-select');
+      
+      if (patients.length === 0) {
+        patientSelect.innerHTML = '<option value="">Hasta bulunamadı</option>';
+        return;
+      }
+
+      // Clear existing options except the first one
+      patientSelect.innerHTML = '<option value="">Hasta seçin...</option>';
+      
+      // Add patient options with UUID as value
+      patients.forEach(patient => {
+        const option = document.createElement('option');
+        option.value = patient.id;  
+        option.textContent = `${patient.name || patient.fullName || 'İsimsiz'} (${patient.patient_id || patient.patientId || 'ID Yok'})`;
+        patientSelect.appendChild(option);
+      });
+
+      // Set selected patient if coming from URL
+      if (patientId) {
+        const urlPatient = patients.find(p => p.id === patientId);
+        if (urlPatient) {
+          patientSelect.value = patientId;
+        }
+      }
     }
 
     // Hide messages
@@ -265,17 +330,11 @@
     // Initialize page
     async function initializePage() {
       try {
-        // Get patient ID from URL
+        // Get patient ID from URL (optional)
         patientId = getUrlParameter("patientId");
-        if (!patientId) {
-          throw new Error("Patient ID bulunamadı");
-        }
 
-        // Set patient ID display
-        document.getElementById("patient-id").textContent = patientId;
-
-        // Load doctors
-        await loadDoctors();
+        // Load patients and doctors
+        await Promise.all([loadPatients(), loadDoctors()]);
 
         // Show form
         document.getElementById("loading").style.display = "none";
@@ -298,9 +357,22 @@
       try {
         hideMessages();
 
+        // Get selected patient ID from dropdown
+        const selectedPatientId = document.getElementById("patient-select").value;
+        
+        // Debug logging
+        console.log("Selected patient ID:", selectedPatientId);
+        console.log("Selected patient ID format:", selectedPatientId ? selectedPatientId.length : 'null');
+        console.log("Is UUID format:", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedPatientId));
+
         // Validation
         const groupName = document.getElementById("group-name").value.trim();
         const groupDescription = document.getElementById("group-description").value.trim();
+
+        if (!selectedPatientId) {
+          showError("Hasta seçmelisiniz");
+          return;
+        }
 
         if (!groupName) {
           showError("Grup adı zorunludur");
@@ -332,16 +404,15 @@
         const response = await fetch("/api/admin/treatment-groups", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             Authorization: "Bearer " + token,
           },
           body: JSON.stringify({
-            patient_id: patientId,
+            patient_id: selectedPatientId,
             doctor_ids: Array.from(selectedDoctors),
             primary_doctor_id: primaryDoctorId,
             name: groupName,
-            description: groupDescription,
-          }),
+            description: groupDescription || null
+          })
         });
 
         const data = await response.json();
@@ -356,7 +427,7 @@
         }
 
       } catch (error) {
-        console.error("Submit error:", error);
+        console.error("Create treatment group error:", error);
         showError("Tedavi grubu oluşturulamadı: " + error.message);
       } finally {
         // Re-enable submit button
