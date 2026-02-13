@@ -4937,8 +4937,13 @@ app.post("/api/register/patient", async (req, res) => {
     const patientCount = existingPatients?.length || 0;
     
     // Check for phone duplicate
+    console.log("[PATIENT REGISTER] Checking phone duplicate:", {
+      phone: phone.trim(),
+      existingPhones: existingPatients?.map(p => p.phone)
+    });
     const phoneExists = existingPatients?.some(p => p.phone === phone.trim());
     if (phoneExists) {
+      console.log("[PATIENT REGISTER] Phone duplicate found:", phone.trim());
       return res.status(400).json({
         ok: false,
         error: "phone_already_exists",
