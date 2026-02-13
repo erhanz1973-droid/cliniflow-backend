@@ -3326,8 +3326,8 @@ app.post("/api/register", async (req, res) => {
     );
 
     // Response'ta name field'ını düzgün döndür - patientName endpoint başında tanımlı
-    const finalName = String(patientName || newPatient.name || "").trim();
-    console.log(`[REGISTER] Response name: "${finalName}" (from patientName: "${patientName}", newPatient.name: "${newPatient.name}")`);
+    const finalName = String(patientName || insertedPatient.name || "").trim();
+    console.log(`[REGISTER] Response name: "${finalName}" (from patientName: "${patientName}", insertedPatient.name: "${insertedPatient.name}")`);
 
     res.json({
       ok: true,
