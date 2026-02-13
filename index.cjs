@@ -7773,8 +7773,13 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
 /* ================= ADMIN REFERRALS (POST) ================= */
 app.post("/api/admin/referrals", adminAuth, async (req, res) => {
   try {
-    // Forward to GET handler for consistency
+    console.log("[ADMIN REFERRALS POST] Request received, forwarding to GET handler");
+    
+    // Change method to GET and call the same handler
     req.method = "GET";
+    req.query = req.query || {};
+    
+    // Call the GET handler directly
     return app._router.handle(req, res);
   } catch (err) {
     console.error("[ADMIN REFERRALS POST] Error:", err);
