@@ -12,6 +12,15 @@
         window.location.href = "/admin-login.html";
       }
     })();
+
+    // AbortSignal.timeout polyfill
+    if (!AbortSignal.timeout) {
+      AbortSignal.timeout = function(ms) {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+      };
+    }
   </script>
   <script src="/admin-i18n.js"></script>
   <style>
@@ -1324,6 +1333,7 @@
       try {
         const res = await fetch(`${API}/api/admin/patients`, {
           headers: adminHeaders({ Accept: "application/json" }),
+          signal: AbortSignal.timeout(10000) // 10 second timeout
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -1354,6 +1364,7 @@
       try {
         const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
           headers: adminHeaders({ Accept: "application/json" }),
+          signal: AbortSignal.timeout(10000) // 10 second timeout
         });
         if (!res.ok) return;
         const data = await res.json();

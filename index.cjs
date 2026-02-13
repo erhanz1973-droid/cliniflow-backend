@@ -3586,7 +3586,19 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
 
     if (updateError) {
       console.error("[ADMIN APPROVE] Update error:", updateError);
-      return res.status(500).json({ ok: false, error: "approval_failed" });
+      console.error("[ADMIN APPROVE] Update error details:", {
+        message: updateError.message,
+        code: updateError.code,
+        details: updateError.details,
+        patientId: trimmedPatientId,
+        clinicId: clinicId
+      });
+      return res.status(500).json({ 
+        ok: false, 
+        error: "approval_failed",
+        message: updateError.message || "Failed to approve patient",
+        details: updateError.details
+      });
     }
 
     console.log("[ADMIN APPROVE] Patient approved successfully:", updatedPatient.name);
