@@ -2707,6 +2707,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
         patient_id,
         name,
         phone,
+        status,
         created_at
       `)
       .eq("clinic_id", req.admin.clinicId)
@@ -2723,6 +2724,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
       patient_id: p.patient_id,
       name: p.name || "",
       phone: p.phone || "",
+      status: p.status,
       created_at: p.created_at
     }));
 
