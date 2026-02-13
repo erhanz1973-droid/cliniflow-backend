@@ -4938,7 +4938,7 @@ app.post("/api/register/patient", async (req, res) => {
     // Remove max patients check since clinics table doesn't have max_patients column
 
     // Generate patient ID
-    const patient_id = generatePatientIdFromName(patientName);
+    const patient_id = crypto.randomUUID(); // ✅ Use proper UUID
     const referral_code = generateReferralCode();
 
     // Create patient with ACTIVE status
@@ -4949,6 +4949,7 @@ app.post("/api/register/patient", async (req, res) => {
       name: patientName,
       phone: phone.trim(),
       email: email?.trim() || '',
+      clinic_id: clinic.id, // ✅ Add clinic_id from clinic lookup
       clinic_code: clinicCode.trim(),
       referral_code,
       status: "ACTIVE", // Patients are immediately ACTIVE
@@ -4970,7 +4971,7 @@ app.post("/api/register/patient", async (req, res) => {
       return res.status(500).json({
         ok: false,
         error: "registration_failed",
-        message: err.message || "Doktor kaydı başarısız oldu."
+        message: insertError.message || "Hasta kaydı başarısız oldu."
       });
     }
 
