@@ -11,6 +11,8 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
-cliniflow-app/
 server_OLD/
+
+# Temporarily allow cliniflow-app for deployment
+# cliniflow-app/
 
