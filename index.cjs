@@ -9148,9 +9148,9 @@ async function updateHairGraftsSummary(patientUuid) {
 const treatmentRoutes = require('./server/routes/treatment');
 app.use('/api/treatment', treatmentRoutes);
 
-// Treatment Groups routes (Admin only)
-const treatmentGroupsRoutes = require('./server/routes/treatment-groups');
-app.use('/api/treatment-groups', treatmentGroupsRoutes);
+// Treatment Groups routes (Admin only) - DEPRECATED - Using new endpoint in index.cjs
+// const treatmentGroupsRoutes = require('./server/routes/treatment-groups');
+// app.use('/api/treatment-groups', treatmentGroupsRoutes);
 
 // Patient Group Assignments routes (Admin only)
 const patientGroupAssignmentsRoutes = require('./server/routes/patient-group-assignments');
