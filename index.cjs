@@ -5676,12 +5676,15 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
     }
 
     if (existingGroup) {
-      treatmentGroupId = existingGroup.id;
-      console.log("[ADMIN ASSIGN PATIENT] Using existing group:", treatmentGroupId);
-    } else {
-      // Create new treatment group
-      const { data: newGroup, error: createGroupError } = await supabase
-        .from("treatment_groups")
+      return res.status(400).json({
+        ok: false,
+        error: "active_group_already_exists"
+      });
+    }
+
+    // Create new treatment group
+    const { data: newGroup, error: createGroupError } = await supabase
+      .from("treatment_groups")
         .insert({
           patient_id: patient.id,
           clinic_id: clinicId,
@@ -5691,13 +5694,13 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
         .select("id")
         .single();
 
-      if (createGroupError || !newGroup) {
-        console.error("[ADMIN ASSIGN PATIENT] Group creation failed:", createGroupError);
-        return res.status(500).json({ ok: false, error: "group_creation_failed" });
-      }
+    if (createGroupError || !newGroup) {
+      console.error("[ADMIN ASSIGN PATIENT] Group creation failed:", createGroupError);
+      return res.status(500).json({ ok: false, error: "group_creation_failed" });
+    }
 
-      treatmentGroupId = newGroup.id;
-      console.log("[ADMIN ASSIGN PATIENT] Created new group:", treatmentGroupId);
+    const treatmentGroupId = newGroup.id;
+    console.log("[ADMIN ASSIGN PATIENT] Created new group:", treatmentGroupId);
     }
 
     // 4. Add doctor to treatment group as primary member
@@ -5745,6 +5748,199 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 
   } catch (error) {
     console.error("[ADMIN ASSIGN PATIENT] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADD DOCTOR TO TREATMENT GROUP ================= */
+app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { doctorId } = req.body || {};
+    const { clinicId } = req.admin;
+
+    if (!groupId || !doctorId) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_required_fields"
+      });
+    }
+
+    // Validate group belongs to same clinic
+    const { data: group, error: groupError } = await supabase
+      .from("treatment_groups")
+      .select("id, clinic_id, status")
+      .eq("id", groupId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (groupError || !group) {
+      return res.status(404).json({
+        ok: false,
+        error: "group_not_found"
+      });
+    }
+
+    // Validate doctor belongs to same clinic
+    const { data: doctor, error: doctorError } = await supabase
+      .from("doctors")
+      .select("id, clinic_id, status")
+      .eq("id", doctorId)
+      .eq("clinic_id", clinicId)
+      .eq("status", "APPROVED")
+      .single();
+
+    if (doctorError || !doctor) {
+      return res.status(404).json({
+        ok: false,
+        error: "doctor_not_found_or_not_approved"
+      });
+    }
+
+    // Check if doctor already in group
+    const { data: existingMember, error: memberError } = await supabase
+      .from("treatment_group_members")
+      .select("id")
+      .eq("treatment_group_id", groupId)
+      .eq("doctor_id", doctorId)
+      .single();
+
+    if (existingMember) {
+      return res.status(400).json({
+        ok: false,
+        error: "doctor_already_in_group"
+      });
+    }
+
+    // Add doctor to group
+    const { data: newMember, error: addError } = await supabase
+      .from("treatment_group_members")
+      .insert({
+        treatment_group_id: groupId,
+        doctor_id: doctorId,
+        role: "MEMBER",
+        status: "ACTIVE",
+        joined_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (addError || !newMember) {
+      return res.status(500).json({
+        ok: false,
+        error: "failed_to_add_doctor_to_group"
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: "Doctor added to treatment group successfully",
+      member: newMember
+    });
+
+  } catch (error) {
+    console.error("[ADD DOCTOR TO GROUP] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= REMOVE DOCTOR FROM TREATMENT GROUP ================= */
+app.delete("/api/admin/treatment-groups/:groupId/remove-doctor", adminAuth, async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { doctorId } = req.body || {};
+    const { clinicId } = req.admin;
+
+    if (!groupId || !doctorId) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_required_fields"
+      });
+    }
+
+    // Validate group belongs to same clinic
+    const { data: group, error: groupError } = await supabase
+      .from("treatment_groups")
+      .select("id, clinic_id, status")
+      .eq("id", groupId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (groupError || !group) {
+      return res.status(404).json({
+        ok: false,
+        error: "group_not_found"
+      });
+    }
+
+    // Check if doctor is in group
+    const { data: existingMember, error: memberError } = await supabase
+      .from("treatment_group_members")
+      .select("id, role")
+      .eq("treatment_group_id", groupId)
+      .eq("doctor_id", doctorId)
+      .single();
+
+    if (memberError || !existingMember) {
+      return res.status(404).json({
+        ok: false,
+        error: "doctor_not_in_group"
+      });
+    }
+
+    // Check if removing primary doctor from ACTIVE group
+    if (existingMember.role === "PRIMARY" && group.status === "ACTIVE") {
+      return res.status(400).json({
+        ok: false,
+        error: "cannot_remove_primary_doctor_from_active_group"
+      });
+    }
+
+    // Count remaining doctors in group
+    const { data: remainingMembers, error: countError } = await supabase
+      .from("treatment_group_members")
+      .select("id")
+      .eq("treatment_group_id", groupId);
+
+    if (countError) {
+      return res.status(500).json({
+        ok: false,
+        error: "failed_to_count_remaining_doctors"
+      });
+    }
+
+    // If removing last doctor, close the group
+    if (remainingMembers.length <= 1) {
+      await supabase
+        .from("treatment_groups")
+        .update({ 
+          status: "COMPLETED",
+          closed_at: new Date().toISOString()
+        })
+        .eq("id", groupId);
+    }
+
+    // Remove doctor from group
+    const { error: removeError } = await supabase
+      .from("treatment_group_members")
+      .delete()
+      .eq("treatment_group_id", groupId)
+      .eq("doctor_id", doctorId);
+
+    if (removeError) {
+      return res.status(500).json({
+        ok: false,
+        error: "failed_to_remove_doctor_from_group"
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: "Doctor removed from treatment group successfully"
+    });
+
+  } catch (error) {
+    console.error("[REMOVE DOCTOR FROM GROUP] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
