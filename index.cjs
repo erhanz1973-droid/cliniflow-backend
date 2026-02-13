@@ -6172,11 +6172,11 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
 
     const { data: doctors, error } = await supabase
       .from("doctors")
-      .select("id, full_name, department")
+      .select("id, name, department")
       .eq("clinic_id", req.admin.clinicId)
       .eq("role", "DOCTOR")
       .eq("status", "ACTIVE")
-      .order("full_name", { ascending: true });
+      .order("name", { ascending: true });
 
     if (error) {
       console.error("[ADMIN DOCTORS] Error:", error);

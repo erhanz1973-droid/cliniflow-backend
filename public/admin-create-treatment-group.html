@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tedavi Grubu Oluştur - Clinifly Admin</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+
+    // AbortSignal.timeout polyfill
+    if (!AbortSignal.timeout) {
+      AbortSignal.timeout = function(ms) {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+      };
+    }
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    .btn{ padding:10px 16px; border-radius:6px; border:none; font-weight:600; cursor:pointer; font-size:14px; transition:all .2s; }
+    .btn:hover{ opacity:.85; transform:translateY(-1px); }
+    .btn-primary{ background:var(--p); color:#fff; }
+    .btn-secondary{ background:var(--b); color:#fff; }
+    .btn-success{ background:var(--g); color:#fff; }
+    .btn-danger{ background:var(--r); color:#fff; }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; transform:none !important; }
+    .card{ background:var(--card); border-radius:12px; padding:24px; margin-bottom:20px; border:1px solid var(--b); }
+    .form-group{ margin-bottom:20px; }
+    .form-label{ display:block; margin-bottom:8px; font-weight:600; color:#fff; }
+    .form-input{ width:100%; padding:12px; border-radius:8px; border:1px solid var(--b); background:var(--bg); color:#fff; font-size:16px; box-sizing:border-box; }
+    .form-input:focus{ outline:none; border-color:var(--p); box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
+    .form-textarea{ min-height:100px; resize:vertical; }
+    .doctors-list{ margin-top:16px; }
+    .doctor-item{ display:flex; align-items:center; padding:16px; background:var(--bg); border-radius:8px; margin-bottom:8px; border:1px solid var(--b); cursor:pointer; transition:all .2s; }
+    .doctor-item:hover{ border-color:var(--p); background:rgba(37,99,235,0.05); }
+    .doctor-item.selected{ border-color:var(--p); background:rgba(37,99,235,0.1); }
+    .doctor-checkbox{ margin-right:12px; }
+    .doctor-checkbox input{ width:18px; height:18px; cursor:pointer; }
+    .doctor-info{ flex:1; }
+    .doctor-name{ font-weight:600; margin-bottom:4px; }
+    .doctor-department{ color:var(--muted); font-size:14px; }
+    .doctor-badge{ margin-left:12px; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:600; }
+    .badge-primary{ background:var(--p); color:#fff; }
+    .badge-secondary{ background:var(--b); color:#fff; }
+    .loading{ text-align:center; padding:40px; color:var(--muted); }
+    .error{ background:rgba(220,38,38,0.1); border:1px solid var(--r); color:#fca5a5; padding:12px; border-radius:8px; margin-bottom:16px; }
+    .success{ background:rgba(22,163,74,0.1); border:1px solid var(--g); color:#86efac; padding:12px; border-radius:8px; margin-bottom:16px; }
+    .patient-info{ background:rgba(37,99,235,0.1); border:1px solid var(--p); color:#93c5fd; padding:12px; border-radius:8px; margin-bottom:20px; }
+    .patient-info strong{ color:#fff; }
+    .actions{ display:flex; gap:12px; margin-top:24px; }
+    .actions .btn{ flex:1; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🏥 Tedavi Grubu Oluştur</h1>
+      <button class="btn btn-secondary" onclick="window.location.href='/admin-patients.html'">
+        ← Hastalara Geri Dön
+      </button>
+    </header>
+
+    <main>
+      <div id="loading" class="loading">
+        <div>⏳ Yükleniyor...</div>
+      </div>
+
+      <div id="error" class="error" style="display:none;"></div>
+      <div id="success" class="success" style="display:none;"></div>
+
+      <div id="form-container" style="display:none;">
+        <div class="patient-info">
+          <strong>Hasta ID:</strong> <span id="patient-id"></span>
+        </div>
+
+        <form id="treatment-group-form">
+          <div class="form-group">
+            <label class="form-label" for="group-name">Grup Adı *</label>
+            <input 
+              type="text" 
+              id="group-name" 
+              class="form-input" 
+              placeholder="Tedavi grubu adını girin..."
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="group-description">Açıklama</label>
+            <textarea 
+              id="group-description" 
+              class="form-input form-textarea" 
+              placeholder="Tedavi grubu açıklaması (opsiyonel)..."
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Doktor Seçimi *</label>
+            <div class="doctors-list" id="doctors-list">
+              <div class="loading">Doktorlar yükleniyor...</div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn btn-secondary" onclick="window.location.href='/admin-patients.html'">
+              İptal
+            </button>
+            <button type="submit" class="btn btn-primary" id="submit-btn">
+              Tedavi Grubu Oluştur
+            </button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    let patientId = null;
+    let doctors = [];
+    let selectedDoctors = new Set();
+    let primaryDoctorId = null;
+
+    // Get URL parameters
+    function getUrlParameter(name) {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get(name);
+    }
+
+    // Get admin token
+    function getAdminToken() {
+      return localStorage.getItem("admin_token");
+    }
+
+    // Show error message
+    function showError(message) {
+      const errorEl = document.getElementById("error");
+      errorEl.textContent = message;
+      errorEl.style.display = "block";
+      document.getElementById("success").style.display = "none";
+    }
+
+    // Show success message
+    function showSuccess(message) {
+      const successEl = document.getElementById("success");
+      successEl.textContent = message;
+      successEl.style.display = "block";
+      document.getElementById("error").style.display = "none";
+    }
+
+    // Hide messages
+    function hideMessages() {
+      document.getElementById("error").style.display = "none";
+      document.getElementById("success").style.display = "none";
+    }
+
+    // Load doctors
+    async function loadDoctors() {
+      try {
+        const token = getAdminToken();
+        if (!token) {
+          throw new Error("Admin token bulunamadı");
+        }
+
+        const response = await fetch("/api/admin/doctors", {
+          headers: {
+            Authorization: "Bearer " + token,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Doktorlar yüklenemedi");
+        }
+
+        const data = await response.json();
+        if (data.ok) {
+          doctors = data.doctors || [];
+          renderDoctors();
+        } else {
+          throw new Error(data.error || "Doktorlar yüklenemedi");
+        }
+      } catch (error) {
+        console.error("Load doctors error:", error);
+        showError("Doktorlar yüklenemedi: " + error.message);
+      }
+    }
+
+    // Render doctors list
+    function renderDoctors() {
+      const doctorsList = document.getElementById("doctors-list");
+      
+      if (doctors.length === 0) {
+        doctorsList.innerHTML = "<div style='text-align:center; color:var(--muted); padding:20px;'>Aktif doktor bulunamadı</div>";
+        return;
+      }
+
+      doctorsList.innerHTML = doctors.map(doctor => `
+        <div class="doctor-item ${selectedDoctors.has(doctor.id) ? 'selected' : ''}" 
+             onclick="toggleDoctor('${doctor.id}')">
+          <div class="doctor-checkbox">
+            <input type="checkbox" 
+                   ${selectedDoctors.has(doctor.id) ? 'checked' : ''} 
+                   onclick="event.stopPropagation(); toggleDoctor('${doctor.id}')" />
+          </div>
+          <div class="doctor-info">
+            <div class="doctor-name">${doctor.name}</div>
+            <div class="doctor-department">${doctor.department || 'Bölüm belirtilmemiş'}</div>
+          </div>
+          ${selectedDoctors.has(doctor.id) ? `
+            <div class="doctor-badge ${primaryDoctorId === doctor.id ? 'badge-primary' : 'badge-secondary'}"
+                 onclick="event.stopPropagation(); setPrimaryDoctor('${doctor.id}')">
+              ${primaryDoctorId === doctor.id ? 'Birincil' : 'Seç'}
+            </div>
+          ` : ''}
+        </div>
+      `).join('');
+    }
+
+    // Toggle doctor selection
+    function toggleDoctor(doctorId) {
+      if (selectedDoctors.has(doctorId)) {
+        selectedDoctors.delete(doctorId);
+        if (primaryDoctorId === doctorId) {
+          primaryDoctorId = null;
+        }
+      } else {
+        selectedDoctors.add(doctorId);
+        // If this is the first selection, make it primary
+        if (selectedDoctors.size === 1) {
+          primaryDoctorId = doctorId;
+        }
+      }
+      renderDoctors();
+    }
+
+    // Set primary doctor
+    function setPrimaryDoctor(doctorId) {
+      if (selectedDoctors.has(doctorId)) {
+        primaryDoctorId = doctorId;
+        renderDoctors();
+      }
+    }
+
+    // Initialize page
+    async function initializePage() {
+      try {
+        // Get patient ID from URL
+        patientId = getUrlParameter("patientId");
+        if (!patientId) {
+          throw new Error("Patient ID bulunamadı");
+        }
+
+        // Set patient ID display
+        document.getElementById("patient-id").textContent = patientId;
+
+        // Load doctors
+        await loadDoctors();
+
+        // Show form
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("form-container").style.display = "block";
+
+        // Setup form submission
+        document.getElementById("treatment-group-form").addEventListener("submit", handleSubmit);
+
+      } catch (error) {
+        console.error("Initialize error:", error);
+        showError("Sayfa yüklenemedi: " + error.message);
+        document.getElementById("loading").style.display = "none";
+      }
+    }
+
+    // Handle form submission
+    async function handleSubmit(event) {
+      event.preventDefault();
+      
+      try {
+        hideMessages();
+
+        // Validation
+        const groupName = document.getElementById("group-name").value.trim();
+        const groupDescription = document.getElementById("group-description").value.trim();
+
+        if (!groupName) {
+          showError("Grup adı zorunludur");
+          return;
+        }
+
+        if (selectedDoctors.size === 0) {
+          showError("En az bir doktor seçmelisiniz");
+          return;
+        }
+
+        if (!primaryDoctorId) {
+          showError("Birincil doktor seçmelisiniz");
+          return;
+        }
+
+        if (!selectedDoctors.has(primaryDoctorId)) {
+          showError("Birincil doktor seçili doktorlar arasında olmalıdır");
+          return;
+        }
+
+        // Disable submit button
+        const submitBtn = document.getElementById("submit-btn");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Oluşturuluyor...";
+
+        // Create treatment group
+        const token = getAdminToken();
+        const response = await fetch("/api/admin/treatment-groups", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + token,
+          },
+          body: JSON.stringify({
+            patient_id: patientId,
+            doctor_ids: Array.from(selectedDoctors),
+            primary_doctor_id: primaryDoctorId,
+            name: groupName,
+            description: groupDescription,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+          showSuccess("Tedavi grubu başarıyla oluşturuldu! Yönlendiriliyorsunuz...");
+          setTimeout(() => {
+            window.location.href = "/admin-patients.html";
+          }, 2000);
+        } else {
+          throw new Error(data.error || "Tedavi grubu oluşturulamadı");
+        }
+
+      } catch (error) {
+        console.error("Submit error:", error);
+        showError("Tedavi grubu oluşturulamadı: " + error.message);
+      } finally {
+        // Re-enable submit button
+        const submitBtn = document.getElementById("submit-btn");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Tedavi Grubu Oluştur";
+      }
+    }
+
+    // Initialize when DOM is ready
+    document.addEventListener("DOMContentLoaded", initializePage);
+  </script>
+</body>
+</html>
