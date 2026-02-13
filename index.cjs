@@ -7699,6 +7699,55 @@ function checkOtpRateLimit(email) {
   return true;
 }
 
+/* ================= OTP REQUEST ================= */
+// Alias endpoint for frontend compatibility
+app.post("/auth/request-otp", async (req, res) => {
+  try {
+    const { phone, email, role } = req.body || {};
+
+    console.log("[OTP REQUEST] Request received:", {
+      phone,
+      email,
+      role
+    });
+
+    // Validation
+    if (!phone && !email) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_contact",
+        message: "Phone or email is required" 
+      });
+    }
+
+    // For demo purposes, simulate OTP sending
+    const otp = "123456"; // Fixed OTP for demo
+    
+    console.log("[OTP REQUEST] OTP sent (demo):", {
+      phone: phone?.trim(),
+      email: email?.trim(),
+      role: role || "PATIENT",
+      otp: otp
+    });
+
+    res.json({
+      ok: true,
+      message: "OTP sent successfully",
+      otp: otp, // Only for demo purposes
+      phone: phone?.trim(),
+      email: email?.trim()
+    });
+
+  } catch (err) {
+    console.error("[OTP REQUEST] Error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error",
+      message: "Failed to send OTP"
+    });
+  }
+});
+
 /* ================= OTP SEND ================= */
 app.post("/auth/send-otp", async (req, res) => {
   try {
