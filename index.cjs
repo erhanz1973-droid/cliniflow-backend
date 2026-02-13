@@ -6185,7 +6185,7 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
     // 1) Get from doctors table (approved doctors)
     const { data: doctorsFromDoctorsTable, error: doctorsError } = await supabase
       .from("doctors")
-      .select("id, name, department, status")
+      .select("id, name, full_name, department, status")
       .eq("clinic_id", req.admin.clinicId)
       .eq("status", "APPROVED");
 
@@ -6204,8 +6204,18 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
 
     // 3) Merge results and remove duplicates by ID
     const allDoctors = [
-      ...(doctorsFromDoctorsTable || []),
-      ...(doctorsFromPatientsTable || [])
+      ...(doctorsFromDoctorsTable || []).map(doctor => ({
+        id: doctor.id,
+        name: doctor.full_name || doctor.name,  // ✅ Map full_name to name
+        department: doctor.department,
+        status: doctor.status
+      })),
+      ...(doctorsFromPatientsTable || []).map(doctor => ({
+        id: doctor.id,
+        name: doctor.name,  // ✅ Use name directly
+        department: doctor.department,
+        status: doctor.status
+      }))
     ];
 
     // Remove duplicates by ID
