@@ -5365,6 +5365,16 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     const clinicId = req.admin.clinicId;
     const adminId = req.admin.id;
 
+    console.log("[TREATMENT GROUPS CREATE] Request:", {
+      patient_id,
+      doctor_ids,
+      primary_doctor_id,
+      name,
+      description,
+      clinicId,
+      adminId
+    });
+
     const { data, error } = await supabase.rpc(
       "create_treatment_group_atomic",
       {
@@ -5378,11 +5388,14 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       }
     );
 
+    console.log("[TREATMENT GROUPS CREATE] RPC Response:", { data, error });
+
     if (error) {
       console.error("RPC Error:", error);
       return res.status(500).json({
         ok: false,
-        error: "group_creation_failed"
+        error: "group_creation_failed",
+        details: error
       });
     }
 
@@ -5392,7 +5405,8 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     console.error("GROUP CREATE ERROR:", err);
     res.status(500).json({
       ok: false,
-      error: "internal_error"
+      error: "internal_error",
+      details: err.message
     });
   }
 });
