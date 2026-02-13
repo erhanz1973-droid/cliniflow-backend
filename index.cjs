@@ -6168,24 +6168,12 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
 /* ================= ADMIN DOCTORS ================= */
 app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   try {
-    console.log("[ADMIN DOCTORS] Request received");
-    console.log("[ADMIN DOCTORS] Admin info:", { 
-      adminId: req.admin.id, 
-      clinicId: req.admin.clinicId 
-    });
-
-    // 🔥 CRITICAL: Use patients table - NOT doctors table
-    // All users (doctors and patients) are stored in patients table
-    const { data: doctors, error } = await supabase
+    const { data, error } = await supabase
       .from("patients")
-      .select("id, name, department")
+      .select("id, name, department, status")
       .eq("clinic_id", req.admin.clinicId)
       .eq("role", "DOCTOR")
-      .eq("status", "ACTIVE")
-      .order("name", { ascending: true });
-
-    console.log("[ADMIN DOCTORS] Final doctors count:", doctors?.length || 0);
-    console.log("[ADMIN DOCTORS] Final doctors data:", doctors);
+      .eq("status", "ACTIVE");
 
     if (error) {
       console.error("[ADMIN DOCTORS] Error:", error);
@@ -6194,11 +6182,11 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
 
     res.json({
       ok: true,
-      doctors: doctors || []
+      doctors: data || []
     });
 
   } catch (err) {
-    console.error("[ADMIN DOCTORS] Error:", err);
+    console.error("[ADMIN DOCTORS] Fatal error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
