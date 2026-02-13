@@ -8340,7 +8340,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
 
     // 🔥 TYPE-BASED USER LOOKUP AND RESPONSE
-    if (type === "patient") {
+    if (normalizedType === "patient") {
       // Find patient by phone
       const { data: patient, error: patientError } = await supabase
         .from("patients")
@@ -8483,6 +8483,13 @@ app.post("/auth/verify-otp", async (req, res) => {
         role: "ADMIN"
       });
     }
+    
+    // Safety fallback - ensure we always return a response
+    return res.status(400).json({
+      ok: false,
+      error: "unhandled_type",
+      message: "Unhandled user type"
+    });
 
   } catch (error) {
     console.error("[OTP VERIFY] ERROR:", error);
