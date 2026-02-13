@@ -8163,6 +8163,9 @@ app.post("/auth/verify-otp", async (req, res) => {
             clinic_code: "DEV"
           };
 
+          // Use appropriate secret based on type
+          const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+          
           const token = jwt.sign(
             {
               patientId: mockPatient.name,
@@ -8172,7 +8175,7 @@ app.post("/auth/verify-otp", async (req, res) => {
               type: "patient",
               status: mockPatient.status
             },
-            JWT_SECRET,
+            secret,
             { expiresIn: "30d" }
           );
 
@@ -8203,6 +8206,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           });
         }
 
+        // Use appropriate secret based on type
+        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        
         const token = jwt.sign(
           {
             patientId: patient.name,
@@ -8212,7 +8218,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             type: "patient",
             status: patient.status
           },
-          JWT_SECRET,
+          secret,
           { expiresIn: "30d" }
         );
 
@@ -8246,6 +8252,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           });
         }
 
+        // Use appropriate secret based on type
+        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        
         const token = jwt.sign(
           {
             doctorId: doctor.id,
@@ -8254,7 +8263,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             type: "doctor",
             status: doctor.status
           },
-          JWT_SECRET,
+          secret,
           { expiresIn: "30d" }
         );
 
@@ -8290,6 +8299,9 @@ app.post("/auth/verify-otp", async (req, res) => {
           });
         }
 
+        // Use appropriate secret based on type
+        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        
         const token = jwt.sign(
           {
             clinicId: clinic.id,
@@ -8297,7 +8309,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             role: "ADMIN",
             type: "admin"
           },
-          JWT_SECRET,
+          secret,
           { expiresIn: "30d" }
         );
 
@@ -8349,16 +8361,19 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
 
+      // Use appropriate secret based on type
+      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      
       const token = jwt.sign(
         {
-          patientId: patient.name,
+          patientId: patient.patient_id,
           clinicId: patient.clinic_id,
           clinicCode: patient.clinic_code,
           role: patient.role,
           type: "patient",
           status: patient.status
         },
-        JWT_SECRET,
+        secret,
         { expiresIn: "30d" }
       );
 
@@ -8392,6 +8407,9 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
 
+      // Use appropriate secret based on type
+      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      
       const token = jwt.sign(
         {
           doctorId: doctor.id,
@@ -8400,7 +8418,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           type: "doctor",
           status: doctor.status
         },
-        JWT_SECRET,
+        secret,
         { expiresIn: "30d" }
       );
 
@@ -8436,6 +8454,9 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
 
+      // Use appropriate secret based on type
+      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      
       const token = jwt.sign(
         {
           clinicId: clinic.id,
@@ -8443,7 +8464,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           role: "ADMIN",
           type: "admin"
         },
-        JWT_SECRET,
+        secret,
         { expiresIn: "30d" }
       );
 
