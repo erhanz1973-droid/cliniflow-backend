@@ -3451,6 +3451,75 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN DOCTOR APPROVAL V2 ================= */
+app.post("/admin/approve-doctor-v2", adminAuth, async (req, res) => {
+  try {
+    const { doctorId } = req.body || {};
+
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId_required" });
+    }
+
+    const trimmedDoctorId = String(doctorId).trim();
+    const clinicId = req.admin?.clinicId;
+
+    if (!clinicId) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_found"
+      });
+    }
+
+    console.log("[ADMIN APPROVE DOCTOR V2] Approving doctor:", { 
+      doctorId: trimmedDoctorId, 
+      clinicId: clinicId,
+      clinicCode: req.admin.clinicCode
+    });
+
+    // Doctor bul (sadece bu klinik için)
+    const { data: doctor, error: findError } = await supabase
+      .from("doctors")
+      .select("*")
+      .eq("clinic_id", clinicId)
+      .eq("doctor_id", trimmedDoctorId)
+      .single();
+
+    if (findError || !doctor) {
+      console.error("[ADMIN APPROVE DOCTOR V2] Doctor not found:", findError);
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    // Doctor durumunu APPROVED yap
+    const { data: updatedDoctor, error: updateError } = await supabase
+      .from("doctors")
+      .update({ 
+        status: "APPROVED", 
+        approved_at: new Date().toISOString() 
+      })
+      .eq("id", doctor.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[ADMIN APPROVE DOCTOR V2] Update error:", updateError);
+      return res.status(500).json({ ok: false, error: "approval_failed" });
+    }
+
+    console.log("[ADMIN APPROVE DOCTOR V2] Doctor approved successfully:", updatedDoctor.full_name);
+
+    res.json({
+      ok: true,
+      doctorId: updatedDoctor.doctor_id,
+      status: updatedDoctor.status,
+      message: "Doctor approved successfully",
+    });
+
+  } catch (err) {
+    console.error("[ADMIN APPROVE DOCTOR V2] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN APPROVE ================= */
 app.post("/api/admin/approve", adminAuth, async (req, res) => {
   try {
