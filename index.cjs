@@ -6165,6 +6165,35 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN DOCTORS ================= */
+app.get("/api/admin/doctors", adminAuth, async (req, res) => {
+  try {
+    console.log("[ADMIN DOCTORS] Request received");
+
+    const { data: doctors, error } = await supabase
+      .from("doctors")
+      .select("id, full_name, department")
+      .eq("clinic_id", req.admin.clinicId)
+      .eq("role", "DOCTOR")
+      .eq("status", "ACTIVE")
+      .order("full_name", { ascending: true });
+
+    if (error) {
+      console.error("[ADMIN DOCTORS] Error:", error);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch_doctors" });
+    }
+
+    res.json({
+      ok: true,
+      doctors: doctors || []
+    });
+
+  } catch (err) {
+    console.error("[ADMIN DOCTORS] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {

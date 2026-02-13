@@ -1140,7 +1140,7 @@
 
     function openTreatment(patientId) {
       setSelectedPatient(patientId, getPatientNameById(patientId));
-      window.location.href = `/admin-treatment.html?patientId=${encodeURIComponent(patientId)}`;
+      window.location.href = `/admin/create-treatment-group.html?patientId=${encodeURIComponent(patientId)}`;
     }
 
     function openChat(patientId) {
