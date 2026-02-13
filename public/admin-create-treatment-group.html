@@ -385,16 +385,30 @@
         console.log("groupName:", document.getElementById("groupName"));
         console.log("description:", document.getElementById("description"));
 
-        const patientId = document.getElementById("patientSelect")?.value;
-        const name = document.getElementById("groupName")?.value;
-        const description = document.getElementById("description")?.value;
+        // Get form values explicitly
+        const patientSelectEl = document.getElementById("patientSelect");
+        const groupNameEl = document.getElementById("groupName");
+        const descriptionEl = document.getElementById("description");
+        
+        const patientId = patientSelectEl?.value;
+        const name = groupNameEl?.value;
+        const description = descriptionEl?.value;
+        
+        console.log("FORM VALUES:");
+        console.log("patientId:", patientId);
+        console.log("name:", name);
+        console.log("description:", description);
         
         // Get selected doctors from checkboxes
-        const doctorIds = Array.from(
-          document.querySelectorAll("input[name='doctor_ids']:checked")
-        ).map(el => el.value);
+        const doctorCheckboxes = document.querySelectorAll("input[name='doctor_ids']:checked");
+        console.log("Found doctor checkboxes:", doctorCheckboxes.length);
+        console.log("Doctor checkboxes:", doctorCheckboxes);
+        
+        const doctorIds = Array.from(doctorCheckboxes).map(el => el.value);
+        console.log("Doctor IDs:", doctorIds);
 
         const primaryDoctorId = doctorIds[0];
+        console.log("Primary doctor ID:", primaryDoctorId);
 
         console.log({
           patientId,
@@ -409,6 +423,17 @@
           return;
         }
 
+        // Create payload explicitly
+        const payload = {
+          patient_id: patientId,
+          doctor_ids: doctorIds,
+          primary_doctor_id: primaryDoctorId,
+          name: name.trim(),
+          description: description?.trim() || ""
+        };
+
+        console.log("Submitting payload:", payload);
+
         // Disable submit button
         const submitBtn = document.getElementById("submit-btn");
         submitBtn.disabled = true;
@@ -422,13 +447,7 @@
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token
           },
-          body: JSON.stringify({
-            patient_id: patientId,
-            doctor_ids: doctorIds,
-            primary_doctor_id: primaryDoctorId,
-            name: name.trim(),
-            description: description?.trim() || null
-          })
+          body: JSON.stringify(payload)
         });
 
         const data = await response.json();
