@@ -258,7 +258,7 @@
   <script>
     // Token check
     (function() {
-      const token = localStorage.getItem("adminToken");
+      const token = localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -489,7 +489,7 @@ Doctor ID: ${doctor.doctor_id}
     }
 
     function logout() {
-      localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       window.location.href = "/admin-login.html";
     }
 

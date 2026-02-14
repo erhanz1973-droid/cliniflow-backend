@@ -7,7 +7,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("adminToken");
+      const token = localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -339,7 +339,7 @@
 
   function getAdminToken(){
     // localStorage'dan al
-    const savedToken = localStorage.getItem('adminToken');
+    const savedToken = localStorage.getItem('admin_token');
     if (savedToken && savedToken.trim()) {
       return savedToken.trim();
     }
@@ -347,7 +347,7 @@
   }
   function logout() {
     try {
-      localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       console.log("[LOGOUT] Admin token cleared");
     } catch (e) {
       console.error("[LOGOUT] Error clearing token:", e);
@@ -982,14 +982,14 @@
     }
     
     // Re-render referrals with new language
-    const savedToken = localStorage.getItem('adminToken');
+    const savedToken = localStorage.getItem('admin_token');
     if (savedToken && savedToken.trim()) {
       loadReferrals();
     }
   };
 
   // Sayfa yüklendiğinde referral'ları yükle
-  const savedToken = localStorage.getItem('adminToken');
+  const savedToken = localStorage.getItem('admin_token');
   if (savedToken && savedToken.trim()) {
     loadReferralDefaults();
     setTimeout(() => loadReferrals(), 300);

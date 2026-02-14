@@ -290,7 +290,7 @@
     
     // Clear any existing admin token before login
     try {
-      localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       console.log("[LOGIN] Cleared existing admin token before login");
     } catch (e) {
       console.error("[LOGIN] Error clearing token:", e);
@@ -359,7 +359,7 @@
       
       if (json.ok && json.token) {
         // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
-        localStorage.setItem("adminToken", json.token);
+        localStorage.setItem("admin_token", json.token);
         localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
         localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
         
@@ -509,7 +509,7 @@
         
         if (json.ok && json.token) {
           // Save token and redirect
-          localStorage.setItem("adminToken", json.token);
+          localStorage.setItem("admin_token", json.token);
           localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
           localStorage.setItem("clinic_name", json.clinicName || "");
           
