@@ -180,7 +180,10 @@
       testResult.style.background = '#fef3c7';
       testResult.style.color = '#92400e';
 
-      const baseUrl = window.location.origin;
+      const baseUrl =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
       try {
         const response = await fetch(`${baseUrl}/health`);
         const data = await response.json();

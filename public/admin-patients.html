@@ -600,7 +600,10 @@
       } catch {}
     })();
 
-    const API_BASE = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+    const API_BASE =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
@@ -1294,7 +1297,10 @@
     }
 
     // Badge loading functions
-    const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+    const API =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {

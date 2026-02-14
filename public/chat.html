@@ -176,7 +176,10 @@
     
     // Get token from localStorage or URL
     const token = localStorage.getItem('patient_token') || urlParams.get('token') || '';
-    const API_BASE = window.location.origin;
+    const API_BASE =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
     
     // Check for success message from camera
     if (urlParams.get('message')) {

@@ -276,7 +276,10 @@
 
   <script>
     // Dashboard functionality
-    const API = window.location.origin;
+    const API =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
 
     async function loadTimeline() {
       try {

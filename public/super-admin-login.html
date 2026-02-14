@@ -190,7 +190,10 @@
   </div>
 
 <script>
-  const API = window.location.origin;
+  const API =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
   
   function setMsg(msg, type = "ok") {
     const container = document.getElementById("alert-container");

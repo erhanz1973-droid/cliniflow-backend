@@ -528,7 +528,10 @@
     } catch {}
   })();
 
-  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+  const API =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
   const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
   let PROCEDURE_DEFS = []; // from /api/procedures
   let TYPE_TO_CATEGORY = {}; // { [type]: category }

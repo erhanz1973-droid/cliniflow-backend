@@ -250,7 +250,10 @@
   </div>
 
 <script>
-  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+  const API =
+    window.location.hostname === "localhost"
+      ? "http://localhost:5050"
+      : "https://cliniflow-backend-dg8a.onrender.com";
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
