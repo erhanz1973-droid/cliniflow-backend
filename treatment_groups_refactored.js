@@ -57,6 +57,52 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
 
     console.log("[TREATMENT GROUPS CREATE] Group created:", groupData);
 
+    // 🔥 CRITICAL: Add timeline event for treatment group creation
+    try {
+      // Get patient and doctor details for timeline event
+      const { data: patientData } = await supabase
+        .from("patients")
+        .select("name")
+        .eq("id", patient_id)
+        .single();
+
+      const { data: primaryDoctorData } = await supabase
+        .from("doctors")
+        .select("full_name")
+        .eq("id", primary_doctor_id)
+        .single();
+
+      // Add timeline event
+      const { data: timelineEvent, error: timelineError } = await supabase
+        .from("admin_timeline_events")
+        .insert({
+          clinic_id: clinicId,
+          type: "TREATMENT_GROUP_CREATED",
+          reference_id: groupData.id,
+          message: "Treatment group created",
+          details: {
+            group_name: name,
+            patient_name: patientData?.name || "Unknown Patient",
+            primary_doctor_name: primaryDoctorData?.full_name || "Unknown Doctor",
+            created_by_admin_id: adminId,
+            doctor_count: doctor_ids.length
+          },
+          created_by: adminId
+        })
+        .select()
+        .single();
+
+      if (timelineError) {
+        console.error("[TREATMENT GROUPS CREATE] Timeline event error:", timelineError);
+        // Don't fail the request, just log the error
+      } else {
+        console.log("[TREATMENT GROUPS CREATE] Timeline event created:", timelineEvent.id);
+      }
+    } catch (timelineErr) {
+      console.error("[TREATMENT GROUPS CREATE] Timeline event creation failed:", timelineErr);
+      // Don't fail the request, just log the error
+    }
+
     // Assign doctors to the group using junction table
     const doctorAssignments = doctor_ids.map((doctorId, index) => ({
       treatment_group_id: groupData.id,
