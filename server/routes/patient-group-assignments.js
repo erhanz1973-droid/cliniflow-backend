@@ -33,7 +33,7 @@ router.post('/', async (req, res) => {
     const assignment = await PatientGroupAssignment.assignPatient({
       treatment_group_id: treatment_group_id,
       patient_id: patient_id,
-      assigned_by_admin_id: req.user.id // Admin ID from auth middleware
+      assigned_by_admin_id: req.admin.adminId || req.admin.id // 🔥 CRITICAL: Use req.admin instead of req.user
     });
     
     res.status(201).json({

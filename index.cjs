@@ -2031,7 +2031,23 @@ app.post("/api/admin/register", async (req, res) => {
 /* ================= ADMIN RECENT TREATMENTS ================= */
 app.get("/api/admin/recent-treatments", adminAuth, async (req, res) => {
   try {
-    const clinicId = req.clinicId;
+    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+    const clinicId = req.admin?.clinicId;
+
+    // 🔥 CRITICAL: Add undefined guard
+    if (!clinicId) {
+      console.error("[RECENT TREATMENTS] Missing clinicId:", { 
+        admin: req.admin,
+        clinicId: clinicId 
+      });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Missing clinicId" 
+      });
+    }
+
+    // 🔥 Debug log
+    console.log("[RECENT TREATMENTS] clinicId:", clinicId);
 
     const { data, error } = await supabase
       .from("treatments_v2")
@@ -2070,7 +2086,8 @@ app.get("/api/admin/recent-treatments", adminAuth, async (req, res) => {
 /* ================= ADMIN CREATE TREATMENT V2 ================= */
 app.post("/api/admin/treatments-v2", adminAuth, async (req, res) => {
   try {
-    const clinicId = req.clinicId;
+    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+    const clinicId = req.admin?.clinicId;
     const { patient_id, doctor_id, type, notes, items } = req.body;
 
     if (!patient_id) {

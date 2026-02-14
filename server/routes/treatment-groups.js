@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
     const groupData = {
       group_name: group_name.trim(),
       description: description?.trim() || null,
-      created_by_admin_id: req.user.id // Admin ID from auth middleware
+      created_by_admin_id: req.admin.adminId || req.admin.id // 🔥 CRITICAL: Use req.admin instead of req.user
     };
     
     const group = await TreatmentGroup.create(groupData);

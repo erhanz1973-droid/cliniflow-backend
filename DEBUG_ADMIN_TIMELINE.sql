@@ -98,3 +98,7 @@ FROM admin_timeline_events
 WHERE type = 'TEST_EVENT'
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- 8️⃣ Clean up test event
+DELETE FROM admin_timeline_events 
+WHERE type = 'TEST_EVENT';
