@@ -1557,9 +1557,19 @@
 
     // Initialize page
     document.addEventListener('DOMContentLoaded', () => {
-      bindNavTravelLink();
-      loadPatients();
-      loadAllBadges();
+      if (typeof bindNavTravelLink === "function") {
+        bindNavTravelLink();
+      }
+      
+      // Load patients first (this manages its own loading state)
+      loadPatients().then(() => {
+        // After patients are loaded, load badges and other UI elements
+        loadAllBadges();
+      }).catch(err => {
+        console.error('Failed to load patients:', err);
+        // Still load badges even if patients fail
+        loadAllBadges();
+      });
       
       // Add event listener for add patient button
       const addBtn = document.getElementById('addPatientBtn');
