@@ -21,6 +21,13 @@
         return controller.signal;
       };
     }
+
+    // Global variables - declare once at the top
+    let previousUnreadCount = 0;
+    let previousPendingPatients = 0;
+    let previousPendingReferrals = 0;
+    let isAddingPatient = false;
+    let isApprovingPatient = false;
   </script>
   <script src="/admin-i18n.js"></script>
   <style>
@@ -1203,8 +1210,6 @@
       document.getElementById('addPatientModal').style.display = 'none';
     }
 
-    let isAddingPatient = false;
-
     async function addPatient() {
       // Prevent double submission
       if (isAddingPatient) {
@@ -1329,12 +1334,6 @@
 
       return fetch(url, mergedOptions);
     }
-
-    let previousUnreadCount = 0;
-    let previousPendingPatients = 0;
-    let previousPendingReferrals = 0;
-    let isAddingPatient = false;
-    let isApprovingPatient = false;
 
     function playNotificationSound() {
       try {
