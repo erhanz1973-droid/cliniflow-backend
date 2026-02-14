@@ -584,7 +584,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-ghost" onclick="hideAddPatientModal()" data-i18n="patients.cancel">Cancel</button>
-        <button type="button" class="btn-primary" onclick="addPatient()" data-i18n="patients.add">Add Patient</button>
+        <button type="button" id="addPatientBtn" class="btn-primary" data-i18n="patients.add">Add Patient</button>
       </div>
     </div>
   </div>
@@ -1221,18 +1221,11 @@
       console.log('ADD PATIENT STARTED');
 
       try {
-        const formData = {
-          firstName: document.getElementById('patientFirstName').value.trim(),
-          lastName: document.getElementById('patientLastName').value.trim(),
-          email: document.getElementById('patientEmail').value.trim(),
-          phone: document.getElementById('patientPhone').value.trim(),
-          dateOfBirth: document.getElementById('patientDateOfBirth').value,
-          address: document.getElementById('patientAddress').value.trim(),
-          notes: document.getElementById('patientNotes').value.trim()
-        };
+        const firstName = document.getElementById('patientFirstName').value.trim();
+        const lastName = document.getElementById('patientLastName').value.trim();
 
-        if (!formData.firstName || !formData.lastName) {
-          alert('First name and last name are required');
+        if (!firstName || !lastName) {
+          alert('First name and last name required');
           isAddingPatient = false;
           return;
         }
@@ -1245,7 +1238,7 @@
         }
 
         // Disable add button
-        const addBtn = document.querySelector('[onclick="addPatient()"]');
+        const addBtn = document.getElementById('addPatientBtn');
         if (addBtn) {
           addBtn.disabled = true;
           addBtn.textContent = 'Adding...';
@@ -1257,7 +1250,7 @@
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify(formData)
+          body: JSON.stringify({ firstName, lastName })
         });
 
         if (!response.ok) {
@@ -1290,7 +1283,7 @@
         isAddingPatient = false;
         
         // Re-enable add button
-        const addBtn = document.querySelector('[onclick="addPatient()"]');
+        const addBtn = document.getElementById('addPatientBtn');
         if (addBtn) {
           addBtn.disabled = false;
           addBtn.textContent = 'Add Patient';
@@ -1554,8 +1547,19 @@
       const f = document.getElementById('statusFilter');
       if (s) s.addEventListener('input', () => applyFilters());
       if (f) f.addEventListener('change', () => applyFilters());
+    });
+
+    // Initialize page
+    document.addEventListener('DOMContentLoaded', () => {
+      bindNavTravelLink();
       loadPatients();
       loadAllBadges();
+      
+      // Add event listener for add patient button
+      const addBtn = document.getElementById('addPatientBtn');
+      if (addBtn) {
+        addBtn.addEventListener('click', addPatient);
+      }
     });
 
     // Auto-refresh badges every 30 seconds
