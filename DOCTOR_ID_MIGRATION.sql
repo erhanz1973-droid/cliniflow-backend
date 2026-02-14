@@ -14,7 +14,7 @@ SELECT
         ELSE 'MISMATCH'
     END as id_status
 FROM doctors d
-LEFT JOIN auth.users au ON d.email = au.email OR d.phone = au.phone::text
+LEFT JOIN auth.users au ON d.email = au.email
 ORDER BY id_status, d.full_name;
 
 -- 2️⃣ Create mapping table for doctors without auth users
@@ -26,22 +26,20 @@ SELECT
     d.phone,
     gen_random_uuid() as new_auth_user_id
 FROM doctors d
-WHERE d.id NOT IN (SELECT id FROM auth.users WHERE users.email = d.email OR users.phone::text = d.phone);
+WHERE d.id NOT IN (SELECT id FROM auth.users WHERE users.email = d.email);
 
 -- 3️⃣ Create auth users for doctors without them
 INSERT INTO auth.users (
     id,
     email,
-    phone,
     created_at,
     updated_at,
-    user_metadata,
+    raw_user_meta_data,
     email_confirmed_at
 )
 SELECT 
     new_auth_user_id,
     COALESCE(email, phone || '@cliniflow.app'),
-    phone,
     NOW(),
     NOW(),
     jsonb_build_object(
@@ -58,7 +56,7 @@ UPDATE doctors
 SET id = (
     SELECT au.id 
     FROM auth.users au 
-    WHERE au.email = doctors.email OR au.phone::text = doctors.phone
+    WHERE au.email = doctors.email
     LIMIT 1
 )
 WHERE id IN (
@@ -72,7 +70,6 @@ SET doctor_id = (
     SELECT au.id 
     FROM auth.users au 
     WHERE au.email = (SELECT email FROM doctors d WHERE d.doctor_id = treatment_group_doctors.doctor_id LIMIT 1)
-    OR au.phone::text = (SELECT phone FROM doctors d WHERE d.doctor_id = treatment_group_doctors.doctor_id LIMIT 1)
     LIMIT 1
 )
 WHERE doctor_id IN (
@@ -86,7 +83,6 @@ SET created_by_doctor_id = (
     SELECT au.id 
     FROM auth.users au 
     WHERE au.email = (SELECT email FROM doctors d WHERE d.doctor_id = patient_encounters.created_by_doctor_id LIMIT 1)
-    OR au.phone::text = (SELECT phone FROM doctors d WHERE d.doctor_id = patient_encounters.created_by_doctor_id LIMIT 1)
     LIMIT 1
 )
 WHERE created_by_doctor_id IN (
