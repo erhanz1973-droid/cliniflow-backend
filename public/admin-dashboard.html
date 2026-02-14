@@ -289,7 +289,8 @@
           return;
         }
 
-        const res = await fetch(`${API}/api/admin/recent-treatments`, {
+        // 🔥 CRITICAL: Use new timeline endpoint
+        const res = await fetch(`${API}/api/admin/timeline`, {
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json"
@@ -300,21 +301,29 @@
           throw new Error(`HTTP ${res.status}`);
         }
 
-        const data = await res.json();
+        const response = await res.json();
+        console.log("Timeline data:", response);
 
+        // 🔥 CRITICAL: Check if response has events array
+        const events = response.events || [];
         const container = document.getElementById("treatmentTimeline");
         container.innerHTML = "";
 
-        data.forEach(t => {
+        if (events.length === 0) {
+          container.innerHTML = '<div class="timeline-item">No timeline events yet</div>';
+          return;
+        }
+
+        events.forEach(event => {
           const item = document.createElement("div");
           item.className = "timeline-item";
 
+          // 🔥 CRITICAL: Use new timeline event structure
           item.innerHTML = `
-            <div class="timeline-date">${new Date(t.createdAt).toLocaleString()}</div>
-            <div class="timeline-title">${t.type || "Treatment"}</div>
+            <div class="timeline-date">${event.relative_time || new Date(event.created_at).toLocaleString()}</div>
+            <div class="timeline-title">${event.icon || '📝'} ${event.title || 'System Event'}</div>
             <div class="timeline-meta">
-              Patient: ${t.patient?.name || "-"} |
-              Doctor: ${t.doctor?.name || "-"}
+              ${event.subtitle || event.message || 'No details'}
             </div>
           `;
 

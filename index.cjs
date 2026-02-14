@@ -2690,13 +2690,32 @@ app.get("/api/clinic", async (req, res) => {
 /* ================= ADMIN CLINIC (GET) ================= */
 app.get("/api/admin/clinic", adminAuth, async (req, res) => {
   try {
+    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+    const clinicId = req.admin?.clinicId;
+
+    // 🔥 CRITICAL: Add undefined guard
+    if (!clinicId) {
+      console.error("[ADMIN CLINIC] Missing clinicId:", { 
+        admin: req.admin,
+        clinicId: clinicId 
+      });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Missing clinicId" 
+      });
+    }
+
+    // 🔥 Debug log
+    console.log("[ADMIN CLINIC] clinicId:", clinicId);
+
     const { data: clinic, error } = await supabase
       .from("clinics")
       .select("*")
-      .eq("id", req.clinicId)
+      .eq("id", clinicId)
       .single();
 
     if (error || !clinic) {
+      console.error("[ADMIN CLINIC] Clinic not found:", { clinicId, error });
       return res.status(404).json({ ok: false, error: "clinic_not_found" });
     }
 
@@ -2704,7 +2723,7 @@ app.get("/api/admin/clinic", adminAuth, async (req, res) => {
     const { count: patientCount, error: countError } = await supabase
       .from("patients")
       .select("*", { count: "exact", head: true })
-      .eq("clinic_id", req.clinicId);
+      .eq("clinic_id", clinicId);
 
     const currentPatientCount = patientCount || 0;
     const plan = clinic.plan || "FREE";
