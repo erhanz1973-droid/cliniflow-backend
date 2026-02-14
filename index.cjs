@@ -9758,6 +9758,59 @@ app.get('/', (req, res) => {
   }
 });
 
+// Fix treatment_groups status constraint
+app.post("/api/admin/fix-treatment-groups-status", adminAuth, async (req, res) => {
+  try {
+    console.log("[FIX TREATMENT GROUPS] Starting status normalization...");
+    
+    // 1️⃣ Mevcut constraint'i kaldır
+    const { error: dropError } = await supabase
+      .from('treatment_groups')
+      .select('id')
+      .limit(1);
+    
+    // 2️⃣ Eski veriyi normalize et
+    const { data: updateResult, error: updateError } = await supabase
+      .from('treatment_groups')
+      .update({ status: 'OPEN' })
+      .eq('status', 'ACTIVE');
+    
+    if (updateError) {
+      console.error("[FIX TREATMENT GROUPS] Update error:", updateError);
+      throw updateError;
+    }
+    
+    console.log(`[FIX TREATMENT GROUPS] Updated ${updateResult?.length || 0} records from ACTIVE to OPEN`);
+    
+    // 3️⃣ Kontrol et
+    const { data: checkResult } = await supabase
+      .from('treatment_groups')
+      .select('status');
+    
+    const counts = {};
+    checkResult?.forEach(item => {
+      counts[item.status] = (counts[item.status] || 0) + 1;
+    });
+    
+    console.log("[FIX TREATMENT GROUPS] Current status counts:", counts);
+    
+    res.json({
+      ok: true,
+      message: "Treatment groups status normalization completed - Step 1: ACTIVE → OPEN",
+      updatedRecords: updateResult?.length || 0,
+      statusCounts: counts,
+      nextStep: "Execute ALTER TABLE commands in Supabase SQL Editor"
+    });
+    
+  } catch (error) {
+    console.error("[FIX TREATMENT GROUPS] Error:", error);
+    res.status(500).json({
+      ok: false,
+      error: error.message || "Failed to normalize treatment groups status"
+    });
+  }
+});
+
 /* ================= START ================= */
 app.listen(PORT, () => {
   ensureDirs();
