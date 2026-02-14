@@ -5018,9 +5018,10 @@ app.post("/api/register/doctor", async (req, res) => {
       licenseNumber,
       department,
       specialties,
+      password // Add password field for auth user creation
     } = req.body || {};
 
-    if (!clinicCode || !phone || !name) {
+    if (!clinicCode || !phone || !name || !password) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
@@ -5053,6 +5054,7 @@ app.post("/api/register/doctor", async (req, res) => {
       });
     }
 
+    // 2️⃣ Clinic-based phone duplicate check
     const { data: existingPhoneDoctor } = await supabase
       .from("doctors")
       .select("id")
@@ -5067,9 +5069,33 @@ app.post("/api/register/doctor", async (req, res) => {
       });
     }
 
-    // 3️⃣ Insert into DOCTORS table
+    // 🔥 CRITICAL: Create auth user first to get the UUID
+    const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+      email: email?.trim() || `${phone}@cliniflow.app`,
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        name: name,
+        role: "DOCTOR",
+        clinic_code: clinic.clinic_code,
+        phone: phone.trim()
+      }
+    });
+
+    if (authError) {
+      console.error("[DOCTOR REGISTER] Auth user creation error:", authError);
+      return res.status(500).json({
+        ok: false,
+        error: "auth_user_creation_failed",
+        details: authError.message
+      });
+    }
+
+    console.log("[DOCTOR REGISTER] Auth user created:", authUser.user.id);
+
+    // 3️⃣ Insert into DOCTORS table using auth.user.id
     const doctorPayload = {
-      id: crypto.randomUUID(),
+      id: authUser.user.id, // 🔥 CRITICAL: Use auth.user.id instead of crypto.randomUUID()
       doctor_id: `d_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       clinic_id: clinic.id,
       clinic_code: clinic.clinic_code,
@@ -5093,6 +5119,8 @@ app.post("/api/register/doctor", async (req, res) => {
 
     if (insertError) {
       console.error("[DOCTOR REGISTER] Insert error:", insertError);
+      // Rollback auth user creation
+      await supabase.auth.admin.deleteUser(authUser.user.id);
       return res.status(500).json({
         ok: false,
         error: "registration_failed",
@@ -5100,10 +5128,13 @@ app.post("/api/register/doctor", async (req, res) => {
       });
     }
 
+    console.log("[DOCTOR REGISTER] Doctor created with auth user ID:", authUser.user.id);
+
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
       doctorId: insertedDoctor.doctor_id,
+      authUserId: authUser.user.id, // 🔥 CRITICAL: Return auth user ID for frontend
       status: insertedDoctor.status
     });
 
@@ -5112,45 +5143,58 @@ app.post("/api/register/doctor", async (req, res) => {
     res.status(500).json({ ok: false, error: "registration_failed" });
   }
 });
-
 /* ================= DOCTOR LOGIN ================= */
 app.post("/api/doctor/login", async (req, res) => {
   try {
-    const { email, phone, clinicCode } = req.body || {};
+    const { email, phone, password, clinicCode } = req.body || {};
 
-    if (!clinicCode || (!email && !phone)) {
+    if (!clinicCode || (!email && !phone) || !password) {
       return res.status(400).json({
         ok: false,
         error: "missing_required_fields"
       });
     }
 
-    let query = supabase
-      .from("doctors")
-      .select("*")
-      .eq("clinic_code", clinicCode.trim())
-      .eq("status", "ACTIVE");
+    // 🔥 CRITICAL: Use Supabase Auth for authentication
+    const authEmail = email || `${phone}@cliniflow.app`;
+    
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: authEmail,
+      password: password
+    });
 
-    if (email) {
-      query = query.eq("email", email.trim());
-    }
-
-    if (phone) {
-      query = query.eq("phone", phone.trim());
-    }
-
-    const { data: doctor, error } = await query.single();
-
-    if (error || !doctor) {
+    if (authError) {
+      console.error("[DOCTOR LOGIN] Auth error:", authError);
       return res.status(401).json({
         ok: false,
-        error: "invalid_credentials"
+        error: "invalid_credentials",
+        details: authError.message
       });
     }
 
+    console.log("[DOCTOR LOGIN] Auth successful:", authData.user.id);
+
+    // 🔥 CRITICAL: Get doctor record using auth.user.id
+    const { data: doctor, error } = await supabase
+      .from("doctors")
+      .select("*")
+      .eq("id", authData.user.id) // Use auth.user.id instead of email/phone
+      .eq("clinic_code", clinicCode.trim())
+      .eq("status", "APPROVED") // Changed from ACTIVE to APPROVED
+      .single();
+
+    if (error || !doctor) {
+      console.error("[DOCTOR LOGIN] Doctor not found:", error);
+      return res.status(401).json({
+        ok: false,
+        error: "doctor_not_found_or_not_approved"
+      });
+    }
+
+    // 🔥 CRITICAL: Use auth.user.id in JWT token
     const token = jwt.sign(
       {
-        doctorId: doctor.id,
+        doctorId: authData.user.id, // Use auth.user.id
         clinicId: doctor.clinic_id,
         clinicCode: doctor.clinic_code,
         role: "DOCTOR"
@@ -5159,19 +5203,35 @@ app.post("/api/doctor/login", async (req, res) => {
       { expiresIn: "30d" }
     );
 
+    console.log("[DOCTOR LOGIN] Doctor logged in:", {
+      doctorId: authData.user.id,
+      doctorName: doctor.full_name,
+      clinicCode: doctor.clinic_code
+    });
+
     res.json({
       ok: true,
       token,
       doctor: {
-        id: doctor.id,
-        full_name: doctor.full_name,
-        clinic_code: doctor.clinic_code
+        id: authData.user.id, // 🔥 CRITICAL: Return auth.user.id
+        doctorId: doctor.doctor_id,
+        name: doctor.full_name,
+        email: doctor.email,
+        phone: doctor.phone,
+        clinicId: doctor.clinic_id,
+        clinicCode: doctor.clinic_code,
+        status: doctor.status,
+        role: doctor.role
       }
     });
 
   } catch (err) {
-    console.error("DOCTOR_LOGIN_ERROR:", err);
-    res.status(500).json({ ok:false, error:"internal_error" });
+    console.error("[DOCTOR LOGIN] Error:", err);
+    res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      details: err.message
+    });
   }
 });
 
