@@ -2029,40 +2029,262 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 /* ================= ADMIN RECENT TREATMENTS ================= */
-app.get("/api/admin/recent-treatments", async (req, res) => {
+app.get("/api/admin/recent-treatments", adminAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+    const clinicId = req.clinicId;
 
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "insufficient_permissions" });
-    }
-
-    // Get recent treatments with patient and doctor info
-    const { data: treatments, error } = await supabase
-      .from("treatments")
+    const { data, error } = await supabase
+      .from("treatments_v2")
       .select(`
-        *,
-        patient:patient_id(name, full_name),
-        doctor:doctor_id(name, full_name)
+        id,
+        type,
+        created_at,
+        patients:patient_id ( full_name ),
+        doctors:doctor_id ( full_name )
       `)
+      .eq("clinic_id", clinicId)
       .order("created_at", { ascending: false })
       .limit(20);
 
     if (error) {
-      console.error("[RECENT TREATMENTS] Error:", error);
-      return res.status(500).json({ ok: false, error: "failed_to_fetch" });
+      console.error("[RECENT TREATMENTS V2] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    res.json(treatments || []);
+    res.json(
+      data.map(t => ({
+        id: t.id,
+        createdAt: t.created_at,
+        type: t.type || "Treatment",
+        patient: { name: t.patients?.full_name || "-" },
+        doctor: { name: t.doctors?.full_name || "-" }
+      }))
+    );
 
   } catch (err) {
-    console.error("[RECENT TREATMENTS] Error:", err);
+    console.error("[RECENT TREATMENTS V2] Fatal:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN CREATE TREATMENT V2 ================= */
+app.post("/api/admin/treatments-v2", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+    const { patient_id, doctor_id, type, notes, items } = req.body;
+
+    if (!patient_id) {
+      return res.status(400).json({ ok: false, error: "patient_required" });
+    }
+
+    const { data: treatment, error: treatmentError } = await supabase
+      .from("treatments_v2")
+      .insert({
+        clinic_id: clinicId,
+        patient_id,
+        doctor_id,
+        type,
+        notes
+      })
+      .select()
+      .single();
+
+    if (treatmentError) {
+      console.error("[CREATE TREATMENT V2] Error:", treatmentError);
+      return res.status(500).json({ ok: false, error: "creation_failed" });
+    }
+
+    if (items && items.length > 0) {
+      const mappedItems = items.map(i => ({
+        treatment_id: treatment.id,
+        tooth_number: i.tooth_number,
+        procedure_code: i.procedure_code,
+        description: i.description,
+        price: i.price
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("treatment_items_v2")
+        .insert(mappedItems);
+
+      if (itemsError) {
+        console.error("[CREATE TREATMENT ITEMS V2] Error:", itemsError);
+      }
+    }
+
+    res.json({ ok: true, treatment_id: treatment.id });
+
+  } catch (err) {
+    console.error("[CREATE TREATMENT V2] Fatal:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN TREATMENTS V2 ================= */
+app.get("/api/admin/treatments-v2/:patientId", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+    const patientId = req.params.patientId;
+
+    const { data, error } = await supabase
+      .from("treatments_v2")
+      .select(`
+        *,
+        patients:patient_id ( full_name ),
+        doctors:doctor_id ( full_name ),
+        treatment_items_v2 (
+          id,
+          tooth_number,
+          procedure_code,
+          description,
+          price
+        )
+      `)
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ADMIN TREATMENTS V2 GET] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({ ok: true, treatments: data });
+
+  } catch (err) {
+    console.error("[ADMIN TREATMENTS V2 GET] Fatal:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/treatments-v2/:patientId", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+    const patientId = req.params.patientId;
+    const { type, notes, items } = req.body;
+
+    const { data: treatment, error: treatmentError } = await supabase
+      .from("treatments_v2")
+      .insert({
+        clinic_id: clinicId,
+        patient_id: patientId,
+        type,
+        notes
+      })
+      .select()
+      .single();
+
+    if (treatmentError) {
+      console.error("[ADMIN TREATMENTS V2 POST] Error:", treatmentError);
+      return res.status(500).json({ ok: false, error: "creation_failed" });
+    }
+
+    if (items && items.length > 0) {
+      const mappedItems = items.map(i => ({
+        treatment_id: treatment.id,
+        tooth_number: i.tooth_number,
+        procedure_code: i.procedure_code,
+        description: i.description,
+        price: i.price
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("treatment_items_v2")
+        .insert(mappedItems);
+
+      if (itemsError) {
+        console.error("[ADMIN TREATMENTS ITEMS V2 POST] Error:", itemsError);
+      }
+    }
+
+    res.json({ ok: true, treatment });
+
+  } catch (err) {
+    console.error("[ADMIN TREATMENTS V2 POST] Fatal:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.put("/api/admin/treatments-v2/:treatmentId", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+    const treatmentId = req.params.treatmentId;
+    const { type, notes, items } = req.body;
+
+    const { data: treatment, error: treatmentError } = await supabase
+      .from("treatments_v2")
+      .update({ type, notes })
+      .eq("id", treatmentId)
+      .eq("clinic_id", clinicId)
+      .select()
+      .single();
+
+    if (treatmentError) {
+      console.error("[ADMIN TREATMENTS V2 PUT] Error:", treatmentError);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+
+    // Update items if provided
+    if (items && items.length > 0) {
+      // Delete existing items
+      await supabase
+        .from("treatment_items_v2")
+        .delete()
+        .eq("treatment_id", treatmentId);
+
+      // Insert new items
+      const mappedItems = items.map(i => ({
+        treatment_id: treatmentId,
+        tooth_number: i.tooth_number,
+        procedure_code: i.procedure_code,
+        description: i.description,
+        price: i.price
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("treatment_items_v2")
+        .insert(mappedItems);
+
+      if (itemsError) {
+        console.error("[ADMIN TREATMENTS ITEMS V2 PUT] Error:", itemsError);
+      }
+    }
+
+    res.json({ ok: true, treatment });
+
+  } catch (err) {
+    console.error("[ADMIN TREATMENTS V2 PUT] Fatal:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.delete("/api/admin/treatments-v2/:treatmentId", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+    const treatmentId = req.params.treatmentId;
+
+    // Delete treatment items first
+    await supabase
+      .from("treatment_items_v2")
+      .delete()
+      .eq("treatment_id", treatmentId);
+
+    // Delete treatment
+    const { error } = await supabase
+      .from("treatments_v2")
+      .delete()
+      .eq("id", treatmentId)
+      .eq("clinic_id", clinicId);
+
+    if (error) {
+      console.error("[ADMIN TREATMENTS V2 DELETE] Error:", error);
+      return res.status(500).json({ ok: false, error: "delete_failed" });
+    }
+
+    res.json({ ok: true, deleted: true });
+
+  } catch (err) {
+    console.error("[ADMIN TREATMENTS V2 DELETE] Fatal:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
