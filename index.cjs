@@ -9556,6 +9556,26 @@ app.get('/', (req, res) => {
   }
 });
 
+// Admin clinic endpoint - mock response
+app.get("/api/admin/clinic", (req, res) => {
+  const token = getAdminToken();
+  if (!token) {
+    return res.status(401).json({ ok: false, error: "missing_token" });
+  }
+  
+  // Mock clinic data
+  res.json({
+    ok: true,
+    clinic: {
+      id: "mock-clinic-id",
+      name: "Clinifly Clinic",
+      code: "CLINIC001",
+      maxPatients: 1000,
+      currentPatients: 0
+    }
+  });
+});
+
 /* ================= START ================= */
 app.listen(PORT, () => {
   ensureDirs();
