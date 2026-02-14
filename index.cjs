@@ -3784,17 +3784,25 @@ app.get("/api/patient/me", async (req, res) => {
 /* ================= DOCTOR AUTH MIDDLEWARE ================= */
 function verifyDoctorToken(req) {
   const authHeader = req.headers.authorization;
+  console.log("[VERIFY DOCTOR] Raw Authorization header:", authHeader);
+
   const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+  console.log("[VERIFY DOCTOR] Extracted token:", token);
 
   if (!token) {
+    console.log("[VERIFY DOCTOR] Missing token");
     return { ok: false, code: "missing_token" };
   }
 
   try {
+    console.log("[VERIFY DOCTOR] Using JWT_SECRET:", JWT_SECRET);
+
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log("[VERIFY DOCTOR] Decoded payload:", decoded);
     
     // Check if user has DOCTOR role
     if (decoded.role !== "DOCTOR") {
+      console.log("[VERIFY DOCTOR] Role mismatch:", decoded.role);
       return { ok: false, code: "insufficient_permissions" };
     }
 
@@ -3809,7 +3817,7 @@ function verifyDoctorToken(req) {
       }
     };
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.log("[VERIFY DOCTOR] JWT verify error:", err.message);
     return { ok: false, code: "invalid_token" };
   }
 }
