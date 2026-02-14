@@ -6567,53 +6567,49 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
 /* ================= ADMIN DOCTORS ================= */
 app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   try {
-    // 1) Get from doctors table (approved doctors)
-    const { data: doctorsFromDoctorsTable, error: doctorsError } = await supabase
+    // 🔥 CRITICAL: Only get from doctors table - proper role separation
+    const { data: doctors, error } = await supabase
       .from("doctors")
-      .select("id, name, full_name, department, status")
+      .select(`
+        id,
+        full_name,
+        email,
+        phone,
+        department,
+        specialties,
+        status,
+        role,
+        created_at,
+        updated_at
+      `)
       .eq("clinic_id", req.admin.clinicId)
-      .eq("status", "APPROVED");
+      .eq("role", "DOCTOR") // 🔥 CRITICAL: Only DOCTOR role
+      .order("created_at", { ascending: false });
 
-    // 2) Get from patients table (active doctors)
-    const { data: doctorsFromPatientsTable, error: patientsError } = await supabase
-      .from("patients")
-      .select("id, name, department, status")
-      .eq("clinic_id", req.admin.clinicId)
-      .eq("role", "DOCTOR")
-      .eq("status", "ACTIVE");
-
-    if (doctorsError || patientsError) {
-      console.error("[ADMIN DOCTORS] Error:", { doctorsError, patientsError });
+    if (error) {
+      console.error("[ADMIN DOCTORS] Error:", error);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_doctors" });
     }
 
-    // 3) Merge results and remove duplicates by ID
-    const allDoctors = [
-      ...(doctorsFromDoctorsTable || []).map(doctor => ({
-        id: doctor.id,
-        name: doctor.full_name || doctor.name,  // ✅ Map full_name to name
-        department: doctor.department,
-        status: doctor.status
-      })),
-      ...(doctorsFromPatientsTable || []).map(doctor => ({
-        id: doctor.id,
-        name: doctor.name,  // ✅ Use name directly
-        department: doctor.department,
-        status: doctor.status
-      }))
-    ];
+    // 🔥 CRITICAL: Return only doctors table data - no patients table mixing
+    const formattedDoctors = (doctors || []).map(doctor => ({
+      id: doctor.id,
+      name: doctor.full_name,
+      email: doctor.email,
+      phone: doctor.phone,
+      department: doctor.department,
+      specialties: doctor.specialties,
+      status: doctor.status,
+      role: doctor.role,
+      created_at: doctor.created_at,
+      updated_at: doctor.updated_at
+    }));
 
-    // Remove duplicates by ID
-    const uniqueDoctors = allDoctors.reduce((acc, doctor) => {
-      if (!acc.find(d => d.id === doctor.id)) {
-        acc.push(doctor);
-      }
-      return acc;
-    }, []);
+    console.log(`[ADMIN DOCTORS] Fetched ${formattedDoctors.length} doctors for clinic ${req.admin.clinicId}`);
 
     res.json({
       ok: true,
-      doctors: uniqueDoctors
+      doctors: formattedDoctors
     });
 
   } catch (err) {

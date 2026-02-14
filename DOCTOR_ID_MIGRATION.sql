@@ -28,7 +28,7 @@ SELECT
 FROM doctors d
 WHERE d.id NOT IN (SELECT id FROM auth.users WHERE users.email = d.email);
 
--- 3️⃣ Create auth users for doctors without them
+-- 3️⃣ Create auth users for doctors without them (skip existing emails)
 INSERT INTO auth.users (
     id,
     email,
@@ -49,20 +49,21 @@ SELECT
     ),
     NOW()
 FROM doctor_auth_mapping
-WHERE email IS NOT NULL OR phone IS NOT NULL;
-
--- 4️⃣ Update doctors table to use auth user IDs
-UPDATE doctors
-SET id = (
-    SELECT au.id 
-    FROM auth.users au 
-    WHERE au.email = doctors.email
-    LIMIT 1
-)
-WHERE id IN (
-    SELECT old_doctor_id 
-    FROM doctor_auth_mapping
+WHERE (email IS NOT NULL OR phone IS NOT NULL)
+AND NOT EXISTS (
+    SELECT 1 FROM auth.users au 
+    WHERE au.email = COALESCE(doctor_auth_mapping.email, doctor_auth_mapping.phone || '@cliniflow.app')
 );
+
+-- 4️⃣ Update doctors table to use auth user IDs (use existing auth users when available)
+UPDATE doctors
+SET id = COALESCE(
+    (SELECT au.id FROM auth.users au WHERE au.email = doctors.email LIMIT 1),
+    (SELECT au.id FROM auth.users au WHERE au.email = doctors.phone || '@cliniflow.app' LIMIT 1),
+    (SELECT new_auth_user_id FROM doctor_auth_mapping WHERE old_doctor_id = doctors.id LIMIT 1)
+)
+WHERE id IN (SELECT old_doctor_id FROM doctor_auth_mapping)
+OR EXISTS (SELECT 1 FROM auth.users au WHERE au.email = doctors.email);
 
 -- 5️⃣ Update foreign key references in related tables
 UPDATE treatment_group_doctors
