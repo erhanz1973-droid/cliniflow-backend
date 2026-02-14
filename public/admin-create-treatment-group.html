@@ -370,6 +370,8 @@
       }
     }
 
+    let isSubmitting = false;
+
     // Initialize when DOM is ready
     document.addEventListener("DOMContentLoaded", initializePage);
 
@@ -377,6 +379,13 @@
     async function handleSubmit(e) {
       e.preventDefault();
       
+      // Prevent double submission
+      if (isSubmitting) {
+        console.log("SUBMIT ALREADY IN PROGRESS - IGNORING");
+        return;
+      }
+      
+      isSubmitting = true;
       console.log("FORM SUBMIT STARTED");
       
       try {
@@ -426,6 +435,12 @@
           return;
         }
         
+        // Disable submit button and change text
+        const submitBtn = document.getElementById("submit-btn");
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Oluşturuluyor...";
+        
         console.log("SENDING REQUEST...");
         
         // Send request
@@ -452,6 +467,18 @@
       } catch (error) {
         console.error("SUBMIT ERROR:", error);
         alert("Hata: " + error.message);
+      } finally {
+        // Always reset submission state
+        isSubmitting = false;
+        
+        // Re-enable submit button and restore text
+        const submitBtn = document.getElementById("submit-btn");
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Tedavi Grubu Oluştur";
+        }
+        
+        console.log("SUBMIT COMPLETED - STATE RESET");
       }
     }
   </script>
