@@ -6131,58 +6131,6 @@ const { clinicId } = req.admin;
   }
 });
 
-/* ================= DOCTOR PATIENTS (TREATMENT GROUP) ================= */
-app.get("/api/doctor/patients", async (req, res) => {
-  try {
-    const v = verifyDoctorToken(req);
-    if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
-    }
-
-    const { clinicId } = v.decoded;
-
-    // Get patients through treatment group members (not directly from patients table)
-    const { data: groupMembers, error: memberError } = await supabase
-      .from("treatment_group_members")
-      .select(`
-        treatment_group_id,
-        treatment_groups!inner(
-          id,
-          patient_id,
-          patients!inner(
-            patient_id,
-            name,
-            status
-          )
-        )
-      `)
-      .eq("doctor_id", v.decoded.doctorId)
-      .eq("treatment_groups.clinic_id", clinicId)
-      .eq("status", "ACTIVE");
-
-    if (memberError) {
-      console.error("[DOCTOR PATIENTS] Error:", memberError);
-      return res.status(500).json({ ok: false, error: "internal_error" });
-    }
-
-    const patients = groupMembers.map(member => ({
-      patient_id: member.treatment_groups.patients.patient_id,
-      treatment_group_id: member.treatment_group_id,
-      name: member.treatment_groups.patients.name,
-      status: member.treatment_groups.patients.status
-    }));
-
-    res.json({
-      ok: true,
-      patients
-    });
-
-  } catch (error) {
-    console.error("[DOCTOR PATIENTS] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
 /* ================= DOCTOR ENCOUNTERS ================= */
 app.post("/api/doctor/encounters", async (req, res) => {
   try {
@@ -9553,70 +9501,6 @@ app.get('/', (req, res) => {
         </body>
       </html>
     `);
-  }
-});
-
-// Admin clinic endpoint - real database query
-app.get("/api/admin/clinic", async (req, res) => {
-  const token = getAdminToken();
-  if (!token) {
-    return res.status(401).json({ ok: false, error: "missing_token" });
-  }
-
-  try {
-    // Decode token to get admin info
-    const decoded = jwt.decode(token);
-    if (!decoded) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
-    }
-
-    // Log admin clinicId for debugging
-    console.log("ADMIN CLINIC ID:", decoded.clinicId);
-
-    // Query clinics table with proper filter
-    const { data: clinicData, error: clinicError } = await supabase
-      .from("clinics")
-      .select("*")
-      .eq("id", decoded.clinicId)
-      .single();
-
-    // Log data before 404
-    console.log("CLINIC QUERY RESULT:", {
-      clinicData,
-      clinicError,
-      clinicId: decoded.clinicId
-    });
-
-    if (clinicError) {
-      console.error("Clinic query error:", clinicError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "database_error", 
-        details: clinicError.message 
-      });
-    }
-
-    if (!clinicData) {
-      console.log("Clinic not found for ID:", decoded.clinicId);
-      return res.status(404).json({ 
-        ok: false, 
-        error: "clinic_not_found",
-        clinicId: decoded.clinicId 
-      });
-    }
-
-    res.json({
-      ok: true,
-      clinic: clinicData
-    });
-
-  } catch (error) {
-    console.error("Admin clinic endpoint error:", error);
-    res.status(500).json({ 
-      ok: false, 
-      error: "server_error", 
-      details: error.message 
-    });
   }
 });
 
