@@ -960,10 +960,25 @@
     }
 
     async function approvePatient(patientId) {
+      // Prevent double submission
+      if (isAddingPatient) {
+        console.log('APPROVE PATIENT - ADD PATIENT IN PROGRESS, IGNORING');
+        return;
+      }
+
+      if (isApprovingPatient) {
+        console.log('APPROVE PATIENT ALREADY IN PROGRESS - IGNORING');
+        return;
+      }
+
+      isApprovingPatient = true;
+      console.log('APPROVE PATIENT STARTED');
+
       const token = getAdminToken();
       if (!token) {
         const message = window.i18n ? window.i18n.t('patients.errors.noToken') : '❌ Admin token bulunamadı';
         showError(message);
+        isApprovingPatient = false;
         return;
       }
 
@@ -971,15 +986,24 @@
       const limitCheck = await checkPatientLimit();
       if (!limitCheck.canApprove) {
         showPatientLimitModal(limitCheck);
+        isApprovingPatient = false;
         return;
       }
 
       const confirmMessage = window.i18n ? window.i18n.t('patients.approveConfirm', { patientId }) : `Hastayı onaylamak istediğinize emin misiniz? (${patientId})`;
       if (!confirm(confirmMessage)) {
+        isApprovingPatient = false;
         return;
       }
 
       try {
+        // Disable approve button
+        const approveBtn = document.querySelector(`[onclick="approvePatient('${patientId}')"]`);
+        if (approveBtn) {
+          approveBtn.disabled = true;
+          approveBtn.textContent = 'Approving...';
+        }
+
         const res = await adminFetch(`${API_BASE}/api/admin/approve`, {
           method: 'POST',
           body: JSON.stringify({ patientId })
@@ -997,6 +1021,18 @@
         console.error('Approve error:', error);
         const errorMessage = window.i18n ? window.i18n.t('patients.errors.approveFailed') : '❌ Onaylama başarısız';
         showError(errorMessage);
+      } finally {
+        // Always reset submission state
+        isApprovingPatient = false;
+        
+        // Re-enable approve button
+        const approveBtn = document.querySelector(`[onclick="approvePatient('${patientId}')"]`);
+        if (approveBtn) {
+          approveBtn.disabled = false;
+          approveBtn.textContent = 'Approve';
+        }
+        
+        console.log('APPROVE PATIENT COMPLETED - STATE RESET');
       }
     }
 
@@ -1167,7 +1203,18 @@
       document.getElementById('addPatientModal').style.display = 'none';
     }
 
+    let isAddingPatient = false;
+
     async function addPatient() {
+      // Prevent double submission
+      if (isAddingPatient) {
+        console.log('ADD PATIENT ALREADY IN PROGRESS - IGNORING');
+        return;
+      }
+
+      isAddingPatient = true;
+      console.log('ADD PATIENT STARTED');
+
       try {
         const formData = {
           firstName: document.getElementById('patientFirstName').value.trim(),
@@ -1181,13 +1228,22 @@
 
         if (!formData.firstName || !formData.lastName) {
           alert('First name and last name are required');
+          isAddingPatient = false;
           return;
         }
 
         const token = getAdminToken();
         if (!token) {
           alert('Authentication required');
+          isAddingPatient = false;
           return;
+        }
+
+        // Disable add button
+        const addBtn = document.querySelector('[onclick="addPatient()"]');
+        if (addBtn) {
+          addBtn.disabled = true;
+          addBtn.textContent = 'Adding...';
         }
 
         const response = await fetch(`${API_BASE}/api/admin/patients`, {
@@ -1217,13 +1273,25 @@
           window.i18n.t('patients.addSuccess') : 
           'Patient added successfully!';
         alert(successMsg);
-
+        
       } catch (error) {
         console.error('[PATIENTS] Add error:', error);
         const errorMsg = window.i18n ? 
           window.i18n.t('patients.addError') : 
           'Failed to add patient: ' + error.message;
         alert(errorMsg);
+      } finally {
+        // Always reset submission state
+        isAddingPatient = false;
+        
+        // Re-enable add button
+        const addBtn = document.querySelector('[onclick="addPatient()"]');
+        if (addBtn) {
+          addBtn.disabled = false;
+          addBtn.textContent = 'Add Patient';
+        }
+        
+        console.log('ADD PATIENT COMPLETED - STATE RESET');
       }
     }
 
@@ -1265,6 +1333,8 @@
     let previousUnreadCount = 0;
     let previousPendingPatients = 0;
     let previousPendingReferrals = 0;
+    let isAddingPatient = false;
+    let isApprovingPatient = false;
 
     function playNotificationSound() {
       try {
