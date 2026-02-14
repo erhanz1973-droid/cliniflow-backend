@@ -1155,9 +1155,6 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
 
 /* ================= TRAVEL (GET) ================= */
 app.get("/api/patient/:patientId/travel", async (req, res) => {
-  // Safe patientId resolution
-  const requestedPatientId = String(req.params.patientId || "").trim();
-  
   // Get token for patientId extraction
   const authHeader = req.headers.authorization;
   const tokenHeader = req.headers["x-patient-token"];
@@ -1171,7 +1168,7 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
     return res.status(401).json({ ok: false, error: "missing_token" });
   }
 
-  // Decode token to get patientId
+  // Decode token to get patientId and role
   let decoded;
   try {
     decoded = jwt.decode(authToken);
@@ -1183,59 +1180,88 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
     return res.status(401).json({ ok: false, error: "token_decode_failed" });
   }
 
-  // Safe patientId resolution logic
+  // Role-based patientId extraction
   let patientId;
   
   if (decoded.role === "PATIENT") {
-    // Patients can only access their own data
+    // PATIENT role: Extract patientId from JWT only
     patientId = decoded.patientId;
-  } else {
-    // Admin/Doctor can use requested patientId or fallback to token
-    if (
-      requestedPatientId &&
-      requestedPatientId !== "undefined" &&
-      requestedPatientId !== "null" &&
-      requestedPatientId !== ""
-    ) {
-      patientId = requestedPatientId;
-    } else {
-      patientId = decoded.patientId;
+    
+    // Validate patientId exists in token
+    if (!patientId) {
+      console.error("Travel GET - PATIENT token missing patientId:", decoded);
+      return res.status(400).json({ 
+        ok: false, 
+        error: "patient_id_required",
+        details: "PATIENT token must contain patientId"
+      });
     }
-  }
-
-  // Logging guard
-  if (!patientId) {
-    console.error("Travel GET - Invalid patientId after resolution:", {
-      requestedPatientId,
-      tokenPatientId: decoded.patientId,
+    
+    console.log("Travel GET - PATIENT access:", { 
+      patientId,
       role: decoded.role,
       actor
+    });
+    
+  } else if (decoded.role === "ADMIN" || decoded.role === "DOCTOR") {
+    // ADMIN/DOCTOR role: Use query parameter with validation
+    const requestedPatientId = String(req.params.patientId || "").trim();
+    
+    // Validate requested patientId for admin/doctor
+    if (
+      !requestedPatientId ||
+      requestedPatientId === "undefined" ||
+      requestedPatientId === "null" ||
+      requestedPatientId === ""
+    ) {
+      console.error("Travel GET - ADMIN/DOCTOR missing or invalid patientId:", {
+        requestedPatientId,
+        role: decoded.role,
+        actor
+      });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "patient_id_required",
+        details: "ADMIN/DOCTOR must provide valid patientId parameter"
+      });
+    }
+    
+    patientId = requestedPatientId;
+    
+    console.log("Travel GET - ADMIN/DOCTOR access:", { 
+      patientId,
+      requestedPatientId,
+      role: decoded.role,
+      actor,
+      clinicId: decoded.clinicId
+    });
+    
+  } else {
+    // Unknown role
+    console.error("Travel GET - Unknown role:", decoded.role);
+    return res.status(403).json({ 
+      ok: false, 
+      error: "invalid_role",
+      details: "Role must be PATIENT, ADMIN, or DOCTOR"
+    });
+  }
+
+  // Final validation
+  if (!patientId) {
+    console.error("Travel GET - Invalid patientId after role resolution:", {
+      role: decoded.role,
+      actor,
+      tokenPatientId: decoded.patientId,
+      requestedPatientId: req.params.patientId
     });
     return res.status(400).json({ ok: false, error: "invalid_patient_id" });
   }
 
   try {
-    console.log("Travel GET - Request:", { 
-      patientId, 
-      requestedPatientId,
-      tokenPatientId: decoded.patientId,
-      role: decoded.role,
-      actor,
-      headers: req.headers 
-    });
-
+    // Verify token
     try {
       decoded = jwt.verify(authToken, JWT_SECRET);
-      console.log("Travel GET - Decoded token:", { 
-        hasPatientId: !!decoded.patientId, 
-        hasClinicId: !!decoded.clinicId, 
-        hasClinicCode: !!decoded.clinicCode,
-        clinicId: decoded.clinicId,
-        clinicCode: decoded.clinicCode,
-        patientId: decoded.patientId
-      });
     } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
       console.error("Travel GET - Token verification failed:", err.message);
       return res.status(401).json({ ok: false, error: "invalid_token", details: err.message });
     }
