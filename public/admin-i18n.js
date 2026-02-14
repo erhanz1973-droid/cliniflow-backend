@@ -216,14 +216,44 @@
         submitLoading: "Giriş yapılıyor...",
         registerLink: "Yeni Klinik Kaydı",
         dashboardLink: "Dashboard'a Git",
+        doctorLogin: "Doctor Login",
+        adminLogin: "Admin Login",
+        email: "Email",
+        emailRequired: "*",
+        emailPlaceholder: "admin@clinifly.com",
+        emailHelp: "Admin email adresinizi giriniz",
+        loggingIn: "Giriş yapılıyor",
         errors: {
           clinicCodeRequired: "Lütfen klinik kodunu giriniz.",
           passwordRequired: "Lütfen şifrenizi giriniz.",
+          emailRequired: "Lütfen email adresinizi giriniz.",
+          allFieldsRequired: "Lütfen tüm alanları doldurun.",
           invalidCredentials: "Klinik kodu veya şifre hatalı. Lütfen tekrar deneyin.",
           loginFailed: "Giriş başarısız. Lütfen tekrar deneyin.",
-          genericError: "Giriş hatası: {error}"
+          genericError: "Giriş hatası: {error}",
+          networkError: "Ağ hatası. Lütfen tekrar deneyin.",
+          doctorNotFound: "Doctor bulunamadı.",
+          clinicNotFound: "Klinik bulunamadı."
         },
-        success: "Hoş geldiniz {name}! Giriş başarılı."
+        success: "Hoş geldiniz {name}! Giriş başarılı.",
+        otpTitle: "OTP Verification",
+        otpSubtitle: "Enter the verification code sent to your email",
+        otpCode: "Verification Code",
+        otpCodeRequired: "*",
+        otpCodePlaceholder: "123456",
+        otpHelp: "Enter the 6-digit code sent to your email",
+        otpEmailHelp: "Enter the email address where you received the OTP",
+        otpRequired: "Lütfen OTP kodunu giriniz.",
+        verifying: "Doğrulanıyor",
+        verifyOTP: "Verify OTP",
+        backToLogin: "Back to Login",
+        errors: {
+          otpRequired: "Lütfen OTP kodunu giriniz.",
+          otpFailed: "OTP doğrulaması başarısız.",
+          invalidOTP: "Geçersiz OTP kodu.",
+          otpNotFound: "OTP bulunamadı.",
+          networkError: "Ağ hatası. Lütfen tekrar deneyin."
+        }
       },
       
       // Register (admin-register.html)
@@ -651,14 +681,44 @@
         submitLoading: "Logging in...",
         registerLink: "Register New Clinic",
         dashboardLink: "Go to Dashboard",
+        doctorLogin: "Doctor Login",
+        adminLogin: "Admin Login",
+        email: "Email",
+        emailRequired: "*",
+        emailPlaceholder: "admin@clinifly.com",
+        emailHelp: "Enter your admin email address",
+        loggingIn: "Logging in",
         errors: {
           clinicCodeRequired: "Please enter clinic code.",
           passwordRequired: "Please enter password.",
+          emailRequired: "Please enter email address.",
+          allFieldsRequired: "Please fill in all fields.",
           invalidCredentials: "Invalid clinic code or password. Please try again.",
           loginFailed: "Login failed. Please try again.",
-          genericError: "Login error: {error}"
+          genericError: "Login error: {error}",
+          networkError: "Network error. Please try again.",
+          doctorNotFound: "Doctor not found.",
+          clinicNotFound: "Clinic not found."
         },
-        success: "Welcome {name}! Login successful."
+        success: "Welcome {name}! Login successful.",
+        otpTitle: "OTP Verification",
+        otpSubtitle: "Enter the verification code sent to your email",
+        otpCode: "Verification Code",
+        otpCodeRequired: "*",
+        otpCodePlaceholder: "123456",
+        otpHelp: "Enter the 6-digit code sent to your email",
+        otpEmailHelp: "Enter the email address where you received the OTP",
+        otpRequired: "Please enter OTP code.",
+        verifying: "Verifying",
+        verifyOTP: "Verify OTP",
+        backToLogin: "Back to Login",
+        errors: {
+          otpRequired: "Please enter OTP code.",
+          otpFailed: "OTP verification failed.",
+          invalidOTP: "Invalid OTP code.",
+          otpNotFound: "OTP not found.",
+          networkError: "Network error. Please try again."
+        }
       },
       
       // Register (admin-register.html)
