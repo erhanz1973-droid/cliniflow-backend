@@ -7,7 +7,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -166,7 +166,7 @@
     // Load patients
     async function loadPatients() {
       try {
-        const token = localStorage.getItem('admin_token');
+        const token = localStorage.getItem('adminToken');
         const response = await fetch('/api/admin/patients', {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -199,7 +199,7 @@
     // Load doctors
     async function loadDoctors() {
       try {
-        const token = localStorage.getItem('admin_token');
+        const token = localStorage.getItem('adminToken');
         const response = await fetch('/api/admin/doctor-applications', {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -308,7 +308,7 @@
       document.getElementById('message').innerHTML = '';
 
       try {
-        const token = localStorage.getItem('admin_token');
+        const token = localStorage.getItem('adminToken');
         const response = await fetch('/api/admin/assign-patient', {
           method: 'POST',
           headers: {

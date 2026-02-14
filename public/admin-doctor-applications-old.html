@@ -14,7 +14,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -206,7 +206,7 @@
     let filteredDoctors = [];
 
     async function loadApplications() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       const loadingContainer = document.getElementById("loading-container");
       const errorContainer = document.getElementById("error-container");
       const doctorsContainer = document.getElementById("doctors-container");
@@ -365,7 +365,7 @@
     }
 
     function logout() {
-      localStorage.removeItem("admin_token");
+      localStorage.removeItem("adminToken");
       window.location.href = "/admin-login.html";
     }
 
