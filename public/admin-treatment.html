@@ -7,7 +7,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -538,11 +538,11 @@
   let EXTRACTION_TYPES = new Set(["EXTRACTION", "SURGICAL_EXTRACTION"]);
 
   function getAdminToken(){
-    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+    try { return localStorage.getItem("adminToken") || ""; } catch { return ""; }
   }
   function logout() {
     try {
-      localStorage.removeItem("admin_token");
+      localStorage.removeItem("adminToken");
       console.log("[LOGOUT] Admin token cleared");
     } catch (e) {
       console.error("[LOGOUT] Error clearing token:", e);
@@ -580,6 +580,11 @@
       });
       
       if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const errorText = await res.text().catch(() => `HTTP ${res.status}`);
         console.error("[loadTreatmentPrices] HTTP error:", errorText);
         return;
@@ -721,6 +726,11 @@
       console.log('[loadPatientOptions] Response status:', res.status);
       
       if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const errorText = await res.text().catch(() => `HTTP ${res.status}`);
         console.error('[loadPatientOptions] HTTP error:', errorText);
         elPatientSelect.innerHTML = `<option value="">⚠️ Hasta listesi yüklenemedi: ${res.status}</option>`;
@@ -1693,6 +1703,11 @@
       const j = await r.json().catch(()=>null);
 
       if (!r.ok){
+        if (r.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const err = j?.error || `${r.status}`;
         setMsg(`Yüklenemedi: ${err}`, "err");
         elLoading.style.display = 'none';
