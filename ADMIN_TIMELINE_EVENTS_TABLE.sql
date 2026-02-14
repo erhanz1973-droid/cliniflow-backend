@@ -34,8 +34,8 @@ ALTER TABLE admin_timeline_events DISABLE ROW LEVEL SECURITY;
 CREATE OR REPLACE FUNCTION add_timeline_event(
     p_clinic_id UUID,
     p_type VARCHAR(50),
-    p_reference_id UUID DEFAULT NULL,
     p_message TEXT,
+    p_reference_id UUID DEFAULT NULL,
     p_details JSONB DEFAULT NULL,
     p_created_by UUID DEFAULT NULL
 )
