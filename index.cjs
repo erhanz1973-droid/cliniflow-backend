@@ -6282,6 +6282,70 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN TREATMENT GROUPS LIST ================= */
+app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
+  try {
+    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+    const clinicId = req.admin?.clinicId;
+
+    // 🔥 CRITICAL: Add undefined guard
+    if (!clinicId) {
+      console.error("[TREATMENT GROUPS LIST] Missing clinicId:", { 
+        admin: req.admin,
+        clinicId: clinicId 
+      });
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Missing clinicId" 
+      });
+    }
+
+    // 🔥 Debug log
+    console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId);
+
+    const { data, error } = await supabase
+      .from("treatment_groups")
+      .select(`
+        id,
+        group_name,
+        description,
+        status,
+        created_at,
+        patient_id,
+        patients!inner (
+          id,
+          name,
+          phone
+        )
+      `)
+      .eq("clinic_id", clinicId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[TREATMENT GROUPS LIST] Error:", error);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_treatment_groups",
+        details: error.message 
+      });
+    }
+
+    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for clinic ${clinicId}`);
+
+    res.json({
+      ok: true,
+      treatment_groups: data || []
+    });
+
+  } catch (err) {
+    console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error" 
+    });
+  }
+});
+
 /* ================= ADMIN ASSIGN PATIENT (TREATMENT GROUP) ================= */
 app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (req, res) => {
   try {
