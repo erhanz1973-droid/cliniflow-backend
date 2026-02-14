@@ -1155,34 +1155,75 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
 
 /* ================= TRAVEL (GET) ================= */
 app.get("/api/patient/:patientId/travel", async (req, res) => {
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+  // Safe patientId resolution
+  const requestedPatientId = String(req.params.patientId || "").trim();
+  
+  // Get token for patientId extraction
+  const authHeader = req.headers.authorization;
+  const tokenHeader = req.headers["x-patient-token"];
+  const actorHeader = req.headers["x-actor"];
+  const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+  const authToken = authHeader?.startsWith("Bearer ") 
+    ? authHeader.substring(7) 
+    : tokenHeader;
+
+  if (!authToken) {
+    return res.status(401).json({ ok: false, error: "missing_token" });
+  }
+
+  // Decode token to get patientId
+  let decoded;
+  try {
+    decoded = jwt.decode(authToken);
+    if (!decoded) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+  } catch (error) {
+    console.error("Travel GET - Token decode error:", error);
+    return res.status(401).json({ ok: false, error: "token_decode_failed" });
+  }
+
+  // Safe patientId resolution logic
+  let patientId;
+  
+  if (decoded.role === "PATIENT") {
+    // Patients can only access their own data
+    patientId = decoded.patientId;
+  } else {
+    // Admin/Doctor can use requested patientId or fallback to token
+    if (
+      requestedPatientId &&
+      requestedPatientId !== "undefined" &&
+      requestedPatientId !== "null" &&
+      requestedPatientId !== ""
+    ) {
+      patientId = requestedPatientId;
+    } else {
+      patientId = decoded.patientId;
+    }
+  }
+
+  // Logging guard
+  if (!patientId) {
+    console.error("Travel GET - Invalid patientId after resolution:", {
+      requestedPatientId,
+      tokenPatientId: decoded.patientId,
+      role: decoded.role,
+      actor
+    });
+    return res.status(400).json({ ok: false, error: "invalid_patient_id" });
+  }
 
   try {
-    console.log("Travel GET - Request:", { patientId, headers: req.headers });
-    
-    // Check if admin or patient token
-    const authHeader = req.headers.authorization;
-    const tokenHeader = req.headers["x-patient-token"];
-    const actorHeader = req.headers["x-actor"];
-    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
-    const authToken = authHeader?.startsWith("Bearer ") 
-      ? authHeader.substring(7) 
-      : tokenHeader;
-
-    console.log("Travel GET - Auth check:", { 
-      hasAuthHeader: !!authHeader, 
-      hasTokenHeader: !!tokenHeader, 
-      actorHeader,
+    console.log("Travel GET - Request:", { 
+      patientId, 
+      requestedPatientId,
+      tokenPatientId: decoded.patientId,
+      role: decoded.role,
       actor,
-      hasAuthToken: !!authToken 
+      headers: req.headers 
     });
 
-    if (!authToken) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
-    }
-
-    let decoded;
     try {
       decoded = jwt.verify(authToken, JWT_SECRET);
       console.log("Travel GET - Decoded token:", { 
@@ -1195,8 +1236,8 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
       });
     } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-      console.error("Travel GET - Token verification failed:", error.message);
-      return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
+      console.error("Travel GET - Token verification failed:", err.message);
+      return res.status(401).json({ ok: false, error: "invalid_token", details: err.message });
     }
 
     // Admin token check: if actor header is "admin" OR token has clinicCode/clinicId but NO patientId
@@ -6777,38 +6818,88 @@ app.post("/api/events", async (req, res) => {
 /* ================= PATIENT MESSAGES (GET) ================= */
 // Hasta mesajlarını getir - APPROVED kontrolü ile
 app.get("/api/patient/:patientId/messages", async (req, res) => {
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+  // Safe patientId resolution
+  const requestedPatientId = String(req.params.patientId || "").trim();
+  
+  // Check if admin or patient token
+  const authHeader = req.headers.authorization;
+  const tokenHeader = req.headers["x-patient-token"];
+  const actorHeader = req.headers["x-actor"];
+  const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
+  const authToken = authHeader?.startsWith("Bearer ") 
+    ? authHeader.substring(7) 
+    : tokenHeader;
+
+  if (!authToken) {
+    return res.status(401).json({ ok: false, error: "missing_token" });
+  }
+
+  // Decode token to get patientId
+  let decoded;
+  try {
+    decoded = jwt.decode(authToken);
+    if (!decoded) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+  } catch (error) {
+    console.error("Messages GET - Token decode error:", error);
+    return res.status(401).json({ ok: false, error: "token_decode_failed" });
+  }
+
+  // Safe patientId resolution logic
+  let patientId;
+  
+  if (decoded.role === "PATIENT") {
+    // Patients can only access their own data
+    patientId = decoded.patientId;
+  } else {
+    // Admin/Doctor can use requested patientId or fallback to token
+    if (
+      requestedPatientId &&
+      requestedPatientId !== "undefined" &&
+      requestedPatientId !== "null" &&
+      requestedPatientId !== ""
+    ) {
+      patientId = requestedPatientId;
+    } else {
+      patientId = decoded.patientId;
+    }
+  }
+
+  // Logging guard
+  if (!patientId) {
+    console.error("Messages GET - Invalid patientId after resolution:", {
+      requestedPatientId,
+      tokenPatientId: decoded.patientId,
+      role: decoded.role,
+      actor
+    });
+    return res.status(400).json({ ok: false, error: "invalid_patient_id" });
+  }
 
   try {
-    // Check if admin or patient token
-    const authHeader = req.headers.authorization;
-    const tokenHeader = req.headers["x-patient-token"];
-    const actorHeader = req.headers["x-actor"];
-    const actor = actorHeader ? String(actorHeader).toLowerCase().trim() : "patient";
-    const authToken = authHeader?.startsWith("Bearer ") 
-      ? authHeader.substring(7) 
-      : tokenHeader;
+    console.log("Messages GET - Request:", { 
+      patientId, 
+      requestedPatientId,
+      tokenPatientId: decoded.patientId,
+      role: decoded.role,
+      actor,
+      headers: req.headers 
+    });
 
-    let decoded;
     let isAdmin = false;
     let clinicId;
 
-    if (authToken) {
-      try {
-        decoded = jwt.verify(authToken, JWT_SECRET);
-        const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId || "").trim() !== "";
-        const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
-        const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
-        isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
-        clinicId = decoded.clinicId;
-      } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-        console.log("Messages GET - Token verification failed:", error.message);
-        // Token invalid, continue without auth (might be public endpoint)
-      }
-    } else {
-      console.log("Messages GET - No auth token provided");
+    try {
+      decoded = jwt.verify(authToken, JWT_SECRET);
+      const hasPatientId = decoded.patientId !== null && decoded.patientId !== undefined && String(decoded.patientId || "").trim() !== "";
+      const hasClinicCode = decoded.clinicCode !== null && decoded.clinicCode !== undefined;
+      const hasClinicId = decoded.clinicId !== null && decoded.clinicId !== undefined;
+      isAdmin = actor === "admin" || (hasClinicCode && hasClinicId && !hasPatientId);
+      clinicId = decoded.clinicId;
+    } catch (err) {
+      console.error("Messages GET - Token verification failed:", err.message);
+      // Token invalid, continue without auth (might be public endpoint)
     }
 
     // 1. Önce patient_id (TEXT) ile patient'ı bul, UUID'sini al
