@@ -414,8 +414,8 @@ app.get("/admin-travel.html", (req, res) => {
     res.sendFile(absolutePath);
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-travel.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    console.error("[ROUTE] Error serving admin-travel.html:", err);
+    res.status(500).send(`Error: ${err.message}`);
   }
 });
 
@@ -436,8 +436,8 @@ app.get("/admin-patients.html", (req, res) => {
     res.sendFile(path.resolve(filePath));
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-patients.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    console.error("[ROUTE] Error serving admin-patients.html:", err);
+    res.status(500).send(`Error: ${err.message}`);
   }
 });
 
@@ -508,8 +508,8 @@ app.get("/admin-register.html", (req, res) => {
     res.sendFile(path.resolve(filePath));
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-register.html:", error);
-    res.status(500).send(`Error: ${error.message}`);
+    console.error("[ROUTE] Error serving admin-register.html:", err);
+    res.status(500).send(`Error: ${err.message}`);
   }
 });
 
@@ -696,8 +696,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
     res.json(result);
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Treatments GET error:", error);
-    res.status(500).json({ ok: false, error: "treatments_fetch_failed", details: error.message });
+    console.error("Treatments GET error:", err);
+    res.status(500).json({ ok: false, error: "treatments_fetch_failed", details: err.message });
   }
 });
 
@@ -975,8 +975,8 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     res.json({ ok: true, saved: true, treatments: updatedData });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Treatments POST - Exception:", error);
-    res.status(500).json({ ok: false, error: "treatments_save_exception", details: error.message });
+    console.error("Treatments POST - Exception:", err);
+    res.status(500).json({ ok: false, error: "treatments_save_exception", details: err.message });
   }
 });
 
@@ -1148,8 +1148,8 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     res.json({ ok: true, deleted: true, treatments: updatedData });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Treatments DELETE - Exception:", error);
-    res.status(500).json({ ok: false, error: "treatments_delete_exception", details: error.message });
+    console.error("Treatments DELETE - Exception:", err);
+    res.status(500).json({ ok: false, error: "treatments_delete_exception", details: err.message });
   }
 });
 
@@ -1501,8 +1501,8 @@ app.get("/api/patient/:patientId/travel", async (req, res) => {
     res.json(result);
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Travel GET error:", error);
-    res.status(500).json({ ok: false, error: "travel_fetch_failed", details: error.message });
+    console.error("Travel GET error:", err);
+    res.status(500).json({ ok: false, error: "travel_fetch_failed", details: err.message });
   }
 });
 
@@ -1540,8 +1540,8 @@ async function saveTravel(req, res) {
       console.log("[TRAVEL SAVE] Admin token verified:", { clinicId: adminClinicId, clinicCode: adminClinicCode });
     } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-      console.error("[TRAVEL SAVE] Admin token verification failed:", error.message);
-      return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
+      console.error("[TRAVEL SAVE] Admin token verification failed:", err.message);
+      return res.status(401).json({ ok: false, error: "invalid_token", details: err.message });
     }
   }
 
@@ -1563,7 +1563,7 @@ async function saveTravel(req, res) {
       try {
         decoded = jwt.verify(token, JWT_SECRET);
       } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
+        console.error("REGISTER_DOCTOR_ERROR:", err);
         return res.status(401).json({ ok: false, error: "invalid_token" });
       }
 
@@ -1758,8 +1758,8 @@ async function saveTravel(req, res) {
     res.json({ ok: true, saved: true, travel: finalTravelData });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("Travel SAVE - Exception:", error);
-    res.status(500).json({ ok: false, error: "travel_save_exception", details: error.message });
+    console.error("Travel SAVE - Exception:", err);
+    res.status(500).json({ ok: false, error: "travel_save_exception", details: err.message });
   }
 }
 
@@ -1809,8 +1809,8 @@ function userAuth(req, res, next) {
     next();
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[AUTH] Token verification failed:", error.message);
-    return res.status(401).json({ ok: false, error: "invalid_token", details: error.message });
+    console.error("[AUTH] Token verification failed:", err.message);
+    return res.status(401).json({ ok: false, error: "invalid_token", details: err.message });
   }
 }
 
@@ -1838,8 +1838,8 @@ async function checkPatientApproved(patientId, clinicId) {
     return { approved: true, patient };
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[CHECK STATUS] Error checking patient status:", error);
-    return { approved: false, error: "status_check_failed", details: error.message };
+    console.error("[CHECK STATUS] Error checking patient status:", err);
+    return { approved: false, error: "status_check_failed", details: err.message };
   }
 }
 
@@ -3990,7 +3990,7 @@ app.get("/api/doctor/patients", async (req, res) => {
 
     const formattedPatients = patients.map(patient => ({
       id: patient.id,
-      patientId: patient.name,
+      patientId: patient.id,
       name: patient.name,
       phone: patient.phone,
       email: patient.email,
