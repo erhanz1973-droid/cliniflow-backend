@@ -257,7 +257,7 @@
   <script>
     // Token check
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -281,7 +281,7 @@
       try {
         console.log("[BACKEND] Loading doctors from backend...");
         
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken");
         const response = await fetch("/admin/doctor-list", {
           headers: {
             "Authorization": "Bearer " + token
@@ -387,7 +387,7 @@
       }
 
       try {
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken");
         const response = await fetch("/admin/approve-doctor-v2", {
           method: "POST",
           headers: {
@@ -430,7 +430,7 @@
       }
 
       try {
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken");
         const response = await fetch("/admin/reject-doctor-v2", {
           method: "POST",
           headers: {
@@ -484,7 +484,7 @@ Doctor ID: ${doctor.doctor_id}
     }
 
     function logout() {
-      localStorage.removeItem("admin_token");
+      localStorage.removeItem("adminToken");
       window.location.href = "/admin-login.html";
     }
 
