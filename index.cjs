@@ -9556,24 +9556,68 @@ app.get('/', (req, res) => {
   }
 });
 
-// Admin clinic endpoint - mock response
-app.get("/api/admin/clinic", (req, res) => {
+// Admin clinic endpoint - real database query
+app.get("/api/admin/clinic", async (req, res) => {
   const token = getAdminToken();
   if (!token) {
     return res.status(401).json({ ok: false, error: "missing_token" });
   }
-  
-  // Mock clinic data
-  res.json({
-    ok: true,
-    clinic: {
-      id: "mock-clinic-id",
-      name: "Clinifly Clinic",
-      code: "CLINIC001",
-      maxPatients: 1000,
-      currentPatients: 0
+
+  try {
+    // Decode token to get admin info
+    const decoded = jwt.decode(token);
+    if (!decoded) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
     }
-  });
+
+    // Log admin clinicId for debugging
+    console.log("ADMIN CLINIC ID:", decoded.clinicId);
+
+    // Query clinics table with proper filter
+    const { data: clinicData, error: clinicError } = await supabase
+      .from("clinics")
+      .select("*")
+      .eq("id", decoded.clinicId)
+      .single();
+
+    // Log data before 404
+    console.log("CLINIC QUERY RESULT:", {
+      clinicData,
+      clinicError,
+      clinicId: decoded.clinicId
+    });
+
+    if (clinicError) {
+      console.error("Clinic query error:", clinicError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "database_error", 
+        details: clinicError.message 
+      });
+    }
+
+    if (!clinicData) {
+      console.log("Clinic not found for ID:", decoded.clinicId);
+      return res.status(404).json({ 
+        ok: false, 
+        error: "clinic_not_found",
+        clinicId: decoded.clinicId 
+      });
+    }
+
+    res.json({
+      ok: true,
+      clinic: clinicData
+    });
+
+  } catch (error) {
+    console.error("Admin clinic endpoint error:", error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "server_error", 
+      details: error.message 
+    });
+  }
 });
 
 /* ================= START ================= */
