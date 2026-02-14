@@ -83,7 +83,7 @@ SELECT
         ELSE 'NO_AUTH_USER'
     END as auth_status,
     CASE 
-        WHEN EXISTS (SELECT 1 FROM treatment_group_doctors tgd WHERE tgd.doctor_id = d.id) THEN 'HAS_ASSIGNMENTS'
+        WHEN EXISTS (SELECT 1 FROM treatment_group_members tgm WHERE tgm.doctor_id = d.id) THEN 'HAS_ASSIGNMENTS'
         ELSE 'NO_ASSIGNMENTS'
     END as assignment_status
 FROM doctors d
