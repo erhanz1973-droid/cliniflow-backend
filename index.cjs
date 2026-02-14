@@ -3783,6 +3783,10 @@ app.get("/api/patient/me", async (req, res) => {
 
 /* ================= DOCTOR AUTH MIDDLEWARE ================= */
 function verifyDoctorToken(req) {
+  console.log("=== VERIFY DOCTOR DEBUG ===");
+  console.log("Authorization header:", req.headers.authorization);
+  console.log("JWT_SECRET used for verify:", JWT_SECRET);
+
   const authHeader = req.headers.authorization;
   console.log("[VERIFY DOCTOR] Raw Authorization header:", authHeader);
 
@@ -3817,10 +3821,24 @@ function verifyDoctorToken(req) {
       }
     };
   } catch (err) {
+    console.log("JWT VERIFY ERROR MESSAGE:", err.message);
     console.log("[VERIFY DOCTOR] JWT verify error:", err.message);
     return { ok: false, code: "invalid_token" };
   }
 }
+
+/* ================= DEBUG TOKEN ENDPOINT ================= */
+app.post("/debug/token", (req, res) => {
+  try {
+    const { token } = req.body;
+    console.log("DEBUG TOKEN VERIFY – Using JWT_SECRET:", JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    res.json({ ok: true, decoded });
+  } catch (err) {
+    console.log("DEBUG TOKEN ERROR:", err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
 
 /* ================= PATIENT AUTH MIDDLEWARE ================= */
 function verifyPatientToken(req) {
@@ -8804,6 +8822,10 @@ app.post("/auth/verify-otp", async (req, res) => {
         // Use appropriate secret based on type
         const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
         
+        console.log("=== OTP DOCTOR SIGN DEBUG ===");
+        console.log("Secret used for signing:", secret);
+        console.log("JWT_SECRET constant:", JWT_SECRET);
+        
         const token = jwt.sign(
           {
             doctorId: doctor.id,
@@ -8815,6 +8837,8 @@ app.post("/auth/verify-otp", async (req, res) => {
           secret,
           { expiresIn: "30d" }
         );
+
+        console.log("Generated token:", token);
 
         console.log("[OTP VERIFY] DEV Doctor Success:", {
           doctorId: doctor.id,

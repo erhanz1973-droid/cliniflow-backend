@@ -470,14 +470,19 @@
       submitBtn.textContent = i18n.t("login.verifying") + "...";
       
       try {
-        const res = await fetch(`${API}/api/admin/verify-otp`, {
+        const payload = { 
+          clinicCode: clinicCode,
+          email: email,
+          otp: otpCode,
+          type: "admin"
+        };
+        
+        console.log("OTP VERIFY PAYLOAD:", payload);
+        
+        const res = await fetch(`${API}/auth/verify-otp`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            clinicCode: clinicCode,
-            email: email,
-            otp: otpCode 
-          }),
+          body: JSON.stringify(payload),
         });
         
         const json = await res.json();
