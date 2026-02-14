@@ -458,7 +458,11 @@
         console.log("RESPONSE DATA:", data);
         
         if (data.ok) {
-          alert("Tedavi grubu başarıyla oluşturuldu!");
+          if (data.duplicate) {
+            alert("Tedavi grubu zaten mevcut! Mevcut grup kullanıldı.");
+          } else {
+            alert("Tedavi grubu başarıyla oluşturuldu!");
+          }
           window.location.href = "/admin-patients.html";
         } else {
           alert("Hata: " + (data.error || "Bilinmeyen hata"));

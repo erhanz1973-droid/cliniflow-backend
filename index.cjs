@@ -5416,6 +5416,44 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     if (error) {
       console.error("RPC Error:", error);
       console.error("FULL RPC ERROR:", JSON.stringify(error, null, 2));
+      
+      // Handle duplicate key error (23505) - make it idempotent
+      if (error.code === "23505") {
+        console.log("[TREATMENT GROUPS CREATE] Duplicate detected, finding existing group...");
+        
+        try {
+          // Find existing group with same patient_id and group_name
+          const { data: existing, error: findError } = await supabase
+            .from("treatment_groups")
+            .select("id, group_name, status")
+            .eq("patient_id", patient_id)
+            .eq("group_name", name)
+            .eq("status", "ACTIVE")
+            .single();
+          
+          if (findError) {
+            console.error("[TREATMENT GROUPS CREATE] Find existing error:", findError);
+            return res.status(500).json({
+              ok: false,
+              error: "group_creation_failed",
+              details: "Failed to check existing group"
+            });
+          }
+          
+          if (existing) {
+            console.log("[TREATMENT GROUPS CREATE] Returning existing group:", existing);
+            return res.json({
+              ok: true,
+              group_id: existing.id,
+              duplicate: true,
+              message: "Treatment group already exists"
+            });
+          }
+        } catch (findErr) {
+          console.error("[TREATMENT GROUPS CREATE] Find existing exception:", findErr);
+        }
+      }
+      
       return res.status(500).json({
         ok: false,
         error: "group_creation_failed",
