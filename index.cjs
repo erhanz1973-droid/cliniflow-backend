@@ -9533,9 +9533,28 @@ app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
 const patientsRoutes = require('./server/routes/patients');
 app.use('/api/patients', patientsRoutes);
 
-// Serve static files from public directory (MOVED TO END)
+// Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(PUBLIC_DIR));
+
+// Root route - serve admin-login.html
+app.get('/', (req, res) => {
+  const loginPath = path.join(PUBLIC_DIR, 'admin-login.html');
+  if (fs.existsSync(loginPath)) {
+    res.sendFile(loginPath);
+  } else {
+    res.status(404).send(`
+      <html>
+        <head><title>404 - Login Page Not Found</title></head>
+        <body>
+          <h1>404 - Login Page Not Found</h1>
+          <p>admin-login.html not found</p>
+          <p>Looking for: ${loginPath}</p>
+        </body>
+      </html>
+    `);
+  }
+});
 
 /* ================= START ================= */
 app.listen(PORT, () => {
