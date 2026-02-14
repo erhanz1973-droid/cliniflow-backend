@@ -26,34 +26,9 @@ ON admin_timeline_events(type);
 CREATE INDEX IF NOT EXISTS idx_admin_timeline_events_reference_id 
 ON admin_timeline_events(reference_id);
 
--- 3️⃣ Add RLS (Row Level Security) policies
-ALTER TABLE admin_timeline_events ENABLE ROW LEVEL SECURITY;
-
--- Policy: Admins can see timeline events for their clinic only
-CREATE POLICY "Admins can view timeline events for their clinic"
-ON admin_timeline_events FOR SELECT
-USING (
-    EXISTS (
-        SELECT 1 FROM auth.users au
-        JOIN user_roles ur ON au.id = ur.user_id
-        WHERE au.id = auth.uid()
-        AND ur.role = 'ADMIN'
-        AND ur.clinic_id = admin_timeline_events.clinic_id
-    )
-);
-
--- Policy: Admins can insert timeline events for their clinic only
-CREATE POLICY "Admins can insert timeline events for their clinic"
-ON admin_timeline_events FOR INSERT
-WITH CHECK (
-    EXISTS (
-        SELECT 1 FROM auth.users au
-        JOIN user_roles ur ON au.id = ur.user_id
-        WHERE au.id = auth.uid()
-        AND ur.role = 'ADMIN'
-        AND ur.clinic_id = admin_timeline_events.clinic_id
-    )
-);
+-- 3️⃣ RLS disabled - use backend middleware for security
+-- Note: Security handled by adminAuth middleware in backend
+ALTER TABLE admin_timeline_events DISABLE ROW LEVEL SECURITY;
 
 -- 4️⃣ Create function to add timeline events
 CREATE OR REPLACE FUNCTION add_timeline_event(
