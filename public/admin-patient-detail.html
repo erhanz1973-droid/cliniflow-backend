@@ -388,6 +388,75 @@
       margin: 0 0 8px 0;
       color: #fff;
     }
+
+    /* Treatment Groups Styles */
+    .treatment-groups-section {
+      margin-top: 24px;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--b);
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+      color: #fff;
+    }
+    .treatment-group-item {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .group-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .group-header strong {
+      font-size: 16px;
+      color: #fff;
+    }
+    .group-status {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+    .group-status.active {
+      background: var(--g);
+      color: #fff;
+    }
+    .group-status.inactive {
+      background: var(--r);
+      color: #fff;
+    }
+    .group-details {
+      display: grid;
+      gap: 8px;
+    }
+    .detail-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .detail-item .label {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .detail-item .value {
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -640,21 +709,32 @@
     async function loadTreatmentGroups() {
       if (!currentPatient) return;
 
-      try {
-        const token = localStorage.getItem('admin_token');
-        const response = await fetch(`/api/treatment-groups?patientId=${currentPatient.id}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
+      const token = localStorage.getItem("admin_token");
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+      try {
+        const res = await fetch(
+          `/api/treatment-groups?patientId=${currentPatient.id}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${token}` 
+            }
+          }
+        );
+
+        const result = await res.json();
+
+        if (!result.ok) {
+          console.error("Failed to load groups:", result.error);
+          document.getElementById('treatmentGroupsList').innerHTML = `
+            <div class="empty-state">
+              <h3>Treatment Groups Yüklenemedi</h3>
+              <p>Hata: ${result.error || 'Bilinmeyen hata'}</p>
+            </div>
+          `;
+          return;
         }
 
-        const data = await response.json();
-        displayTreatmentGroups(data.groups || []);
+        renderGroups(result.data);
       } catch (error) {
         console.error('Load treatment groups error:', error);
         document.getElementById('treatmentGroupsList').innerHTML = `
@@ -664,6 +744,54 @@
           </div>
         `;
       }
+    }
+
+    // Render treatment groups
+    function renderGroups(groups) {
+      const container = document.getElementById("treatmentGroupsList");
+      container.innerHTML = "";
+
+      if (!groups.length) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>Treatment Group Yok</h3>
+            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
+          </div>
+        `;
+        return;
+      }
+
+      groups.forEach(group => {
+        const groupElement = document.createElement("div");
+        groupElement.className = "treatment-group-item";
+        groupElement.innerHTML = `
+          <div class="group-header">
+            <strong>${group.name || 'İsimsiz Grup'}</strong>
+            <span class="group-status ${group.status?.toLowerCase() || 'active'}">${group.status || 'ACTIVE'}</span>
+          </div>
+          <div class="group-details">
+            <div class="detail-item">
+              <span class="label">Primary Doctor:</span>
+              <span class="value">${group.primary_doctor_id || '-'}</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Assigned Doctors:</span>
+              <span class="value">${group.doctor_ids ? group.doctor_ids.length : 0} doctor(s)</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Created:</span>
+              <span class="value">${formatDate(group.created_at)}</span>
+            </div>
+            ${group.description ? `
+              <div class="detail-item">
+                <span class="label">Description:</span>
+                <span class="value">${group.description}</span>
+              </div>
+            ` : ''}
+          </div>
+        `;
+        container.appendChild(groupElement);
+      });
     }
 
     // Display treatment groups
