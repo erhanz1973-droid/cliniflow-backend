@@ -5933,19 +5933,46 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     });
 
     // Validation for required fields
-    if (!patient_id || !doctor_ids?.length || !primary_doctor_id || !name) {
+    if (!patient_id || !doctor_ids?.length || !primary_doctor_id) {
       console.error("[TREATMENT GROUPS CREATE] Missing fields:", {
         patient_id: !!patient_id,
         doctor_ids: !!doctor_ids?.length,
-        primary_doctor_id: !!primary_doctor_id,
-        name: !!name
+        primary_doctor_id: !!primary_doctor_id
       });
       return res.status(400).json({
         ok: false,
         error: "missing_fields",
-        details: "patient_id, doctor_ids, primary_doctor_id, and name are required"
+        details: "patient_id, doctor_ids, and primary_doctor_id are required"
       });
     }
+
+    // Fetch patient name and count existing groups
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("name")
+      .eq("id", patient_id)
+      .single();
+
+    if (patientError || !patient) {
+      console.error("[TREATMENT GROUPS CREATE] Patient not found:", patientError);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    // Count existing groups for this patient
+    const { data: existingGroups, error: countError } = await supabase
+      .from("treatment_groups")
+      .select("id")
+      .eq("patient_id", patient_id)
+      .eq("clinic_id", clinicId);
+
+    if (countError) {
+      console.error("[TREATMENT GROUPS CREATE] Count error:", countError);
+      return res.status(500).json({ ok: false, error: "count_failed" });
+    }
+
+    // Generate group name automatically
+    const groupCount = (existingGroups?.length || 0) + 1;
+    const generatedGroupName = `${patient.name} ${groupCount}`;
 
     const { data, error } = await supabase.rpc(
       "create_treatment_group_atomic",
@@ -5953,7 +5980,7 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
         p_admin_id: adminId,
         p_clinic_id: clinicId,
         p_patient_id: patient_id,
-        p_name: name,
+        p_name: generatedGroupName, // Auto-generated name
         p_description: description || "",
         p_doctor_ids: doctor_ids,
         p_primary_doctor_id: primary_doctor_id
@@ -5971,12 +5998,12 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
         console.log("[TREATMENT GROUPS CREATE] Duplicate detected, finding existing group...");
         
         try {
-          // Find existing group with same patient_id and group_name
+          // Find existing group with same patient_id and generated group name
           const { data: existing, error: findError } = await supabase
             .from("treatment_groups")
             .select("id, group_name, status")
             .eq("patient_id", patient_id)
-            .eq("group_name", name)
+            .eq("group_name", generatedGroupName)
             .eq("status", "ACTIVE")
             .single();
           
