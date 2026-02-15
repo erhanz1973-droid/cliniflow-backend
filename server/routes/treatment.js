@@ -40,12 +40,23 @@ router.post('/encounters', authenticateToken, requireDoctor, logActivity('encoun
   try {
     const { patient_id, encounter_type } = req.body;
     
+    // 🔥 CRITICAL: Use req.decoded.doctorId instead of req.user.id
+    const doctorId = req.decoded?.doctorId;
+    
+    if (!doctorId) {
+      console.error('[ENCOUNTER CREATE] Missing doctor ID:', { decoded: req.decoded, user: req.user });
+      return res.status(400).json({ error: 'Doctor ID not found' });
+    }
+    
+    console.log('[ENCOUNTER CREATE] Creating encounter:', { patient_id, doctor_id: doctorId, encounter_type });
+    
     const encounter = await PatientEncounter.create({
       patient_id,
-      created_by_doctor_id: req.user.id,
-      encounter_type
+      created_by_doctor_id: doctorId,
+      encounter_type: encounter_type || 'initial'
     });
     
+    console.log('[ENCOUNTER CREATE] Success:', encounter);
     res.json(encounter);
   } catch (error) {
     console.error('Create encounter error:', error);
