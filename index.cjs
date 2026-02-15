@@ -9966,9 +9966,6 @@ async function updateHairGraftsSummary(patientUuid) {
 */
 /* ================= END HAIR TRANSPLANT MODULE (DISABLED) ================= */
 
-const treatmentRoutes = require('./server/routes/treatment');
-app.use('/api/treatment', treatmentRoutes);
-
 // Treatment Groups routes (Admin only) - DEPRECATED - Using new endpoint in index.cjs
 // const treatmentGroupsRoutes = require('./server/routes/treatment-groups');
 // app.use('/api/treatment-groups', treatmentGroupsRoutes);

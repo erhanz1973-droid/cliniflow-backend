@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: cliniflow-backend
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5050
+      - key: JWT_SECRET
+        value: kyRP/+nvfd1/R2QqoYmDLAIrFX5rxQrfK3vWfRBu/TS2dswnPZrvbbgiKNcOEQrm8uvo82lnS5r1cwMM/YyxqsoQ==
+      # Supabase Configuration
+      - key: SUPABASE_URL
+        value: https://swxinrwbylygoqdcbwbt.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3eGlucndieWx5Z29xZGNid2J0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzczMDQxNCwiZXhwIjoyMDgzMzA2NDE0fQ.hDrpZu7aaUKP0u3itxAP8SgqhH0ObqsHWn4Rjr3kxko
