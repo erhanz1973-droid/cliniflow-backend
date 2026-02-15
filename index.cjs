@@ -6901,7 +6901,7 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
         created_at,
         updated_at
       `)
-      .eq("clinic_id", req.clinicId)
+      .eq("clinic_id", req.admin.clinicId)
       .eq("id", patientId)
       .single();
 
