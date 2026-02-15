@@ -705,27 +705,11 @@
         <div class="modal-body">
           <form id="createTreatmentGroupForm">
             <div class="form-group">
-              <label class="form-label">Group Adı *</label>
-              <input type="text" class="form-input" id="groupName" required placeholder="Örn: Ortodonti Tedavisi">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Açıklama</label>
-              <textarea class="form-textarea" id="groupDescription" placeholder="Treatment group açıklaması..."></textarea>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Doktor Seçimi *</label>
-              <div id="doctorsList">
-                <div class="empty-state">
-                  <p>Doktorlar yükleniyor...</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="form-group" id="primaryDoctorSection" style="display: none;">
-              <label class="form-label">Primary Doktor *</label>
-              <div id="primaryDoctorList"></div>
+              <p style="color: #6aa6ff; font-size: 14px; margin: 0;">
+                Tedavi grubu otomatik olarak oluşturulacaktır.<br>
+                Grup adı: <strong>{Patient Name} - {Group Number}</strong><br>
+                İlk aktif doktor otomatik olarak atanacaktır.
+              </p>
             </div>
           </form>
         </div>
@@ -855,7 +839,7 @@
 
       try {
         const res = await fetch(
-          `/api/treatment-groups?patientId=${currentPatient.id}`,
+          `/api/admin/treatment-groups?patient_id=${currentPatient.id}`,
           {
             headers: {
               Authorization: `Bearer ${getAdminToken()}`, 
@@ -876,13 +860,13 @@
           return;
         }
 
-        renderGroups(result.data);
+        renderGroups(result.data || []);
       } catch (error) {
         console.error('Load treatment groups error:', error);
         document.getElementById('treatmentGroupsList').innerHTML = `
           <div class="empty-state">
             <h3>Treatment Groups Yüklenemedi</h3>
-            <p>Treatment groups yüklenirken hata oluştu.</p>
+            <p>Hata: ${error.message || 'Bilinmeyen hata'}</p>
           </div>
         `;
       }
@@ -904,21 +888,25 @@
       }
 
       groups.forEach(group => {
+        // Use nested relation: group.treatment_group_doctors
+        const primary = group.treatment_group_doctors?.find(d => d.is_primary);
+        const doctorCount = group.treatment_group_doctors?.length || 0;
+        
         const groupElement = document.createElement("div");
         groupElement.className = "treatment-group-item";
         groupElement.innerHTML = `
           <div class="group-header">
-            <strong>${group.name || 'İsimsiz Grup'}</strong>
+            <strong>${group.group_name || 'İsimsiz Grup'}</strong>
             <span class="group-status ${group.status?.toLowerCase() || 'active'}">${group.status || 'ACTIVE'}</span>
           </div>
           <div class="group-details">
             <div class="detail-item">
               <span class="label">Primary Doctor:</span>
-              <span class="value">${group.primary_doctor_id || '-'}</span>
+              <span class="value">${primary?.doctors?.name || '-'}</span>
             </div>
             <div class="detail-item">
               <span class="label">Assigned Doctors:</span>
-              <span class="value">${group.doctor_ids ? group.doctor_ids.length : 0} doctor(s)</span>
+              <span class="value">${doctorCount} doctor(s)</span>
             </div>
             <div class="detail-item">
               <span class="label">Created:</span>
@@ -1119,7 +1107,6 @@
     // Open create treatment group modal
     function openCreateTreatmentGroupModal() {
       document.getElementById('createTreatmentGroupModal').classList.add('show');
-      loadDoctors();
     }
 
     // Close create treatment group modal
@@ -1127,9 +1114,6 @@
       document.getElementById('createTreatmentGroupModal').classList.remove('show');
       // Reset form
       document.getElementById('createTreatmentGroupForm').reset();
-      selectedDoctors.clear();
-      primaryDoctorId = null;
-      updatePrimaryDoctorSection();
     }
 
     // Open assign patient modal
@@ -1199,93 +1183,36 @@
 
     // Create treatment group
     async function createTreatmentGroup() {
-      const groupName = document.getElementById('groupName').value.trim();
-      const groupDescription = document.getElementById('groupDescription').value.trim();
-
-      if (!groupName) {
-        alert('Group adı zorunludur');
-        return;
-      }
-
-      if (selectedDoctors.size === 0) {
-        alert('En az bir doktor seçmelisiniz');
-        return;
-      }
-
-      if (!primaryDoctorId) {
-        alert('Primary doktor seçmelisiniz');
+      if (!currentPatient) {
+        alert("Patient not found");
         return;
       }
 
       try {
-        const response = await fetch('/api/treatment-groups', {
+        const response = await fetch('/api/admin/treatment-groups', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            name: groupName,
-            description: groupDescription,
-            clinicId: currentPatient.clinic_id
+            patient_id: currentPatient.id
           })
         });
 
-        if (!groupResponse.ok) {
-          throw new Error(`HTTP ${groupResponse.status}`);
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Failed to create group");
         }
 
-        const groupData = await groupResponse.json();
-        if (!groupData.ok) {
-          throw new Error(groupData.error || 'Group oluşturulamadı');
-        }
-
-        const groupId = groupData.group.id;
-
-        // Add doctors to group
-        for (const doctorId of selectedDoctors) {
-          const memberResponse = await fetch('/api/treatment-groups/members', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              groupId,
-              doctorId,
-              isPrimary: doctorId === primaryDoctorId
-            })
-          });
-
-          if (!memberResponse.ok) {
-            console.error(`Failed to add doctor ${doctorId} to group`);
-          }
-        }
-
-        // Assign patient to group
-        const assignmentResponse = await fetch('/api/patient-group-assignments', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            groupId,
-            patientId: currentPatient.id
-          })
-        });
-
-        if (!assignmentResponse.ok) {
-          console.error('Failed to assign patient to group');
-        }
-
-        alert('Treatment Group başarıyla oluşturuldu!');
+        alert("Treatment Group created successfully");
         closeCreateTreatmentGroupModal();
         loadTreatmentGroups();
-        
+
       } catch (error) {
-        console.error('Create treatment group error:', error);
-        alert('Treatment Group oluşturulamadı: ' + error.message);
+        console.error("Create group error:", error);
+        alert(error.message);
       }
     }
 
