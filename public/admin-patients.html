@@ -1413,7 +1413,7 @@
             if (!messagesData.ok) continue;
             const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
             const unread = messages.filter((m) => {
-              if (m.from_role !== "patient") return false;
+              if (m.from_patient !== true) return false;
               if (m.created_at) {
                 const msgTimestamp = new Date(m.created_at).getTime();
                 return msgTimestamp > lastSeenTimestamp;

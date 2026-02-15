@@ -6953,7 +6953,7 @@ app.get("/api/admin/patient/:patientId/messages", adminAuth, async (req, res) =>
 
     // Get messages for this patient
     const { data: messages, error: messagesError } = await supabase
-      .from("patient_messages")
+      .from("messages")
       .select("*")
       .eq("patient_id", patientId)
       .order("created_at", { ascending: true });
@@ -7006,19 +7006,19 @@ app.get("/api/admin/unread-count", adminAuth, async (req, res) => {
     const patientIds = patients.map(p => p.id);
 
     // Get all unread messages for all patients in this clinic
-    const { data: messages, error: messagesError } = await supabase
-      .from("patient_messages")
-      .select("*")
+    // Using the actual schema: from_patient = true for patient messages
+    const { count, error: messagesError } = await supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
       .in("patient_id", patientIds)
-      .eq("from_role", "patient")
-      .is("read_at", null);
+      .eq("from_patient", true);
 
     if (messagesError) {
       console.error("[ADMIN UNREAD COUNT] Messages fetch error:", messagesError);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_messages" });
     }
 
-    const unreadCount = messages?.length || 0;
+    const unreadCount = count || 0;
 
     console.log(`[ADMIN UNREAD COUNT] Found ${unreadCount} unread messages for clinic ${clinicId}`);
 
