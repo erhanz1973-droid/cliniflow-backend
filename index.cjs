@@ -6920,6 +6920,119 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN PATIENT MESSAGES ================= */
+app.get("/api/admin/patient/:patientId/messages", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+
+    console.log("[ADMIN PATIENT MESSAGES] Request:", { patientId, clinicId });
+
+    // Validate inputs
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    if (!clinicId) {
+      console.error("[ADMIN PATIENT MESSAGES] Missing clinicId:", { admin: req.admin });
+      return res.status(400).json({ ok: false, error: "missing_clinic_id" });
+    }
+
+    // Verify patient belongs to admin's clinic
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("id, clinic_id, name")
+      .eq("id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (patientError || !patient) {
+      console.error("[ADMIN PATIENT MESSAGES] Patient not found:", { patientId, clinicId, patientError });
+      return res.status(404).json({ ok: false, error: "Patient not found" });
+    }
+
+    // Get messages for this patient
+    const { data: messages, error: messagesError } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: true });
+
+    if (messagesError) {
+      console.error("[ADMIN PATIENT MESSAGES] Database error:", messagesError);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch_messages" });
+    }
+
+    console.log(`[ADMIN PATIENT MESSAGES] Found ${messages?.length || 0} messages for patient ${patientId}`);
+
+    res.json({
+      ok: true,
+      messages: messages || []
+    });
+
+  } catch (error) {
+    console.error("[ADMIN PATIENT MESSAGES] Fatal error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN UNREAD COUNT ================= */
+app.get("/api/admin/unread-count", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.admin?.clinicId;
+
+    console.log("[ADMIN UNREAD COUNT] Request:", { clinicId });
+
+    // Validate inputs
+    if (!clinicId) {
+      console.error("[ADMIN UNREAD COUNT] Missing clinicId:", { admin: req.admin });
+      return res.status(400).json({ ok: false, error: "missing_clinic_id" });
+    }
+
+    // Get all patients for this clinic
+    const { data: patients, error: patientsError } = await supabase
+      .from("patients")
+      .select("id");
+
+    if (patientsError) {
+      console.error("[ADMIN UNREAD COUNT] Patients fetch error:", patientsError);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch_patients" });
+    }
+
+    if (!patients || patients.length === 0) {
+      return res.json({ ok: true, unreadCount: 0 });
+    }
+
+    const patientIds = patients.map(p => p.id);
+
+    // Get all unread messages for all patients in this clinic
+    const { data: messages, error: messagesError } = await supabase
+      .from("messages")
+      .select("*")
+      .in("patient_id", patientIds)
+      .eq("from", "PATIENT")
+      .is("read", false);
+
+    if (messagesError) {
+      console.error("[ADMIN UNREAD COUNT] Messages fetch error:", messagesError);
+      return res.status(500).json({ ok: false, error: "failed_to_fetch_messages" });
+    }
+
+    const unreadCount = messages?.length || 0;
+
+    console.log(`[ADMIN UNREAD COUNT] Found ${unreadCount} unread messages for clinic ${clinicId}`);
+
+    res.json({
+      ok: true,
+      unreadCount
+    });
+
+  } catch (error) {
+    console.error("[ADMIN UNREAD COUNT] Fatal error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTORS ================= */
 app.get("/api/admin/doctors", adminAuth, async (req, res) => {
   try {

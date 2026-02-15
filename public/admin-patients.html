@@ -1352,6 +1352,38 @@
       }
     }
 
+    // Optimized unread count loading (single request)
+    async function loadUnreadCountOptimized() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const unreadRes = await fetch(`${API}/api/admin/unread-count`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!unreadRes.ok) return;
+        const unreadData = await unreadRes.json();
+        if (!unreadData.ok) return;
+        
+        const totalUnread = unreadData.unreadCount || 0;
+        
+        if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
+          playNotificationSound();
+        }
+        previousUnreadCount = totalUnread;
+        const badgeEl = document.getElementById("chatBadge");
+        if (badgeEl) {
+          if (totalUnread > 0) {
+            badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load unread count optimized error:", error);
+      }
+    }
+
     async function loadUnreadMessageCount() {
       const token = getAdminToken();
       if (!token) return;
@@ -1373,7 +1405,7 @@
           const patientId = patient.patientId || patient.id;
           if (!patientId) continue;
           try {
-            const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+            const messagesRes = await fetch(`${API}/api/admin/patient/${encodeURIComponent(patientId)}/messages`, {
               headers: adminHeaders({ Accept: "application/json" }),
             });
             if (!messagesRes.ok) continue;
@@ -1472,7 +1504,7 @@
 
     async function loadAllBadges() {
       await Promise.all([
-        loadUnreadMessageCount(),
+        loadUnreadCountOptimized(),
         loadPendingPatientsCount(),
         loadPendingReferralsCount()
       ]);
