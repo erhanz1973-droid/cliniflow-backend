@@ -5909,12 +5909,12 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
 /* ================= ADMIN TREATMENT GROUPS CREATE ================= */
 app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
-    const { patient_id, doctor_id } = req.body;
+    const { patient_id } = req.body;
 
-    if (!patient_id || !doctor_id) {
+    if (!patient_id) {
       return res.status(400).json({
         ok: false,
-        error: "patient_id ve doctor_id zorunludur"
+        error: "patient_id zorunludur"
       });
     }
 
@@ -5966,22 +5966,6 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       return res.status(500).json({
         ok: false,
         error: groupError.message
-      });
-    }
-
-    // 4️⃣ Doktoru ekle (primary)
-    const { error: memberError } = await supabase
-      .from("treatment_group_doctors")
-      .insert({
-        group_id: group.id,
-        doctor_id,
-        is_primary: true
-      });
-
-    if (memberError) {
-      return res.status(500).json({
-        ok: false,
-        error: memberError.message
       });
     }
 
