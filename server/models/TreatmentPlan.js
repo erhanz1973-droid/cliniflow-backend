@@ -1,148 +1,201 @@
 // server/models/TreatmentPlan.js
-const { pool } = require('../config/database');
+const { getSupabaseClient } = require('../../supabase');
 
 class TreatmentPlan {
   static async create(data) {
     const { encounter_id, created_by_doctor_id, treatment_group_id = null, assigned_doctor_id = null } = data;
     
-    const query = `
-      INSERT INTO treatment_plans (encounter_id, created_by_doctor_id, treatment_group_id, assigned_doctor_id, status)
-      VALUES ($1, $2, $3, $4, 'draft')
-      RETURNING *
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [encounter_id, created_by_doctor_id, treatment_group_id, assigned_doctor_id]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .insert({
+        encounter_id,
+        created_by_doctor_id,
+        treatment_group_id,
+        assigned_doctor_id,
+        status: 'draft'
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] Create error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
   static async findById(id) {
-    const query = `
-      SELECT tp.*, pe.patient_id, d.name as doctor_name,
-             tg.group_name as treatment_group_name,
-             ad.name as assigned_doctor_name
-      FROM treatment_plans tp
-      JOIN patient_encounters pe ON tp.encounter_id = pe.id
-      JOIN doctors d ON tp.created_by_doctor_id = d.id
-      LEFT JOIN treatment_groups tg ON tp.treatment_group_id = tg.id
-      LEFT JOIN doctors ad ON tp.assigned_doctor_id = ad.id
-      WHERE tp.id = $1
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [id]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .select(`
+        *,
+        patient_encounters!inner(patient_id),
+        doctors!inner(name),
+        treatment_groups!inner(group_name),
+        assigned_doctors!inner(name)
+      `)
+      .eq('id', id)
+      .single();
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] FindById error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
   static async findByEncounterId(encounter_id) {
-    const query = `
-      SELECT tp.*, d.name as doctor_name,
-             tg.group_name as treatment_group_name,
-             ad.name as assigned_doctor_name
-      FROM treatment_plans tp
-      JOIN doctors d ON tp.created_by_doctor_id = d.id
-      LEFT JOIN treatment_groups tg ON tp.treatment_group_id = tg.id
-      LEFT JOIN doctors ad ON tp.assigned_doctor_id = ad.id
-      WHERE tp.encounter_id = $1
-      ORDER BY tp.created_at DESC
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [encounter_id]);
-    return result.rows;
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .select(`
+        *,
+        patient_encounters!inner(patient_id),
+        doctors!inner(name),
+        treatment_groups!inner(group_name),
+        assigned_doctors!inner(name)
+      `)
+      .eq('encounter_id', encounter_id)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] FindByEncounterId error:', error);
+      throw error;
+    }
+    
+    return result || [];
   }
 
   static async findByTreatmentGroup(treatment_group_id) {
-    const query = `
-      SELECT tp.*, pe.patient_id, d.name as doctor_name,
-             ad.name as assigned_doctor_name
-      FROM treatment_plans tp
-      JOIN patient_encounters pe ON tp.encounter_id = pe.id
-      JOIN doctors d ON tp.created_by_doctor_id = d.id
-      LEFT JOIN doctors ad ON tp.assigned_doctor_id = ad.id
-      WHERE tp.treatment_group_id = $1
-      ORDER BY tp.created_at DESC
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [treatment_group_id]);
-    return result.rows;
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .select(`
+        *,
+        patient_encounters!inner(patient_id),
+        doctors!inner(name),
+        treatment_groups!inner(group_name)
+      `)
+      .eq('treatment_group_id', treatment_group_id)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] FindByTreatmentGroup error:', error);
+      throw error;
+    }
+    
+    return result || [];
   }
 
   static async findByAssignedDoctor(doctor_id) {
-    const query = `
-      SELECT tp.*, pe.patient_id, d.name as doctor_name,
-             tg.group_name as treatment_group_name
-      FROM treatment_plans tp
-      JOIN patient_encounters pe ON tp.encounter_id = pe.id
-      JOIN doctors d ON tp.created_by_doctor_id = d.id
-      LEFT JOIN treatment_groups tg ON tp.treatment_group_id = tg.id
-      WHERE tp.assigned_doctor_id = $1
-      ORDER BY tp.created_at DESC
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [doctor_id]);
-    return result.rows;
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .select(`
+        *,
+        patient_encounters!inner(patient_id),
+        doctors!inner(name),
+        treatment_groups!inner(group_name)
+      `)
+      .eq('assigned_doctor_id', doctor_id)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] FindByAssignedDoctor error:', error);
+      throw error;
+    }
+    
+    return result || [];
   }
 
-  static async updateStatus(id, status, admin_id = null) {
-    const query = `
-      UPDATE treatment_plans 
-      SET status = $2, 
-          approved_by_admin_id = $3,
-          approved_at = CASE WHEN $2 = 'approved' THEN CURRENT_TIMESTAMP ELSE approved_at END,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-    `;
+  static async updateStatus(id, status) {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [id, status, admin_id]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .update({ 
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] UpdateStatus error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
   static async assignDoctor(id, assigned_doctor_id) {
-    const query = `
-      UPDATE treatment_plans 
-      SET assigned_doctor_id = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [id, assigned_doctor_id]);
-    return result.rows[0];
-  }
-
-  static async getActivePlan(encounter_id) {
-    const query = `
-      SELECT *
-      FROM treatment_plans
-      WHERE encounter_id = $1 AND status IN ('draft', 'proposed', 'approved')
-      ORDER BY created_at DESC
-      LIMIT 1
-    `;
+    const { data: result, error } = await supabase
+      .from('treatment_plans')
+      .update({ assigned_doctor_id })
+      .eq('id', id)
+      .select()
+      .single();
     
-    const result = await pool.query(query, [encounter_id]);
-    return result.rows[0];
+    if (error) {
+      console.error('[TREATMENT PLAN] AssignDoctor error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
   static async canCreateTreatmentPlan(encounter_id) {
-    // Check if encounter has primary diagnosis
-    const diagnosisQuery = `
-      SELECT COUNT(*) as count
-      FROM encounter_diagnoses
-      WHERE encounter_id = $1 AND is_primary = true
-    `;
-    
-    const diagnosisResult = await pool.query(diagnosisQuery, [encounter_id]);
-    const hasPrimaryDiagnosis = parseInt(diagnosisResult.rows[0].count) > 0;
-    
-    if (!hasPrimaryDiagnosis) {
-      return { canCreate: false, reason: 'primary_diagnosis_required' };
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
     }
     
-    // Check if there's already an active plan
-    const activePlan = await this.getActivePlan(encounter_id);
-    if (activePlan && activePlan.status !== 'completed' && activePlan.status !== 'rejected') {
-      return { canCreate: false, reason: 'active_plan_exists' };
+    const { data: result, error } = await supabase
+      .from('encounter_diagnoses')
+      .select('id')
+      .eq('encounter_id', encounter_id)
+      .eq('is_primary', true)
+      .single();
+    
+    if (error) {
+      console.error('[TREATMENT PLAN] CanCreateTreatmentPlan error:', error);
+      throw error;
     }
     
-    return { canCreate: true };
+    return result !== null;
   }
 }
 
