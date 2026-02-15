@@ -6536,6 +6536,7 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
     // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
     const clinicId = req.admin?.clinicId;
+    const { patientId } = req.query;
 
     // 🔥 CRITICAL: Add undefined guard
     if (!clinicId) {
@@ -6550,9 +6551,9 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     }
 
     // 🔥 Debug log
-    console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId);
+    console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId, "patientId:", patientId);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("treatment_groups")
       .select(`
         id,
@@ -6567,8 +6568,14 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
           phone
         )
       `)
-      .eq("clinic_id", clinicId)
-      .order("created_at", { ascending: false });
+      .eq("clinic_id", clinicId);
+
+    // 🔥 Add patientId filter if provided
+    if (patientId) {
+      query = query.eq("patient_id", patientId);
+    }
+
+    const { data, error } = await query.order("created_at", { ascending: false });
 
     if (error) {
       console.error("[TREATMENT GROUPS LIST] Error:", error);
@@ -6579,11 +6586,11 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       });
     }
 
-    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for clinic ${clinicId}`);
+    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for clinic ${clinicId}${patientId ? ` and patient ${patientId}` : ''}`);
 
     res.json({
       ok: true,
-      treatment_groups: data || []
+      data: data || []
     });
 
   } catch (err) {
