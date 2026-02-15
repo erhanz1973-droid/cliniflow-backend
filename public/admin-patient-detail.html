@@ -789,6 +789,11 @@
       return urlParams.get('patientId');
     }
 
+    // Get admin token helper function
+    function getAdminToken() {
+      return localStorage.getItem("adminToken") || "";
+    }
+
     // Load patient details
     async function loadPatientDetails() {
       const patientId = getPatientId();
@@ -799,10 +804,9 @@
       }
 
       try {
-        const token = localStorage.getItem('admin_token');
         const response = await fetch(`/api/admin/patients/${patientId}`, {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           }
         });
@@ -849,14 +853,12 @@
     async function loadTreatmentGroups() {
       if (!currentPatient) return;
 
-      const token = localStorage.getItem("admin_token");
-
       try {
         const res = await fetch(
           `/api/treatment-groups?patientId=${currentPatient.id}`,
           {
             headers: {
-              "Authorization": `Bearer ${token}` 
+              Authorization: `Bearer ${getAdminToken()}`, 
             }
           }
         );
@@ -963,10 +965,9 @@
     // Load doctors for selection
     async function loadDoctors() {
       try {
-        const token = localStorage.getItem('admin_token');
         const response = await fetch('/api/admin/doctor-applications', {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           }
         });
@@ -991,10 +992,9 @@
     // Load doctors for assignment
     async function loadAssignDoctors() {
       try {
-        const token = localStorage.getItem('admin_token');
         const response = await fetch('/api/admin/doctor-applications', {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           }
         });
@@ -1162,12 +1162,10 @@
       }
 
       try {
-        const token = localStorage.getItem('admin_token');
-        
         const response = await fetch('/api/admin/assign-patient', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -1220,13 +1218,10 @@
       }
 
       try {
-        const token = localStorage.getItem('admin_token');
-        
-        // Create treatment group
-        const groupResponse = await fetch('/api/treatment-groups', {
+        const response = await fetch('/api/treatment-groups', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getAdminToken()}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -1318,7 +1313,7 @@
     }
 
     function logout() {
-      localStorage.removeItem('admin_token');
+      localStorage.removeItem("adminToken");
       window.location.href = '/admin-login.html';
     }
 
@@ -1381,7 +1376,7 @@
     async function loadTreatmentPlan() {
       if (!currentPatient) return;
 
-      const token = localStorage.getItem("admin_token");
+      const token = getAdminToken();
       const planContainer = document.getElementById("treatmentPlanContent");
 
       try {
