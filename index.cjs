@@ -6025,86 +6025,110 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   }
 });
 
-/* ================= TREATMENT GROUPS LIST (Admin & Doctor) ================= */
+/* ================= TREATMENT GROUPS (ROLE BASED LIST) ================= */
 app.get("/api/treatment-groups", async (req, res) => {
   try {
+    const patientId = String(req.query.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({
+        ok: false,
+        error: "patient_id_required"
+      });
+    }
+
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({
+        ok: false,
+        error: "missing_token"
+      });
     }
 
     const token = authHeader.substring(7);
+
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
     } catch (err) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
-    }
-
-    const { patientId } = req.query;
-    const userRole = decoded.role; // Get role from JWT
-    const clinicId = decoded.clinicId;
-    const userId = decoded.userId;
-
-    console.log("[TREATMENT GROUPS LIST] Request:", {
-      userRole,
-      clinicId,
-      patientId,
-      userId
-    });
-
-    // Build query based on user role
-    let query = supabase
-      .from("treatment_groups")
-      .select(`
-        id,
-        group_name as name,
-        patient_id,
-        primary_doctor_id,
-        doctor_ids,
-        description,
-        status,
-        created_at
-      `)
-      .eq("clinic_id", clinicId);
-
-    // Filter by patient if specified
-    if (patientId) {
-      query = query.eq("patient_id", patientId);
-    }
-
-    // Role-based filtering
-    if (userRole === "DOCTOR") {
-      // Doctors can only see groups where they are primary or assigned
-      query = query.or(`primary_doctor_id.eq.${userId},doctor_ids.cs.{${userId}}`);
-    }
-    // Admin can see all groups in their clinic
-
-    const { data, error } = await query
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("[TREATMENT GROUPS LIST] Error:", error);
-      return res.status(500).json({
+      return res.status(401).json({
         ok: false,
-        error: "failed_to_fetch_treatment_groups",
-        message: "Failed to fetch treatment groups"
+        error: "invalid_token"
       });
     }
 
-    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for ${userRole} ${clinicId}`);
+    const role = decoded.role;
+    const clinicId = decoded.clinicId;
+    const doctorId = decoded.doctorId || decoded.userId;
 
-    return res.json({
-      ok: true,
-      data: data || []
+    if (!role || !clinicId) {
+      return res.status(401).json({
+        ok: false,
+        error: "invalid_token_payload"
+      });
+    }
+
+    // ---- Admin: Tüm clinic grupları ----
+    if (role === "ADMIN") {
+      const { data, error } = await supabase
+        .from("treatment_groups")
+        .select("*")
+        .eq("clinic_id", clinicId)
+        .eq("patient_id", patientId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        return res.status(500).json({
+          ok: false,
+          error: "fetch_failed",
+          message: error.message
+        });
+      }
+
+      return res.json({
+        ok: true,
+        data: data || []
+      });
+    }
+
+    // ---- Doctor: Sadece kendi grupları ----
+    if (role === "DOCTOR") {
+      const { data, error } = await supabase
+        .from("treatment_groups")
+        .select("*")
+        .eq("clinic_id", clinicId)
+        .eq("patient_id", patientId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        return res.status(500).json({
+          ok: false,
+          error: "fetch_failed",
+          message: error.message
+        });
+      }
+
+      const filtered = (data || []).filter(group =>
+        group.primary_doctor_id === doctorId ||
+        (Array.isArray(group.doctor_ids) &&
+          group.doctor_ids.includes(doctorId))
+      );
+
+      return res.json({
+        ok: true,
+        data: filtered
+      });
+    }
+
+    return res.status(403).json({
+      ok: false,
+      error: "forbidden"
     });
 
   } catch (err) {
-    console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
+    console.error("TREATMENT_GROUPS_LIST_ERROR:", err);
     return res.status(500).json({
       ok: false,
-      error: "internal_error",
-      message: "Unexpected server error"
+      error: "internal_server_error"
     });
   }
 });
