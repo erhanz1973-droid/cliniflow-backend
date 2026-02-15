@@ -431,14 +431,20 @@
         
         // Create payload
         const payload = {
-          patient_id: patientId
+          patient_id: patientId,
+          doctor_id: primaryDoctorId
         };
         
         console.log("FINAL PAYLOAD:", payload);
         
         // Validation
-        if (!payload.patient_id) {
+        if (!patientId) {
           alert("Hasta seçmelisiniz");
+          return;
+        }
+
+        if (!primaryDoctorId) {
+          alert("En az bir doktor seçmelisiniz");
           return;
         }
         
