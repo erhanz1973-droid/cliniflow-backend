@@ -6870,6 +6870,9 @@ app.post("/api/doctor/encounters", async (req, res) => {
   }
 });
 
+// ⚠️ Admin architecture uses UUID id only.
+// patient_id (string) is legacy and not used in admin logic.
+
 /* ================= ADMIN PATIENT DETAIL ================= */
 app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
   try {
