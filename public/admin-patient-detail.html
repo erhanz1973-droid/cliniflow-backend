@@ -1454,6 +1454,22 @@
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
       loadPatientDetails();
+      
+      // Check for tab parameter in URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      if (tabParam && ['overview', 'groups', 'plan'].includes(tabParam)) {
+        // Wait a bit for patient data to load, then switch tab
+        setTimeout(() => {
+          // Find and click the appropriate tab button
+          const tabButtons = document.querySelectorAll('.tab-btn');
+          tabButtons.forEach(btn => {
+            if (btn.onclick && btn.onclick.toString().includes(`'${tabParam}'`)) {
+              btn.click();
+            }
+          });
+        }, 500);
+      }
     });
 
     // Close modal when clicking outside

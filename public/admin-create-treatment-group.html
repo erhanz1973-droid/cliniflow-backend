@@ -463,7 +463,15 @@
           } else {
             alert("Tedavi grubu başarıyla oluşturuldu!");
           }
-          window.location.href = "/admin-patients.html";
+          
+          // Redirect back to patient detail page with groups tab active
+          const currentPatientId = document.getElementById("patientSelect")?.value || patientId;
+          if (currentPatientId) {
+            window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
+          } else {
+            // Fallback to patients list if no patient ID
+            window.location.href = "/admin-patients.html";
+          }
         } else {
           alert("Hata: " + (data.error || "Bilinmeyen hata"));
         }
