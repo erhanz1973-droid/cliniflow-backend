@@ -5962,7 +5962,10 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       });
     }
 
-    res.json(data);
+    return res.json({
+      ok: true,
+      data: data
+    });
 
   } catch (err) {
     console.error("GROUP CREATE ERROR:", err);
@@ -10184,6 +10187,16 @@ app.post("/api/admin/timeline/events", adminAuth, async (req, res) => {
       error: "internal_error"
     });
   }
+});
+
+// Global error handler for production safety
+app.use((err, req, res, next) => {
+  console.error("UNHANDLED ERROR:", err);
+  res.status(500).json({
+    ok: false,
+    error: "internal_server_error",
+    message: "Unexpected server error"
+  });
 });
 
 // Force deployment - Mon Feb  9 17:09:05 +04 2026
