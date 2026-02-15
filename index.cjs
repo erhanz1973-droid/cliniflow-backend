@@ -6953,7 +6953,7 @@ app.get("/api/admin/patient/:patientId/messages", adminAuth, async (req, res) =>
 
     // Get messages for this patient
     const { data: messages, error: messagesError } = await supabase
-      .from("messages")
+      .from("patient_messages")
       .select("*")
       .eq("patient_id", patientId)
       .order("created_at", { ascending: true });
@@ -7007,11 +7007,11 @@ app.get("/api/admin/unread-count", adminAuth, async (req, res) => {
 
     // Get all unread messages for all patients in this clinic
     const { data: messages, error: messagesError } = await supabase
-      .from("messages")
+      .from("patient_messages")
       .select("*")
       .in("patient_id", patientIds)
-      .eq("from", "PATIENT")
-      .is("read", false);
+      .eq("from_role", "patient")
+      .is("read_at", null);
 
     if (messagesError) {
       console.error("[ADMIN UNREAD COUNT] Messages fetch error:", messagesError);
