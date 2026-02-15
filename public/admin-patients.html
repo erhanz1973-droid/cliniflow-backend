@@ -1352,8 +1352,11 @@
       }
     }
 
-    // Optimized unread count loading (single request)
+    // Optimized unread count loading (single request) - TEMPORARILY DISABLED
     async function loadUnreadCountOptimized() {
+      // Temporarily disabled to isolate performance issues
+      return;
+      
       const token = getAdminToken();
       if (!token) return;
       try {
@@ -1503,6 +1506,9 @@
     }
 
     async function loadAllBadges() {
+      // Temporarily disabled - only load patients badge
+      return;
+      
       await Promise.all([
         loadUnreadCountOptimized(),
         loadPendingPatientsCount(),
@@ -1595,12 +1601,12 @@
       
       // Load patients first (this manages its own loading state)
       loadPatients().then(() => {
-        // After patients are loaded, load badges and other UI elements
-        loadAllBadges();
+        // After patients are loaded, load only patients badge
+        loadPendingPatientsCount();
       }).catch(err => {
         console.error('Failed to load patients:', err);
-        // Still load badges even if patients fail
-        loadAllBadges();
+        // Still load patients badge even if patients fail
+        loadPendingPatientsCount();
       });
       
       // Add event listener for add patient button
@@ -1611,7 +1617,7 @@
     });
 
     // Auto-refresh badges every 30 seconds
-    setInterval(loadAllBadges, 30000);
+    // setInterval(loadAllBadges, 30000);
   </script>
 </body>
 </html>
