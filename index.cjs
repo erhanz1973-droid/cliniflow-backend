@@ -5950,28 +5950,29 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     const nextNumber = (count || 0) + 1;
     const autoName = `${patient.name} ${nextNumber}`;
 
-    // 3️⃣ Group oluştur
-    const { data: group, error: groupError } = await supabase
-      .from("treatment_groups")
-      .insert({
-        group_name: autoName,
-        patient_id,
-        clinic_id: clinicId,
-        status: "OPEN"
-      })
-      .select()
-      .single();
+    // 3️⃣ Group oluştur (TEMPORARILY DISABLED)
+    // const { data: group, error: groupError } = await supabase
+    //   .from("treatment_groups")
+    //   .insert({
+    //     group_name: autoName,
+    //     patient_id,
+    //     clinic_id: clinicId,
+    //     status: "OPEN"
+    //   })
+    //   .select()
+    //   .single();
 
-    if (groupError) {
-      return res.status(500).json({
-        ok: false,
-        error: groupError.message
-      });
-    }
+    // if (groupError) {
+    //   return res.status(500).json({
+    //     ok: false,
+    //     error: groupError.message
+    //   });
+    // }
 
+    // Return success without creating group
     return res.json({
       ok: true,
-      data: group
+      message: "Treatment endpoint redirected - no group created"
     });
 
   } catch (err) {

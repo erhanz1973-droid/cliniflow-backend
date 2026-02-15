@@ -1228,7 +1228,7 @@ if (selectedDoctors.size === 0) {
       }
 
       try {
-        const response = await fetch('/api/admin/treatment-groups', {
+        const response = await fetch('/api/admin/treatments', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${getAdminToken()}`,
