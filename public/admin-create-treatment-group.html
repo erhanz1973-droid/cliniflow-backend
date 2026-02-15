@@ -477,11 +477,22 @@
             alert("Tedavi grubu başarıyla oluşturuldu!");
           }
           
+          // Debug: Log patient ID extraction
+          const formPatientId = document.getElementById("patientSelect")?.value;
+          const urlPatientId = patientId;
+          // Also try to get from the payload we just sent
+          const submittedPatientId = payload.patient_id;
+          console.log("DEBUG - Patient IDs:", { formPatientId, urlPatientId, submittedPatientId });
+          
           // Redirect back to patient detail page with groups tab active
-          const currentPatientId = document.getElementById("patientSelect")?.value || patientId;
+          const currentPatientId = formPatientId || urlPatientId || submittedPatientId;
+          console.log("DEBUG - Final Patient ID:", currentPatientId);
+          
           if (currentPatientId) {
+            console.log("DEBUG - Redirecting to patient detail:", `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`);
             window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
           } else {
+            console.log("DEBUG - No patient ID found, redirecting to patients list");
             // Fallback to patients list if no patient ID
             window.location.href = "/admin-patients.html";
           }
