@@ -15,11 +15,29 @@ function authenticateToken(req, res, next) {
 
   jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
+      console.error("[AUTHENTICATE TOKEN] JWT verification error:", err);
       return res.status(403).json({ error: 'Invalid token' });
     }
 
+    console.log("[AUTHENTICATE TOKEN] Decoded token:", decoded);
+
     try {
-      // Get user info based on type
+      // 🔥 CRITICAL: Handle doctor tokens with role field
+      if (decoded.role === "DOCTOR") {
+        // Doctor tokens from login endpoint have role field
+        req.decoded = decoded;
+        req.user = {
+          id: decoded.doctorId,
+          role: decoded.role
+        };
+        console.log("[AUTHENTICATE TOKEN] Doctor user set:", { 
+          decoded: req.decoded, 
+          user: req.user 
+        });
+        return next();
+      }
+
+      // Get user info based on type (legacy tokens)
       let user;
       if (decoded.type === 'doctor') {
         const result = await pool.query('SELECT id, name, email FROM doctors WHERE id = $1', [decoded.id]);
