@@ -4524,6 +4524,56 @@ console.log("[INIT] Admin route aliases registered");
 
 /* ================= ADMIN STATIC ROUTES ================= */
 
+/* ================= ADMIN PATIENT DETAIL ================= */
+app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+
+    // Fetch patient from patients table using UUID id
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        patient_id,
+        name,
+        email,
+        phone,
+        department,
+        title,
+        experience_years,
+        languages,
+        specialties,
+        status,
+        clinic_id,
+        clinic_code,
+        license_number,
+        role,
+        created_at,
+        updated_at
+      `)
+      .eq("clinic_id", req.admin.clinicId)
+      .eq("id", patientId)
+      .single();
+
+    if (error || !patient) {
+      console.error("[ADMIN PATIENT DETAIL] Error:", error);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      patient: patient
+    });
+  } catch (err) {
+    console.error("[ADMIN PATIENT DETAIL] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= GET ACTIVE PATIENTS ================= */
 app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   try {
