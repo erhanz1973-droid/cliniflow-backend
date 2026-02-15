@@ -603,9 +603,9 @@
     <main>
       <!-- Tab Navigation -->
       <div class="tabs">
-        <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
-        <button class="tab-btn" onclick="showTab('groups')">Treatment Groups</button>
-        <button class="tab-btn" onclick="showTab('plan')">Treatment Plan</button>
+        <button class="tab-btn active" onclick="showTab('overview', this)">Overview</button>
+        <button class="tab-btn" onclick="showTab('groups', this)">Treatment Groups</button>
+        <button class="tab-btn" onclick="showTab('plan', this)">Treatment Plan</button>
       </div>
 
       <!-- Tab Content -->
@@ -1335,7 +1335,9 @@
     }
 
     // Tab switching with lazy loading
-    function showTab(tabId) {
+    function showTab(tabId, eventElement) {
+      console.log("DEBUG - showTab called with:", tabId);
+      
       // Hide all tab contents
       document.querySelectorAll(".tab-content").forEach(el => {
         el.style.display = "none";
@@ -1350,7 +1352,20 @@
       document.getElementById(tabId).style.display = "block";
 
       // Add active class to selected tab button
-      event.target.classList.add("active");
+      let targetButton = null;
+      if (eventElement) {
+        // Called from button click event
+        targetButton = eventElement;
+      } else {
+        // Called directly - find the button by tabId
+        targetButton = Array.from(document.querySelectorAll(".tab-btn")).find(btn => 
+          btn.onclick && btn.onclick.toString().includes(`'${tabId}'`)
+        );
+      }
+      
+      if (targetButton) {
+        targetButton.classList.add("active");
+      }
 
       // Lazy load data based on tab
       if (tabId === "groups" && currentPatient) {
@@ -1458,16 +1473,25 @@
       // Check for tab parameter in URL
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab');
+      console.log("DEBUG - URL tab parameter:", tabParam);
+      
       if (tabParam && ['overview', 'groups', 'plan'].includes(tabParam)) {
         // Wait a bit for patient data to load, then switch tab
         setTimeout(() => {
-          // Find and click the appropriate tab button
-          const tabButtons = document.querySelectorAll('.tab-btn');
-          tabButtons.forEach(btn => {
-            if (btn.onclick && btn.onclick.toString().includes(`'${tabParam}'`)) {
-              btn.click();
-            }
-          });
+          console.log("DEBUG - Attempting to switch to tab:", tabParam);
+          // Direct call to showTab function instead of clicking button
+          try {
+            showTab(tabParam);
+          } catch (error) {
+            console.error("DEBUG - Error switching tab:", error);
+            // Fallback to clicking button
+            const tabButtons = document.querySelectorAll('.tab-btn');
+            tabButtons.forEach(btn => {
+              if (btn.onclick && btn.onclick.toString().includes(`'${tabParam}'`)) {
+                btn.click();
+              }
+            });
+          }
         }, 500);
       }
     });

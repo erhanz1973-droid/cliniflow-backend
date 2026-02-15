@@ -160,8 +160,13 @@
         // Go back to patient detail page with groups tab active
         window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
       } else {
-        // Fallback to patients list if no patient ID
-        window.location.href = "/admin-patients.html";
+        // If no patient ID, try to get from URL or show error
+        if (patientId) {
+          window.location.href = `/admin-patient-detail.html?patientId=${patientId}&tab=groups`;
+        } else {
+          alert("Hasta bilgisi bulunamadı. Lütfen sayfayı yenileyin.");
+          console.error("No patient ID available for redirect");
+        }
       }
     }
 
@@ -492,9 +497,9 @@
             console.log("DEBUG - Redirecting to patient detail:", `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`);
             window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
           } else {
-            console.log("DEBUG - No patient ID found, redirecting to patients list");
-            // Fallback to patients list if no patient ID
-            window.location.href = "/admin-patients.html";
+            console.log("DEBUG - No patient ID found, showing error");
+            alert("Hasta bilgisi bulunamadı. Tedavi grubu oluşturuldu ancak hasta detayına dönülemedi.");
+            // Don't redirect to patients list - stay on page or show error
           }
         } else {
           alert("Hata: " + (data.error || "Bilinmeyen hata"));
