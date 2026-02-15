@@ -92,13 +92,7 @@
 
       <div id="form-container" style="display:none;">
         <form id="createTreatmentGroupForm">
-          <div class="form-group">
-            <label class="form-label" for="patientSelect">Hasta Seçimi *</label>
-            <select id="patientSelect" class="form-input" required>
-              <option value="">Hasta seçin...</option>
-            </select>
-          </div>
-
+          
           <div class="form-group">
             <label class="form-label" for="groupName">Grup Adı *</label>
             <input 
@@ -153,20 +147,13 @@
     }
 
     function goBackToPatient() {
-      // Try to get patient ID from form selection first, then URL parameter
-      const currentPatientId = document.getElementById("patientSelect")?.value || patientId;
+      const patientIdFromUrl = getUrlParameter("patientId");
       
-      if (currentPatientId) {
-        // Go back to patient detail page with groups tab active
-        window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
+      if (patientIdFromUrl) {
+        window.location.href = `/admin-patient-detail.html?patientId=${patientIdFromUrl}&tab=groups`;
       } else {
-        // If no patient ID, try to get from URL or show error
-        if (patientId) {
-          window.location.href = `/admin-patient-detail.html?patientId=${patientId}&tab=groups`;
-        } else {
-          alert("Hasta bilgisi bulunamadı. Lütfen sayfayı yenileyin.");
-          console.error("No patient ID available for redirect");
-        }
+        alert("Hasta bilgisi bulunamadı. Lütfen sayfayı yenileyin.");
+        console.error("No patient ID available for redirect");
       }
     }
 
@@ -198,68 +185,7 @@
       }, 5000);
     }
 
-    // Load patients
-    async function loadPatients() {
-      try {
-        const token = getAdminToken();
-        if (!token) {
-          throw new Error("Admin token bulunamadı");
-        }
-
-        const response = await fetch("/api/admin/patients", {
-          headers: {
-            Authorization: "Bearer " + token,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error("Hastalar yüklenemedi");
-        }
-
-        const data = await response.json();
-        if (data.ok) {
-          patients = data.patients || [];
-          renderPatients();
-        } else {
-          throw new Error(data.error || "Hastalar yüklenemedi");
-        }
-      } catch (error) {
-        console.error("Load patients error:", error);
-        showError("Hastalar yüklenemedi: " + error.message);
-      }
-    }
-
-    // Render patients dropdown
-    function renderPatients() {
-      const patientSelect = document.getElementById('patientSelect');
-      
-      if (!Array.isArray(patients) || patients.length === 0) {
-        console.warn("Patients list empty");  // 🔍 Debug
-        patientSelect.innerHTML = '<option value="">Hasta bulunamadı</option>';
-        return;
-      }
-
-      // Clear existing options except the first one
-      patientSelect.innerHTML = '<option value="">Hasta seçin...</option>';
-      
-      // Add patient options with UUID as value
-      patients.forEach(patient => {
-        console.log("Rendering patient:", patient);  // 🔍 Debug
-        const option = document.createElement('option');
-        option.value = patient.id;  // ✅ Use UUID (patients.id)
-        option.textContent = `${patient.name || "İsimsiz Hasta"} (${patient.patient_id})`;
-        patientSelect.appendChild(option);
-      });
-
-      // Set selected patient if coming from URL
-      if (patientId) {
-        const urlPatient = patients.find(p => p.id === patientId);
-        if (urlPatient) {
-          patientSelect.value = patientId;
-        }
-      }
-    }
-
+    
     // Hide messages
     function hideMessages() {
       document.getElementById("error").style.display = "none";
@@ -370,8 +296,8 @@
         // Get patient ID from URL (optional)
         patientId = getUrlParameter("patientId");
 
-        // Load patients and doctors
-        await Promise.all([loadPatients(), loadDoctors()]);
+        // Load doctors
+        await loadDoctors();
 
         // Show form
         document.getElementById("loading").style.display = "none";
@@ -411,10 +337,8 @@
         const formData = new FormData(document.getElementById("createTreatmentGroupForm"));
         console.log("FormData entries:", Array.from(formData.entries()));
         
-        // Manual collection
-        const patientId = document.getElementById("patientSelect")?.value || "";
-        const name = document.getElementById("groupName")?.value || "";
-        const description = document.getElementById("description")?.value || "";
+        // Get patient ID from URL
+        const patientIdFromUrl = getUrlParameter("patientId");
         
         // Get selected doctors
         const checkboxes = document.querySelectorAll('input[name="doctor_ids"]:checked');
@@ -422,24 +346,21 @@
         const primaryDoctorId = doctorIds[0] || "";
         
         console.log("MANUAL COLLECTION:", {
-          patientId,
-          name,
-          description,
-          doctorIds,
+          patientIdFromUrl,
           primaryDoctorId
         });
         
         // Create payload
         const payload = {
-          patient_id: patientId,
+          patient_id: patientIdFromUrl,
           doctor_id: primaryDoctorId
         };
         
         console.log("FINAL PAYLOAD:", payload);
         
         // Validation
-        if (!patientId) {
-          alert("Hasta seçmelisiniz");
+        if (!patientIdFromUrl) {
+          alert("Hasta ID bulunamadı");
           return;
         }
 
