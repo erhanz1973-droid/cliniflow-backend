@@ -5983,6 +5983,73 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN TREATMENTS CREATE ================= */
+app.post("/api/admin/treatments", adminAuth, async (req, res) => {
+  try {
+    const { patient_id, doctor_id, tooth_number, icd_code, description } = req.body;
+
+    if (!patient_id || !doctor_id || !tooth_number) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+
+    // Fetch patient
+    const { data: patient, error: fetchError } = await supabase
+      .from("patients")
+      .select("id, treatments")
+      .eq("id", patient_id)
+      .single();
+
+    if (fetchError || !patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    let treatments = patient.treatments || { teeth: {} };
+
+    if (typeof treatments === "string") {
+      try {
+        treatments = JSON.parse(treatments);
+      } catch {
+        treatments = { teeth: {} };
+      }
+    }
+
+    if (!treatments.teeth) {
+      treatments.teeth = {};
+    }
+
+    if (!treatments.teeth[tooth_number]) {
+      treatments.teeth[tooth_number] = [];
+    }
+
+    treatments.teeth[tooth_number].push({
+      id: crypto.randomUUID(),
+      doctor_id,
+      icd_code: icd_code || null,
+      description: description || "",
+      date: new Date().toISOString()
+    });
+
+    const { error: updateError } = await supabase
+      .from("patients")
+      .update({ treatments })
+      .eq("id", patient_id);
+
+    if (updateError) {
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+
+    res.json({ ok: true });
+
+  } catch (err) {
+    console.error("Treatment create error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= TREATMENT GROUPS (ROLE BASED LIST) ================= */
 app.get("/api/treatment-groups", async (req, res) => {
   try {
