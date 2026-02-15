@@ -5911,38 +5911,31 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
     const {
       patient_id,
-      doctor_ids,
-      primary_doctor_id,
-      name,
-      description
+      doctor_id
     } = req.body;
 
-    console.log("REQ.ADMIN FULL:", req.admin);  // 🔍 Debug full admin object
+    console.log("REQ.ADMIN FULL:", req.admin);  // Debug full admin object
 
     const clinicId = req.admin.clinicId;
-    const adminId = req.admin.adminId || req.admin.id;  // 🎯 Try both properties
+    const adminId = req.admin.adminId || req.admin.id;  // Try both properties
 
     console.log("[TREATMENT GROUPS CREATE] Request:", {
       patient_id,
-      doctor_ids,
-      primary_doctor_id,
-      name,
-      description,
+      doctor_id,
       clinicId,
       adminId
     });
 
     // Validation for required fields
-    if (!patient_id || !doctor_ids?.length || !primary_doctor_id) {
+    if (!patient_id || !doctor_id) {
       console.error("[TREATMENT GROUPS CREATE] Missing fields:", {
         patient_id: !!patient_id,
-        doctor_ids: !!doctor_ids?.length,
-        primary_doctor_id: !!primary_doctor_id
+        doctor_id: !!doctor_id
       });
       return res.status(400).json({
         ok: false,
         error: "missing_fields",
-        details: "patient_id, doctor_ids, and primary_doctor_id are required"
+        details: "patient_id and doctor_id are required"
       });
     }
 
@@ -5981,9 +5974,9 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
         p_clinic_id: clinicId,
         p_patient_id: patient_id,
         p_name: generatedGroupName, // Auto-generated name
-        p_description: description || "",
-        p_doctor_ids: doctor_ids,
-        p_primary_doctor_id: primary_doctor_id
+        p_description: "", // No description in simplified version
+        p_doctor_ids: [doctor_id], // Single doctor as array
+        p_primary_doctor_id: doctor_id // Selected doctor as primary
       }
     );
 
@@ -5992,43 +5985,6 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     if (error) {
       console.error("RPC Error:", error);
       console.error("FULL RPC ERROR:", JSON.stringify(error, null, 2));
-      
-      // Handle duplicate key error (23505) - make it idempotent
-      if (error.code === "23505") {
-        console.log("[TREATMENT GROUPS CREATE] Duplicate detected, finding existing group...");
-        
-        try {
-          // Find existing group with same patient_id and generated group name
-          const { data: existing, error: findError } = await supabase
-            .from("treatment_groups")
-            .select("id, group_name, status")
-            .eq("patient_id", patient_id)
-            .eq("group_name", generatedGroupName)
-            .eq("status", "ACTIVE")
-            .single();
-          
-          if (findError) {
-            console.error("[TREATMENT GROUPS CREATE] Find existing error:", findError);
-            return res.status(500).json({
-              ok: false,
-              error: "group_creation_failed",
-              details: "Failed to check existing group"
-            });
-          }
-          
-          if (existing) {
-            console.log("[TREATMENT GROUPS CREATE] Returning existing group:", existing);
-            return res.json({
-              ok: true,
-              group_id: existing.id,
-              duplicate: true,
-              message: "Treatment group already exists"
-            });
-          }
-        } catch (findErr) {
-          console.error("[TREATMENT GROUPS CREATE] Find existing exception:", findErr);
-        }
-      }
       
       return res.status(500).json({
         ok: false,
