@@ -77,7 +77,7 @@
   <div class="wrap">
     <header>
       <h1>🏥 Tedavi Grubu Oluştur</h1>
-      <button class="btn btn-secondary" onclick="window.location.href='/admin-patients.html'">
+      <button class="btn btn-secondary" onclick="goBackToPatient()">
         ← Hastalara Geri Dön
       </button>
     </header>
@@ -127,7 +127,7 @@
           </div>
 
           <div class="actions">
-            <button type="button" class="btn btn-secondary" onclick="window.location.href='/admin-patients.html'">
+            <button type="button" class="btn btn-secondary" onclick="goBackToPatient()">
               İptal
             </button>
             <button type="submit" class="btn btn-primary" id="submit-btn">
@@ -150,6 +150,19 @@
     function getUrlParameter(name) {
       const urlParams = new URLSearchParams(window.location.search);
       return urlParams.get(name);
+    }
+
+    function goBackToPatient() {
+      // Try to get patient ID from form selection first, then URL parameter
+      const currentPatientId = document.getElementById("patientSelect")?.value || patientId;
+      
+      if (currentPatientId) {
+        // Go back to patient detail page with groups tab active
+        window.location.href = `/admin-patient-detail.html?patientId=${currentPatientId}&tab=groups`;
+      } else {
+        // Fallback to patients list if no patient ID
+        window.location.href = "/admin-patients.html";
+      }
     }
 
     function getAdminToken() {
