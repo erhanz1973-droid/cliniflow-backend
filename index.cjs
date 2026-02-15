@@ -4136,7 +4136,8 @@ function verifyDoctorToken(req) {
   console.log("[VERIFY DOCTOR] Raw Authorization header:", authHeader);
 
   const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-  console.log("[VERIFY DOCTOR] Extracted token:", token);
+  console.log("[VERIFY DOCTOR] Extracted token:", token ? "EXISTS" : "MISSING");
+  console.log("[VERIFY DOCTOR] Token length:", token?.length || 0);
 
   if (!token) {
     console.log("[VERIFY DOCTOR] Missing token");
@@ -4144,7 +4145,8 @@ function verifyDoctorToken(req) {
   }
 
   try {
-    console.log("[VERIFY DOCTOR] Using JWT_SECRET:", JWT_SECRET);
+    console.log("[VERIFY DOCTOR] Using JWT_SECRET:", JWT_SECRET ? "EXISTS" : "MISSING");
+    console.log("[VERIFY DOCTOR] JWT_SECRET length:", JWT_SECRET?.length || 0);
 
     const decoded = jwt.verify(token, JWT_SECRET);
     console.log("[VERIFY DOCTOR] Decoded payload:", decoded);
@@ -4166,8 +4168,9 @@ function verifyDoctorToken(req) {
       }
     };
   } catch (err) {
-    console.log("JWT VERIFY ERROR MESSAGE:", err.message);
-    console.log("[VERIFY DOCTOR] JWT verify error:", err.message);
+    console.error("[VERIFY DOCTOR] JWT verification error:", err);
+    console.error("[VERIFY DOCTOR] Error name:", err.name);
+    console.error("[VERIFY DOCTOR] Error message:", err.message);
     return { ok: false, code: "invalid_token" };
   }
 }
