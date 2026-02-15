@@ -65,17 +65,50 @@ function authenticateToken(req, res, next) {
 
 // Require doctor role middleware
 function requireDoctor(req, res, next) {
-  if (req.user.type !== 'doctor') {
+  console.log("[REQUIRE DOCTOR] Checking user:", {
+    user: req.user,
+    decoded: req.decoded
+  });
+
+  // 🔥 CRITICAL: Check both role fields with case-insensitive comparison
+  const role = req.user?.role || req.user?.type;
+  const roleUpper = role?.toUpperCase();
+  
+  console.log("[REQUIRE DOCTOR] Role check:", {
+    role,
+    roleUpper,
+    isDoctor: roleUpper === 'DOCTOR'
+  });
+
+  if (!role || roleUpper !== 'DOCTOR') {
+    console.error("[REQUIRE DOCTOR] Access denied - not a doctor:", {
+      role,
+      roleUpper,
+      expected: 'DOCTOR'
+    });
     return res.status(403).json({ error: 'Doctor access required' });
   }
+
+  console.log("[REQUIRE DOCTOR] Access granted for doctor");
   next();
 }
 
 // Require admin role middleware
 function requireAdmin(req, res, next) {
-  if (req.user.type !== 'admin') {
+  // 🔥 CRITICAL: Check both role fields with case-insensitive comparison
+  const role = req.user?.role || req.user?.type;
+  const roleUpper = role?.toUpperCase();
+  
+  if (!role || roleUpper !== 'ADMIN') {
+    console.error("[REQUIRE ADMIN] Access denied - not an admin:", {
+      role,
+      roleUpper,
+      expected: 'ADMIN'
+    });
     return res.status(403).json({ error: 'Admin access required' });
   }
+
+  console.log("[REQUIRE ADMIN] Access granted for admin");
   next();
 }
 
