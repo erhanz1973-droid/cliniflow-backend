@@ -5845,7 +5845,7 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
           created_at
         )
       `)
-      .eq("patient_id", patientId)
+      .eq("id", patientId)
       .eq("treatment_groups.clinic_id", req.admin.clinicId)
       .single();
 
@@ -6902,7 +6902,7 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
         updated_at
       `)
       .eq("clinic_id", req.clinicId)
-      .eq("patient_id", patientId)
+      .eq("id", patientId)
       .single();
 
     if (error || !patient) {
@@ -8839,7 +8839,7 @@ app.get("/api/admin/patients/:patientId/health", adminAuth, async (req, res) => 
     const { data: patientData, error: patientError } = await supabase
       .from("patients")
       .select("id, patient_id")
-      .eq("patient_id", patientId)
+      .eq("id", patientId)
       .eq("clinic_id", clinicId)
       .maybeSingle();
 
