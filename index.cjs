@@ -6989,28 +6989,13 @@ app.get("/api/admin/unread-count", adminAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "missing_clinic_id" });
     }
 
-    // Get all patients for this clinic
-    const { data: patients, error: patientsError } = await supabase
-      .from("patients")
-      .select("id");
-
-    if (patientsError) {
-      console.error("[ADMIN UNREAD COUNT] Patients fetch error:", patientsError);
-      return res.status(500).json({ ok: false, error: "failed_to_fetch_patients" });
-    }
-
-    if (!patients || patients.length === 0) {
-      return res.json({ ok: true, unreadCount: 0 });
-    }
-
-    const patientIds = patients.map(p => p.id);
-
-    // Get all unread messages for all patients in this clinic
+    // Get all unread messages for this clinic
     // Using the actual schema: from_patient = true for patient messages
+    // Filter by clinic_code directly from messages table
     const { count, error: messagesError } = await supabase
       .from("messages")
       .select("id", { count: "exact", head: true })
-      .in("patient_id", patientIds)
+      .eq("clinic_code", req.admin.clinicCode || clinicId) // Use clinic_code from admin token
       .eq("from_patient", true);
 
     if (messagesError) {
