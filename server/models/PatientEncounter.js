@@ -1,85 +1,153 @@
 // server/models/PatientEncounter.js
-const { pool } = require('../config/database');
+const { getSupabaseClient } = require('../../supabase');
 
 class PatientEncounter {
   static async create(data) {
     const { patient_id, created_by_doctor_id, encounter_type = 'initial', treatment_group_id = null } = data;
     
-    const query = `
-      INSERT INTO patient_encounters (patient_id, created_by_doctor_id, encounter_type, status, treatment_group_id)
-      VALUES ($1, $2, $3, 'draft', $4)
-      RETURNING *
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [patient_id, created_by_doctor_id, encounter_type, treatment_group_id]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('patient_encounters')
+      .insert({
+        patient_id,
+        created_by_doctor_id,
+        encounter_type,
+        status: 'draft',
+        treatment_group_id
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] Create error:', error);
+      throw error;
+    }
+    
+    console.log('[PATIENT ENCOUNTER] Created:', result);
+    return result;
   }
 
   static async findById(id) {
-    const query = `
-      SELECT pe.*, p.name as patient_name, d.name as doctor_name,
-             tg.group_name as treatment_group_name
-      FROM patient_encounters pe
-      JOIN patients p ON pe.patient_id = p.id
-      JOIN doctors d ON pe.created_by_doctor_id = d.id
-      LEFT JOIN treatment_groups tg ON pe.treatment_group_id = tg.id
-      WHERE pe.id = $1
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [id]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('patient_encounters')
+      .select(`
+        *,
+        patients!inner(name),
+        doctors!inner(name),
+        treatment_groups!inner(group_name)
+      `)
+      .eq('id', id)
+      .single();
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] FindById error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
-  static async findByPatientId(patient_id) {
-    const query = `
-      SELECT pe.*, d.name as doctor_name,
-             tg.group_name as treatment_group_name
-      FROM patient_encounters pe
-      JOIN doctors d ON pe.created_by_doctor_id = d.id
-      LEFT JOIN treatment_groups tg ON pe.treatment_group_id = tg.id
-      WHERE pe.patient_id = $1
-      ORDER BY pe.created_at DESC
-    `;
+  static async findByPatientId(patientId) {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [patient_id]);
-    return result.rows;
+    const { data: result, error } = await supabase
+      .from('patient_encounters')
+      .select(`
+        *,
+        patients!inner(name),
+        doctors!inner(name),
+        treatment_groups!inner(group_name)
+      `)
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] FindByPatientId error:', error);
+      throw error;
+    }
+    
+    return result || [];
   }
 
   static async findByTreatmentGroup(treatment_group_id) {
-    const query = `
-      SELECT pe.*, p.name as patient_name, d.name as doctor_name
-      FROM patient_encounters pe
-      JOIN patients p ON pe.patient_id = p.id
-      JOIN doctors d ON pe.created_by_doctor_id = d.id
-      WHERE pe.treatment_group_id = $1
-      ORDER BY pe.created_at DESC
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [treatment_group_id]);
-    return result.rows;
+    const { data: result, error } = await supabase
+      .from('patient_encounters')
+      .select(`
+        *,
+        patients!inner(name),
+        doctors!inner(name)
+      `)
+      .eq('treatment_group_id', treatment_group_id)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] FindByTreatmentGroup error:', error);
+      throw error;
+    }
+    
+    return result || [];
   }
 
   static async updateStatus(id, status) {
-    const query = `
-      UPDATE patient_encounters 
-      SET status = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [id, status]);
-    return result.rows[0];
+    const { data: result, error } = await supabase
+      .from('patient_encounters')
+      .update({ 
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] UpdateStatus error:', error);
+      throw error;
+    }
+    
+    return result;
   }
 
   static async hasPrimaryDiagnosis(encounter_id) {
-    const query = `
-      SELECT COUNT(*) as count
-      FROM encounter_diagnoses
-      WHERE encounter_id = $1 AND is_primary = true
-    `;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase client not available');
+    }
     
-    const result = await pool.query(query, [encounter_id]);
-    return parseInt(result.rows[0].count) > 0;
+    const { data: result, error } = await supabase
+      .from('encounter_diagnoses')
+      .select('id')
+      .eq('encounter_id', encounter_id)
+      .eq('is_primary', true)
+      .single();
+    
+    if (error) {
+      console.error('[PATIENT ENCOUNTER] HasPrimaryDiagnosis error:', error);
+      throw error;
+    }
+    
+    return result !== null;
   }
 }
 
