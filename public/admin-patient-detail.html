@@ -1110,34 +1110,44 @@
 
     // Open create treatment group modal
     async function openCreateTreatmentGroupModal() {
-      if (!currentPatient) return;
+  document.getElementById('createTreatmentGroupModal').classList.add('show');
+  loadDoctors();
 
-      document.getElementById('createTreatmentGroupModal').classList.add('show');
+  if (!currentPatient) return;
 
-      try {
-        const res = await fetch(
-          `/api/admin/treatment-groups?patient_id=${currentPatient.id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${getAdminToken()}` 
-            }
-          }
-        );
-
-        const result = await res.json();
-        const existingCount = result.ok && Array.isArray(result.data)
-          ? result.data.length
-          : 0;
-
-        const autoName = `${currentPatient.name} ${existingCount + 1}`;
-
-        document.getElementById("groupName").value = autoName;
-
-      } catch (err) {
-        console.error("Auto group name error:", err);
-        document.getElementById("groupName").value = `${currentPatient.name} 1`;
+  try {
+    const response = await fetch(
+      `/api/treatment-groups?patientId=${currentPatient.id}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${getAdminToken()}` 
+        }
       }
+    );
+
+    const data = await response.json();
+
+    let existingCount = 0;
+
+    if (data.ok && Array.isArray(data.data)) {
+      existingCount = data.data.length;
     }
+
+    const patientName =
+      currentPatient.name ||
+      `${currentPatient.first_name || ''} ${currentPatient.last_name || ''}`.trim() ||
+      "Group";
+
+    const autoName = `${patientName} ${existingCount + 1}`;
+
+    document.getElementById("groupName").value = autoName;
+
+  } catch (error) {
+    console.error("Auto group name error:", error);
+    document.getElementById("groupName").value =
+      `${currentPatient.name || "Group"} 1`;
+  }
+}
 
     // Close create treatment group modal
     function closeCreateTreatmentGroupModal() {
