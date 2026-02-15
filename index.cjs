@@ -5977,6 +5977,90 @@ app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= TREATMENT GROUPS LIST (Admin & Doctor) ================= */
+app.get("/api/treatment-groups", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const token = authHeader.substring(7);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const { patientId } = req.query;
+    const userRole = decoded.role; // Get role from JWT
+    const clinicId = decoded.clinicId;
+    const userId = decoded.userId;
+
+    console.log("[TREATMENT GROUPS LIST] Request:", {
+      userRole,
+      clinicId,
+      patientId,
+      userId
+    });
+
+    // Build query based on user role
+    let query = supabase
+      .from("treatment_groups")
+      .select(`
+        id,
+        group_name as name,
+        patient_id,
+        primary_doctor_id,
+        doctor_ids,
+        description,
+        status,
+        created_at
+      `)
+      .eq("clinic_id", clinicId);
+
+    // Filter by patient if specified
+    if (patientId) {
+      query = query.eq("patient_id", patientId);
+    }
+
+    // Role-based filtering
+    if (userRole === "DOCTOR") {
+      // Doctors can only see groups where they are primary or assigned
+      query = query.or(`primary_doctor_id.eq.${userId},doctor_ids.cs.{${userId}}`);
+    }
+    // Admin can see all groups in their clinic
+
+    const { data, error } = await query
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[TREATMENT GROUPS LIST] Error:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "failed_to_fetch_treatment_groups",
+        message: "Failed to fetch treatment groups"
+      });
+    }
+
+    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for ${userRole} ${clinicId}`);
+
+    return res.json({
+      ok: true,
+      data: data || []
+    });
+
+  } catch (err) {
+    console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: "Unexpected server error"
+    });
+  }
+});
+
 /* ================= ADMIN TASK ASSIGNMENT ================= */
 app.post("/api/admin/tasks", adminAuth, async (req, res) => {
   try {
