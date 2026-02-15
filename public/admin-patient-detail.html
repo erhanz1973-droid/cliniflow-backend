@@ -1189,17 +1189,16 @@
         const response = await fetch('/api/admin/assign-patient', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${getAdminToken()}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            patientId: currentPatient.patient_id,
-            doctorId: selectedAssignDoctorId
-          })
-        });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+// Update primary doctor section
+function updatePrimaryDoctorSection() {
+const section = document.getElementById('primaryDoctorSection');
+const container = document.getElementById('primaryDoctorList');
+  
+if (selectedDoctors.size === 0) {
+  section.style.display = 'none';
+  return;
+}
         }
 
         const data = await response.json();
