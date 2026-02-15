@@ -6516,30 +6516,24 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
     let query = supabase
       .from("treatment_groups")
       .select(`
-        id,
-        group_name,
-        description,
-        status,
-        created_at,
-        patient_id,
-        patients!inner (
-          id,
-          name,
-          phone
-        ),
+        *,
+        patients!tg_patient_fk (*),
         treatment_group_doctors (
           doctor_id,
           is_primary,
-          doctors (
-            id,
-            name,
-            email
-          )
+          doctors (*)
         )
       `)
       .eq("clinic_id", clinicId);
 
     // 🔥 Add patientId filter if provided
+    if (!patientId) {
+      return res.status(400).json({
+        ok: false,
+        error: "patient_id_required"
+      });
+    }
+    
     if (patientId) {
       query = query.eq("patient_id", patientId);
     }
