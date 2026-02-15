@@ -457,6 +457,115 @@
       font-size: 14px;
       font-weight: 500;
     }
+
+    /* Tab Navigation Styles */
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid var(--b);
+      margin-bottom: 24px;
+      background: var(--card);
+      border-radius: 8px 8px 0 0;
+      overflow: hidden;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 16px 24px;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border-bottom: 3px solid transparent;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tab-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+    }
+    .tab-btn.active {
+      color: var(--p);
+      background: rgba(37, 99, 235, 0.1);
+      border-bottom-color: var(--p);
+    }
+    .tab-content {
+      display: block;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .treatment-plan-section {
+      margin-top: 24px;
+    }
+    .plan-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    /* Treatment Plan Styles */
+    .treatment-plan-display {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .plan-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--b);
+    }
+    .plan-header h4 {
+      margin: 0;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .plan-date {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .teeth-grid {
+      display: grid;
+      gap: 12px;
+    }
+    .tooth-item {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--b);
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .tooth-header {
+      margin-bottom: 8px;
+      color: var(--p);
+      font-weight: 600;
+    }
+    .treatments-list {
+      display: grid;
+      gap: 6px;
+    }
+    .treatment-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 4px;
+    }
+    .treatment-name {
+      color: #fff;
+      font-size: 13px;
+    }
+    .treatment-date {
+      color: var(--muted);
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
@@ -492,64 +601,95 @@
     </header>
 
     <main>
-      <div class="patient-detail-card">
-        <div class="patient-header">
-          <div class="patient-info">
-            <h2 id="patientName">Yükleniyor...</h2>
-            <div class="patient-meta">
-              <span class="meta-item" id="patientId">ID: -</span>
-              <span class="meta-item" id="patientPhone">📱 -</span>
-              <span class="meta-item" id="patientEmail">📧 -</span>
-              <span class="status" id="patientStatus">-</span>
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+        <button class="tab-btn" onclick="showTab('groups')">Treatment Groups</button>
+        <button class="tab-btn" onclick="showTab('plan')">Treatment Plan</button>
+      </div>
+
+      <!-- Tab Content -->
+      <div id="overview" class="tab-content">
+        <div class="patient-detail-card">
+          <div class="patient-header">
+            <div class="patient-info">
+              <h2 id="patientName">Yükleniyor...</h2>
+              <div class="patient-meta">
+                <span class="meta-item" id="patientId">ID: -</span>
+                <span class="meta-item" id="patientPhone">📱 -</span>
+                <span class="meta-item" id="patientEmail">📧 -</span>
+                <span class="status" id="patientStatus">-</span>
+              </div>
+            </div>
+            <div class="action-buttons">
+              <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
+                ➕ Treatment Group Oluştur
+              </button>
+              <button class="btn btn-primary" onclick="openAssignPatientModal()">
+                👨‍⚕️ Hasta Doktora Ata
+              </button>
+              <button class="btn btn-primary" onclick="openTreatment()">
+                🦷 Treatment
+              </button>
+              <button class="btn btn-secondary" onclick="openChat()">
+                💬 Chat
+              </button>
             </div>
           </div>
-          <div class="action-buttons">
-            <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
-              ➕ Treatment Group Oluştur
-            </button>
-            <button class="btn btn-primary" onclick="openAssignPatientModal()">
-              👨‍⚕️ Hasta Doktora Ata
-            </button>
-            <button class="btn btn-primary" onclick="openTreatment()">
-              🦷 Treatment
-            </button>
-            <button class="btn btn-secondary" onclick="openChat()">
-              💬 Chat
-            </button>
-          </div>
-        </div>
 
-        <div class="info-grid">
-          <div class="info-item">
-            <div class="info-label">Klinik Kodu</div>
-            <div class="info-value" id="clinicCode">-</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Kayıt Tarihi</div>
-            <div class="info-value" id="createdAt">-</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Son Güncelleme</div>
-            <div class="info-value" id="updatedAt">-</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Durum</div>
-            <div class="info-value" id="statusDetail">-</div>
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="info-label">Klinik Kodu</div>
+              <div class="info-value" id="clinicCode">-</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Kayıt Tarihi</div>
+              <div class="info-value" id="createdAt">-</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Son Güncelleme</div>
+              <div class="info-value" id="updatedAt">-</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Durum</div>
+              <div class="info-value" id="statusDetail">-</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="treatment-groups-section">
-        <div class="section-header">
-          <h3 class="section-title">Treatment Groups</h3>
-          <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
-            ➕ Yeni Group
-          </button>
+      <div id="groups" class="tab-content" style="display:none;">
+        <div class="treatment-groups-section">
+          <div class="section-header">
+            <h3 class="section-title">Treatment Groups</h3>
+            <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
+              ➕ Yeni Group
+            </button>
+          </div>
+          <div id="treatmentGroupsList">
+            <div class="empty-state">
+              <h3>Treatment Group Yok</h3>
+              <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
+            </div>
+          </div>
         </div>
-        <div id="treatmentGroupsList">
-          <div class="empty-state">
-            <h3>Treatment Group Yok</h3>
-            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
+      </div>
+
+      <div id="plan" class="tab-content" style="display:none;">
+        <div class="treatment-plan-section">
+          <div class="section-header">
+            <h3 class="section-title">Treatment Plan</h3>
+            <div class="plan-actions">
+              <button class="btn btn-primary" onclick="openTreatment()">
+                🦷 Treatment Planı Düzenle
+              </button>
+            </div>
+          </div>
+          <div id="treatmentPlanContent">
+            <div class="empty-state">
+              <h3>Treatment Plan</h3>
+              <p>Hasta tedavi planı yükleniyor...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -1192,6 +1332,123 @@
       if (currentPatient) {
         window.open(`/chat.html?patientId=${currentPatient.id}`, '_blank');
       }
+    }
+
+    // Tab switching with lazy loading
+    function showTab(tabId) {
+      // Hide all tab contents
+      document.querySelectorAll(".tab-content").forEach(el => {
+        el.style.display = "none";
+      });
+
+      // Remove active class from all tab buttons
+      document.querySelectorAll(".tab-btn").forEach(el => {
+        el.classList.remove("active");
+      });
+
+      // Show selected tab content
+      document.getElementById(tabId).style.display = "block";
+
+      // Add active class to selected tab button
+      event.target.classList.add("active");
+
+      // Lazy load data based on tab
+      if (tabId === "groups" && currentPatient) {
+        loadTreatmentGroups();
+      }
+
+      if (tabId === "plan" && currentPatient) {
+        loadTreatmentPlan();
+      }
+    }
+
+    // Load treatment plan for patient
+    async function loadTreatmentPlan() {
+      if (!currentPatient) return;
+
+      const token = localStorage.getItem("admin_token");
+      const planContainer = document.getElementById("treatmentPlanContent");
+
+      try {
+        const res = await fetch(
+          `/api/patient/${currentPatient.id}/treatments`,
+          {
+            headers: {
+              "Authorization": `Bearer ${token}` 
+            }
+          }
+        );
+
+        const result = await res.json();
+
+        if (!result.ok) {
+          console.error("Failed to load treatment plan:", result.error);
+          planContainer.innerHTML = `
+            <div class="empty-state">
+              <h3>Treatment Plan Yüklenemedi</h3>
+              <p>Hata: ${result.error || 'Bilinmeyen hata'}</p>
+            </div>
+          `;
+          return;
+        }
+
+        renderTreatmentPlan(result.data);
+      } catch (error) {
+        console.error('Load treatment plan error:', error);
+        planContainer.innerHTML = `
+          <div class="empty-state">
+            <h3>Treatment Plan Yüklenemedi</h3>
+            <p>Treatment plan yüklenirken hata oluştu.</p>
+          </div>
+        `;
+      }
+    }
+
+    // Render treatment plan
+    function renderTreatmentPlan(plan) {
+      const container = document.getElementById("treatmentPlanContent");
+      
+      if (!plan || !plan.teeth || Object.keys(plan.teeth).length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>Treatment Plan</h3>
+            <p>Bu hasta için henüz tedavi planı oluşturulmadı.</p>
+            <button class="btn btn-primary" onclick="openTreatment()">
+              🦷 Treatment Plan Oluştur
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      // Simple treatment plan display
+      const teethHtml = Object.entries(plan.teeth).map(([toothId, treatments]) => `
+        <div class="tooth-item">
+          <div class="tooth-header">
+            <strong>Diş ${toothId}</strong>
+          </div>
+          <div class="treatments-list">
+            ${treatments.map(treatment => `
+              <div class="treatment-item">
+                <span class="treatment-name">${treatment.procedure || 'İsimsiz Tedavi'}</span>
+                <span class="treatment-date">${formatDate(treatment.date)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      container.innerHTML = `
+        <div class="treatment-plan-display">
+          <div class="plan-header">
+            <h4>Tedavi Planı</h4>
+            <span class="plan-date">Son güncelleme: ${formatDate(plan.updatedAt)}</span>
+          </div>
+          <div class="teeth-grid">
+            ${teethHtml}
+          </div>
+        </div>
+      `;
     }
 
     // Initialize
