@@ -4340,46 +4340,94 @@ app.get("/api/doctor/patients", async (req, res) => {
       return res.status(401).json({ ok: false, error: v.code });
     }
 
-    const { clinicId } = v.decoded;
+    const { clinicId, doctorId } = v.decoded;
 
-    // Get all patients for this clinic
+    console.log("[DOCTOR PATIENTS] Request:", {
+      clinicId,
+      doctorId
+    });
+
+    // 🔥 SECURITY: Only get patients assigned to this doctor via treatment groups
+    // Step 1: Get treatment groups where this doctor is primary or assigned
+    const { data: treatmentGroups, error: groupsError } = await supabase
+      .from("treatment_groups")
+      .select("patient_id")
+      .eq("clinic_id", clinicId)
+      .or(`primary_doctor_id.eq.${doctorId},doctor_ids.cs.{${doctorId}}`)
+      .eq("status", "ACTIVE");
+
+    if (groupsError) {
+      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_treatment_groups",
+        message: "Failed to fetch assigned treatment groups"
+      });
+    }
+
+    // Step 2: Extract unique patient IDs from treatment groups
+    const patientIds = [...new Set(treatmentGroups?.map(group => group.patient_id))].filter(Boolean);
+    
+    if (patientIds.length === 0) {
+      console.log("[DOCTOR PATIENTS] No assigned patients found for doctor:", doctorId);
+      return res.json({
+        ok: true,
+        data: []
+      });
+    }
+
+    console.log("[DOCTOR PATIENTS] Found assigned patient IDs:", patientIds);
+
+    // Step 3: Get patient details for assigned patients only
     const { data: patients, error } = await supabase
       .from("patients")
       .select(`
         id,
         name,
-        name,
         phone,
         email,
         status,
+        department,
         created_at
       `)
+      .in("id", patientIds)
       .eq("clinic_id", clinicId)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("[DOCTOR PATIENTS] Error:", error);
-      return res.status(500).json({ ok: false, error: "internal_error" });
+      console.error("[DOCTOR PATIENTS] Patients error:", error);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_patients",
+        message: "Failed to fetch assigned patients"
+      });
     }
 
-    const formattedPatients = patients.map(patient => ({
+    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} assigned patients for doctor ${doctorId}`);
+
+    const formattedPatients = (patients || []).map(patient => ({
       id: patient.id,
       patientId: patient.id,
       name: patient.name,
       phone: patient.phone,
       email: patient.email,
       status: patient.status,
+      department: patient.department,
       createdAt: new Date(patient.created_at).getTime(),
     }));
 
-    res.json({
+    return res.json({
       ok: true,
-      patients: formattedPatients
+      data: formattedPatients
     });
+
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR PATIENTS] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    console.error("[DOCTOR PATIENTS] Fatal error:", err);
+    return res.status(500).json({ 
+      ok: false, 
+      error: "internal_error",
+      message: "Unexpected server error"
+    });
   }
 });
 
