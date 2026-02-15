@@ -431,18 +431,14 @@
         
         // Create payload
         const payload = {
-          patient_id: patientId,
-          doctor_ids: doctorIds,
-          primary_doctor_id: primaryDoctorId,
-          name: name.trim(),
-          description: description.trim()
+          patient_id: patientId
         };
         
         console.log("FINAL PAYLOAD:", payload);
         
         // Validation
-        if (!payload.patient_id || !payload.name || !payload.doctor_ids.length) {
-          alert("Lütfen tüm zorunlu alanları doldurun");
+        if (!payload.patient_id) {
+          alert("Hasta seçmelisiniz");
           return;
         }
         
