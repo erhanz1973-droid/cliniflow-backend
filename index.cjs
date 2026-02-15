@@ -5909,79 +5909,93 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
 /* ================= ADMIN TREATMENT GROUPS CREATE ================= */
 app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
   try {
-    const { patient_id } = req.body;
-    const clinicId = req.admin.clinicId;
+    const { patient_id, doctor_id } = req.body;
 
-    if (!patient_id) {
-      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    if (!patient_id || !doctor_id) {
+      return res.status(400).json({
+        ok: false,
+        error: "patient_id ve doctor_id zorunludur"
+      });
     }
 
-    // 1️⃣ Get patient
+    const clinicId = req.admin.clinicId;
+
+    // 1️⃣ Hastayı getir
     const { data: patient, error: patientError } = await supabase
       .from("patients")
       .select("id, name")
       .eq("id", patient_id)
-      .eq("clinic_id", clinicId)
       .single();
 
     if (patientError || !patient) {
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+      return res.status(404).json({
+        ok: false,
+        error: "Hasta bulunamadı"
+      });
     }
 
-    // 2️⃣ Count existing groups
-    const { data: existingGroups } = await supabase
+    // 2️⃣ Mevcut group sayısını bul
+    const { count, error: countError } = await supabase
       .from("treatment_groups")
-      .select("id")
+      .select("*", { count: "exact", head: true })
       .eq("patient_id", patient_id);
 
-    const groupNumber = (existingGroups?.length || 0) + 1;
+    if (countError) {
+      return res.status(500).json({
+        ok: false,
+        error: "Group sayısı alınamadı"
+      });
+    }
 
-    const groupName = `${patient.name} - ${groupNumber}`;
+    const nextNumber = (count || 0) + 1;
+    const autoName = `${patient.name} ${nextNumber}`;
 
-    // 3️⃣ Create group
-    const { data: newGroup, error: groupError } = await supabase
+    // 3️⃣ Group oluştur
+    const { data: group, error: groupError } = await supabase
       .from("treatment_groups")
       .insert({
-        group_name: groupName,
+        group_name: autoName,
         patient_id,
         clinic_id: clinicId,
-        created_by_admin_id: req.admin.adminId,
         status: "OPEN"
       })
       .select()
       .single();
 
     if (groupError) {
-      return res.status(500).json({ ok: false, error: "group_creation_failed" });
+      return res.status(500).json({
+        ok: false,
+        error: groupError.message
+      });
     }
 
-    // 4️⃣ Auto assign first active doctor in clinic as primary
-    const { data: doctor } = await supabase
-      .from("doctors")
-      .select("id")
-      .eq("clinic_id", clinicId)
-      .eq("status", "ACTIVE")
-      .limit(1)
-      .single();
+    // 4️⃣ Doktoru ekle (primary)
+    const { error: memberError } = await supabase
+      .from("treatment_group_doctors")
+      .insert({
+        group_id: group.id,
+        doctor_id,
+        is_primary: true
+      });
 
-    if (doctor) {
-      await supabase
-        .from("treatment_group_doctors")
-        .insert({
-          group_id: newGroup.id,
-          doctor_id: doctor.id,
-          is_primary: true
-        });
+    if (memberError) {
+      return res.status(500).json({
+        ok: false,
+        error: memberError.message
+      });
     }
 
     return res.json({
       ok: true,
-      group: newGroup
+      data: group
     });
 
-  } catch (error) {
-    console.error("Create group error:", error);
-    return res.status(500).json({ ok: false, error: "internal_error" });
+  } catch (err) {
+    console.error("Create treatment group error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "Internal server error"
+    });
   }
 });
 
