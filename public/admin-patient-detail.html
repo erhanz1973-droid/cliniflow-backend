@@ -705,6 +705,10 @@
         <div class="modal-body">
           <form id="createTreatmentGroupForm">
             <div class="form-group">
+              <label class="form-label">Group Adı (Otomatik Oluşturulacak)</label>
+              <input type="text" class="form-input" id="groupName" readonly>
+            </div>
+            <div class="form-group">
               <p style="color: #6aa6ff; font-size: 14px; margin: 0;">
                 Tedavi grubu otomatik olarak oluşturulacaktır.<br>
                 Grup adı: <strong>{Patient Name} - {Group Number}</strong><br>
@@ -1105,8 +1109,34 @@
     }
 
     // Open create treatment group modal
-    function openCreateTreatmentGroupModal() {
+    async function openCreateTreatmentGroupModal() {
+      if (!currentPatient) return;
+
       document.getElementById('createTreatmentGroupModal').classList.add('show');
+
+      try {
+        const res = await fetch(
+          `/api/admin/treatment-groups?patient_id=${currentPatient.id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${getAdminToken()}` 
+            }
+          }
+        );
+
+        const result = await res.json();
+        const existingCount = result.ok && Array.isArray(result.data)
+          ? result.data.length
+          : 0;
+
+        const autoName = `${currentPatient.name} ${existingCount + 1}`;
+
+        document.getElementById("groupName").value = autoName;
+
+      } catch (err) {
+        console.error("Auto group name error:", err);
+        document.getElementById("groupName").value = `${currentPatient.name} 1`;
+      }
     }
 
     // Close create treatment group modal
