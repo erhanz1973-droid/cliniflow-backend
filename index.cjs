@@ -2094,21 +2094,67 @@ app.post("/api/admin/treatments-v2", adminAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "patient_required" });
     }
 
+    // 🔥 CRITICAL: Log request body for debugging
+    console.log("[CREATE TREATMENT V2] REQUEST BODY:", req.body);
+    console.log("[CREATE TREATMENT V2] PARSED VALUES:", {
+      clinicId,
+      patient_id,
+      doctor_id,
+      type,
+      notes,
+      items
+    });
+
+    // 🔥 CRITICAL: Validate UUID formats
+    if (!clinicId || !clinicId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      console.error("[CREATE TREATMENT V2] Invalid clinicId:", clinicId);
+      return res.status(400).json({ ok: false, error: "invalid_clinic_id" });
+    }
+
+    if (!patient_id || !patient_id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      console.error("[CREATE TREATMENT V2] Invalid patient_id:", patient_id);
+      return res.status(400).json({ ok: false, error: "invalid_patient_id" });
+    }
+
+    if (!doctor_id || !doctor_id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      console.error("[CREATE TREATMENT V2] Invalid doctor_id:", doctor_id);
+      return res.status(400).json({ ok: false, error: "invalid_doctor_id" });
+    }
+
+    // 🔥 CRITICAL: Build payload with explicit values
+    const payload = {
+      clinic_id: clinicId,
+      patient_id: patient_id,
+      doctor_id: doctor_id,
+      type: type || "general",
+      notes: notes || "",
+      created_at: new Date().toISOString(), // 🔥 CRITICAL: Explicit created_at
+      updated_at: new Date().toISOString()  // 🔥 CRITICAL: Explicit updated_at
+    };
+
+    console.log("[CREATE TREATMENT V2] PAYLOAD:", JSON.stringify(payload, null, 2));
+
     const { data: treatment, error: treatmentError } = await supabase
       .from("treatments_v2")
-      .insert({
-        clinic_id: clinicId,
-        patient_id,
-        doctor_id,
-        type,
-        notes
-      })
-      .select()
-      .single();
+      .insert([payload]) // 🔥 CRITICAL: Array format
+      .select();
+
+    // 🔥 CRITICAL: Log insert results
+    console.log("[CREATE TREATMENT V2] INSERT DATA:", JSON.stringify(data, null, 2));
+    console.log("[CREATE TREATMENT V2] INSERT ERROR:", JSON.stringify(error, null, 2));
 
     if (treatmentError) {
-      console.error("[CREATE TREATMENT V2] Error:", treatmentError);
-      return res.status(500).json({ ok: false, error: "creation_failed" });
+      console.error("[CREATE TREATMENT V2] Full Error Details:", {
+        message: treatmentError.message,
+        details: treatmentError.details,
+        hint: treatmentError.hint,
+        code: treatmentError.code
+      });
+      return res.status(500).json({ 
+        ok: false, 
+        error: treatmentError.message || "creation_failed",
+        details: treatmentError
+      });
     }
 
     if (items && items.length > 0) {
@@ -2176,24 +2222,65 @@ app.get("/api/admin/treatments-v2/:patientId", adminAuth, async (req, res) => {
 
 app.post("/api/admin/treatments-v2/:patientId", adminAuth, async (req, res) => {
   try {
-    const clinicId = req.clinicId;
+    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+    const clinicId = req.admin?.clinicId;
     const patientId = req.params.patientId;
     const { type, notes, items } = req.body;
 
+    // 🔥 CRITICAL: Log request body for debugging
+    console.log("[ADMIN TREATMENTS V2 POST] REQUEST BODY:", req.body);
+    console.log("[ADMIN TREATMENTS V2 POST] PARSED VALUES:", {
+      clinicId,
+      patientId,
+      type,
+      notes,
+      items
+    });
+
+    // 🔥 CRITICAL: Validate UUID formats
+    if (!clinicId || !clinicId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      console.error("[ADMIN TREATMENTS V2 POST] Invalid clinicId:", clinicId);
+      return res.status(400).json({ ok: false, error: "invalid_clinic_id" });
+    }
+
+    if (!patientId || !patientId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      console.error("[ADMIN TREATMENTS V2 POST] Invalid patientId:", patientId);
+      return res.status(400).json({ ok: false, error: "invalid_patient_id" });
+    }
+
+    // 🔥 CRITICAL: Build payload with explicit values
+    const payload = {
+      clinic_id: clinicId,
+      patient_id: patientId,
+      type: type || "general",
+      notes: notes || "",
+      created_at: new Date().toISOString(), // 🔥 CRITICAL: Explicit created_at
+      updated_at: new Date().toISOString()  // 🔥 CRITICAL: Explicit updated_at
+    };
+
+    console.log("[ADMIN TREATMENTS V2 POST] PAYLOAD:", JSON.stringify(payload, null, 2));
+
     const { data: treatment, error: treatmentError } = await supabase
       .from("treatments_v2")
-      .insert({
-        clinic_id: clinicId,
-        patient_id: patientId,
-        type,
-        notes
-      })
-      .select()
-      .single();
+      .insert([payload]) // 🔥 CRITICAL: Array format
+      .select();
+
+    // 🔥 CRITICAL: Log insert results
+    console.log("[ADMIN TREATMENTS V2 POST] INSERT DATA:", JSON.stringify(data, null, 2));
+    console.log("[ADMIN TREATMENTS V2 POST] INSERT ERROR:", JSON.stringify(error, null, 2));
 
     if (treatmentError) {
-      console.error("[ADMIN TREATMENTS V2 POST] Error:", treatmentError);
-      return res.status(500).json({ ok: false, error: "creation_failed" });
+      console.error("[ADMIN TREATMENTS V2 POST] Full Error Details:", {
+        message: treatmentError.message,
+        details: treatmentError.details,
+        hint: treatmentError.hint,
+        code: treatmentError.code
+      });
+      return res.status(500).json({ 
+        ok: false, 
+        error: treatmentError.message || "creation_failed",
+        details: treatmentError
+      });
     }
 
     if (items && items.length > 0) {
