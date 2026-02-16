@@ -6964,6 +6964,37 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN ASSIGN PRIMARY DOCTOR ================= */
+app.post("/api/admin/assign-primary-doctor", adminAuth, async (req, res) => {
+  try {
+    const { patient_id, doctor_id } = req.body;
+
+    if (!patient_id || !doctor_id) {
+      return res.status(400).json({ ok: false, error: "patient_id_and_doctor_id_required" });
+    }
+
+    if (!req.admin.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+
+    const { error } = await supabase
+      .from("patients")
+      .update({ primary_doctor_id: doctor_id })
+      .eq("id", patient_id)
+      .eq("clinic_id", req.admin.clinicId);
+
+    if (error) {
+      console.error("Assign primary doctor error:", error);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Assign primary doctor exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN PATIENT MESSAGES ================= */
 app.get("/api/admin/patient/:patientId/messages", adminAuth, async (req, res) => {
   try {

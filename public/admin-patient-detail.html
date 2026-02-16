@@ -987,7 +987,7 @@
       }
 
       try {
-        const response = await fetch('/api/admin/assign-patient', {
+        const response = await fetch('/api/admin/assign-primary-doctor', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${getAdminToken()}`,
@@ -1004,10 +1004,10 @@
           throw new Error(data.error || 'Atama başarısız');
         }
 
-        alert("Primary doctor assigned successfully");
+        alert("Primary doktor başarıyla atandı");
         closeAssignPatientModal();
         loadPatientDetails();
-        
+
       } catch (error) {
         console.error('Assign patient error:', error);
         alert('Hasta atama başarısız: ' + error.message);
