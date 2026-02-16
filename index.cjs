@@ -2577,11 +2577,15 @@ app.post("/api/admin/login", async (req, res) => {
 
     res.json({
       ok: true,
-      token,
-      admin: {
+      user: {
+        id: clinic.id,
+        token: token,
+        type: "admin",
+        role: "ADMIN",
         email: clinic.email,
-        clinicCode: clinic.clinic_code,
-        name: clinic.name
+        name: clinic.name,
+        clinicId: clinic.id,
+        clinicCode: clinic.clinic_code
       }
     });
   } catch (err) {
@@ -2650,13 +2654,19 @@ app.post("/api/patient/login", async (req, res) => {
 
     res.json({
       ok: true,
-      token,
-      patientId: patient.name,
-      name: patient.name || "",
-      phone: patient.phone || "",
-      status: patient.status || "PENDING",
-      role: patient.role || "PATIENT",
-      clinicCode: clinic.clinic_code || "",
+      user: {
+        id: patient.name, // Using patient.name as ID for now
+        token: token,
+        type: "patient",
+        role: patient.role || "PATIENT",
+        name: patient.name || "",
+        email: "", // Patients don't have email
+        phone: patient.phone || "",
+        patientId: patient.name,
+        clinicId: patient.clinic_id,
+        clinicCode: clinic.clinic_code || "",
+        status: patient.status || "PENDING"
+      }
     });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
@@ -5405,17 +5415,18 @@ app.post("/api/doctor/login", async (req, res) => {
 
     res.json({
       ok: true,
-      token,
-      doctor: {
-        id: authData.user.id, // 🔥 CRITICAL: Return auth.user.id
-        doctorId: doctor.doctor_id,
+      user: {
+        id: authData.user.id,
+        token: token,
+        type: "doctor",
+        role: "DOCTOR",
+        doctorId: authData.user.id,
         name: doctor.full_name,
         email: doctor.email,
         phone: doctor.phone,
         clinicId: doctor.clinic_id,
         clinicCode: doctor.clinic_code,
-        status: doctor.status,
-        role: doctor.role
+        status: doctor.status
       }
     });
 
