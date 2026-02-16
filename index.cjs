@@ -5842,9 +5842,9 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
 });
 
 /* ================= ADMIN PATIENT TREATMENT GROUP ================= */
-app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req, res) => {
-  try {
-    const { patientId } = req.params;
+// app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req, res) => {
+//   try {
+//     const { patientId } = req.params;
 
     if (!patientId) {
       return res.status(400).json({ ok: false, error: "patientId_required" });
@@ -5918,13 +5918,12 @@ app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req,
       ok: true,
       treatmentGroup
     });
-
-  } catch (err) {
-    console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ADMIN PATIENT TREATMENT GROUP] Error:", err);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
+//   } catch (err) {
+//     console.error("REGISTER_DOCTOR_ERROR:", err);
+//     console.error("[ADMIN PATIENT TREATMENT GROUP] Error:", err);
+//     res.status(500).json({ ok: false, error: "internal_error" });
+//   }
+// });
 
 /* ================= ADMIN TREATMENT GROUPS CREATE ================= */
 app.post("/api/admin/treatment-groups", adminAuth, async (req, res) => {
@@ -6072,25 +6071,25 @@ app.post("/api/admin/treatments", adminAuth, async (req, res) => {
 });
 
 /* ================= TREATMENT GROUPS (ROLE BASED LIST) ================= */
-app.get("/api/treatment-groups", async (req, res) => {
-  try {
-    const patientId = String(req.query.patientId || "").trim();
-    if (!patientId) {
-      return res.status(400).json({
-        ok: false,
-        error: "patient_id_required"
-      });
-    }
-
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return res.status(401).json({
-        ok: false,
-        error: "missing_token"
-      });
-    }
-
-    const token = authHeader.substring(7);
+// app.get("/api/treatment-groups", async (req, res) => {
+//   try {
+//     const patientId = String(req.query.patientId || "").trim();
+//     if (!patientId) {
+//       return res.status(400).json({
+//         ok: false,
+//         error: "patient_id_required"
+//       });
+//     }
+// 
+//     const authHeader = req.headers.authorization;
+//     if (!authHeader?.startsWith("Bearer ")) {
+//       return res.status(401).json({
+//         ok: false,
+//         error: "missing_token"
+//       });
+//     }
+// 
+//     const token = authHeader.substring(7);
 
     let decoded;
     try {
@@ -6578,25 +6577,25 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 });
 
 /* ================= ADMIN TREATMENT GROUPS LIST ================= */
-app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
-  try {
-    // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
-    const clinicId = req.admin?.clinicId;
-    const { patientId } = req.query;
-
-    // 🔥 CRITICAL: Add undefined guard
-    if (!clinicId) {
-      console.error("[TREATMENT GROUPS LIST] Missing clinicId:", { 
-        admin: req.admin,
-        clinicId: clinicId 
-      });
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Missing clinicId" 
-      });
-    }
-
-    // 🔥 Debug log
+// app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
+//   try {
+//     // 🔥 CRITICAL: Use req.admin.clinicId instead of req.clinicId
+//     const clinicId = req.admin?.clinicId;
+//     const { patientId } = req.query;
+// 
+//     // 🔥 CRITICAL: Add undefined guard
+//     if (!clinicId) {
+//       console.error("[TREATMENT GROUPS LIST] Missing clinicId:", { 
+//         admin: req.admin,
+//         clinicId: clinicId 
+//       });
+//       return res.status(400).json({ 
+//         ok: false, 
+//         error: "Missing clinicId" 
+//       });
+//     }
+// 
+//     // 🔥 Debug log
     console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId, "patientId:", patientId);
 
     let query = supabase
@@ -6641,7 +6640,6 @@ app.get("/api/admin/treatment-groups", adminAuth, async (req, res) => {
       ok: true,
       data: data || []
     });
-
   } catch (err) {
     console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
     res.status(500).json({ 

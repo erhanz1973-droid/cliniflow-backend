@@ -578,7 +578,6 @@
         <a href="/admin-dashboard.html" class="nav-link">Dashboard</a>
         <a href="/admin-patients.html" class="nav-link active">Hastalar</a>
         <a href="/admin-doctor-applications.html" class="nav-link">Doktorlar</a>
-        <a href="/admin-treatment-groups.html" class="nav-link">Treatment Groups</a>
       </div>
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
@@ -701,12 +700,11 @@
           </div>
 
           <div style="background: var(--card); border: 1px solid var(--b); border-radius: 8px; padding: 16px; margin-top: 20px;">
-            <h5 style="margin: 0 0 8px 0; color: #fff;">📋 Atama Kuralları</h5>
+            <h5 style="margin: 0 0 8px 0; color: #fff;">�‍⚕️ Primary Doctor Assignment</h5>
             <ul style="margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px;">
-              <li>Hasta için aktif treatment group yoksa otomatik oluşturulur</li>
-              <li>Seçilen doktor group'a primary olarak eklenir</li>
-              <li>Doktor sadece üyesi olduğu group'larda işlem yapabilir</li>
-              <li>Treatment plan ve encounter hastasız oluşturulamaz</li>
+              <li>Each patient has exactly one primary doctor</li>
+              <li>Simple assignment via doctor selection</li>
+              <li>No complex treatment groups</li>
             </ul>
           </div>
         </div>

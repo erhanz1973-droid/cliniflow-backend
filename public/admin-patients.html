@@ -474,7 +474,6 @@
           <span>Doctor Applications</span>
           <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
         </a>
-        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
         <a href="/admin-chat.html" class="nav-link" id="chatNavLink">
           <span data-i18n="dashboard.nav.chat">Chat</span>
           <span id="chatBadge" class="nav-badge" style="display:none;"></span>
@@ -503,7 +502,6 @@
         </div>
         <div class="actions">
           <button class="btn-travel" onclick="openTravel(getSelectedPatientId())" data-i18n="patients.travel"></button>
-          <button class="btn-treatment" onclick="openTreatment(getSelectedPatientId())" data-i18n="patients.treatment"></button>
           <button class="btn-health" onclick="openHealth(getSelectedPatientId())" data-i18n="patients.health"></button>
           <button class="btn-chat" onclick="openChat(getSelectedPatientId())" data-i18n="patients.chat"></button>
           <button class="btn-ghost" onclick="copySelectedPatientId()" data-i18n="patients.copyId"></button>
@@ -953,7 +951,6 @@
             
             <div class="card-actions" onclick="event.stopPropagation()">
               ${status === 'PENDING' ? `<button class="btn-approve" onclick="approvePatient('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.approve') : t('patients.approve')}</button>` : ''}
-              <button class="btn-treatment" onclick="openTreatment('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.treatment') : t('patients.treatment')}</button>
               <button class="btn-chat" onclick="openChat('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.chat') : t('patients.chat')}</button>
               <button class="btn-travel" onclick="openTravel('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.travel') : t('patients.travel')}</button>
               <button class="btn-health" onclick="openHealth('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.health') : t('patients.health')}</button>
@@ -1182,15 +1179,6 @@
     function openTravel(patientId) {
       setSelectedPatient(patientId, getPatientNameById(patientId));
       window.location.href = `/admin-travel.html?patientId=${encodeURIComponent(patientId)}`;
-    }
-
-    function openTreatment(patientId) {
-      // Get the actual patient object to find the UUID (id field)
-      const patient = ALL_PATIENTS.find(p => (p.patientId || p.patient_id || '') === patientId);
-      const actualPatientId = patient?.id || patientId; // Use UUID (id) if available
-      
-      setSelectedPatient(patientId, getPatientNameById(patientId));
-      window.location.href = `/admin-patient-detail.html?patientId=${encodeURIComponent(actualPatientId)}`;
     }
 
     function openChat(patientId) {
