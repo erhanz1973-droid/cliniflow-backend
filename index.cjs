@@ -663,6 +663,22 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
       patientUuid = statusCheck.patient.id;
     }
 
+    // Doctor can only access their own assigned patients
+    if (req.role === "DOCTOR") {
+      const { data: patient } = await supabase
+        .from("patients")
+        .select("primary_doctor_id")
+        .eq("id", patientId)
+        .single();
+
+      if (!patient || patient.primary_doctor_id !== req.doctorId) {
+        return res.status(403).json({
+          ok: false,
+          error: "not_assigned_doctor"
+        });
+      }
+    }
+
     // 2. patient_treatments tablosundan treatments_data'yı çek
     const { data: treatmentsData, error: treatmentsError } = await supabase
       .from("patient_treatments")
@@ -6916,22 +6932,18 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
       .from("patients")
       .select(`
         id,
-        patient_id,
         name,
         email,
         phone,
-        department,
-        title,
-        experience_years,
-        languages,
-        specialties,
         status,
-        clinic_id,
-        clinic_code,
-        license_number,
-        role,
         created_at,
-        updated_at
+        updated_at,
+        primary_doctor_id,
+        doctors:primary_doctor_id (
+          id,
+          name,
+          email
+        )
       `)
       .eq("clinic_id", req.admin.clinicId)
       .eq("id", patientId)

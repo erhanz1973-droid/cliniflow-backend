@@ -604,7 +604,6 @@
       <!-- Tab Navigation -->
       <div class="tabs">
         <button class="tab-btn active" onclick="showTab('overview', this)">Overview</button>
-        <button class="tab-btn" onclick="showTab('groups', this)">Treatment Groups</button>
         <button class="tab-btn" onclick="showTab('plan', this)">Treatment Plan</button>
       </div>
 
@@ -647,29 +646,16 @@
               <div class="info-value" id="createdAt">-</div>
             </div>
             <div class="info-item">
+              <div class="info-label">Primary Doctor</div>
+              <div class="info-value" id="primaryDoctorName">-</div>
+            </div>
+            <div class="info-item">
               <div class="info-label">Son Güncelleme</div>
               <div class="info-value" id="updatedAt">-</div>
             </div>
             <div class="info-item">
               <div class="info-label">Durum</div>
               <div class="info-value" id="statusDetail">-</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div id="groups" class="tab-content" style="display:none;">
-        <div class="treatment-groups-section">
-          <div class="section-header">
-            <h3 class="section-title">Treatment Groups</h3>
-            <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
-              ➕ Yeni Group
-            </button>
-          </div>
-          <div id="treatmentGroupsList">
-            <div class="empty-state">
-              <h3>Treatment Group Yok</h3>
-              <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
             </div>
           </div>
         </div>
@@ -835,123 +821,14 @@
       document.getElementById('createdAt').textContent = formatDate(currentPatient.created_at);
       document.getElementById('updatedAt').textContent = formatDate(currentPatient.updated_at);
       document.getElementById('statusDetail').textContent = getStatusText(currentPatient.status);
-    }
-
-    // Load treatment groups for this patient
-    async function loadTreatmentGroups() {
-      if (!currentPatient) return;
-
-      try {
-        const res = await fetch(
-          `/api/admin/treatment-groups?patient_id=${currentPatient.id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${getAdminToken()}`, 
-            }
-          }
-        );
-
-        const result = await res.json();
-
-        if (!result.ok) {
-          console.error("Failed to load groups:", result.error);
-          document.getElementById('treatmentGroupsList').innerHTML = `
-            <div class="empty-state">
-              <h3>Treatment Groups Yüklenemedi</h3>
-              <p>Hata: ${result.error || 'Bilinmeyen hata'}</p>
-            </div>
-          `;
-          return;
-        }
-
-        renderGroups(result.data || []);
-      } catch (error) {
-        console.error('Load treatment groups error:', error);
-        document.getElementById('treatmentGroupsList').innerHTML = `
-          <div class="empty-state">
-            <h3>Treatment Groups Yüklenemedi</h3>
-            <p>Hata: ${error.message || 'Bilinmeyen hata'}</p>
-          </div>
-        `;
-      }
-    }
-
-    // Render treatment groups
-    function renderGroups(groups) {
-      const container = document.getElementById("treatmentGroupsList");
-      container.innerHTML = "";
-
-      if (!groups.length) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <h3>Treatment Group Yok</h3>
-            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
-          </div>
-        `;
-        return;
-      }
-
-      groups.forEach(group => {
-        // Use nested relation: group.treatment_group_doctors
-        const primary = group.treatment_group_doctors?.find(d => d.is_primary);
-        const doctorCount = group.treatment_group_doctors?.length || 0;
-        
-        const groupElement = document.createElement("div");
-        groupElement.className = "treatment-group-item";
-        groupElement.innerHTML = `
-          <div class="group-header">
-            <strong>${group.group_name || 'İsimsiz Grup'}</strong>
-            <span class="group-status ${group.status?.toLowerCase() || 'active'}">${group.status || 'ACTIVE'}</span>
-          </div>
-          <div class="group-details">
-            <div class="detail-item">
-              <span class="label">Primary Doctor:</span>
-              <span class="value">${primary?.doctors?.name || '-'}</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Assigned Doctors:</span>
-              <span class="value">${doctorCount} doctor(s)</span>
-            </div>
-            <div class="detail-item">
-              <span class="label">Created:</span>
-              <span class="value">${formatDate(group.created_at)}</span>
-            </div>
-            ${group.description ? `
-              <div class="detail-item">
-                <span class="label">Description:</span>
-                <span class="value">${group.description}</span>
-              </div>
-            ` : ''}
-          </div>
-        `;
-        container.appendChild(groupElement);
-      });
-    }
-
-    // Display treatment groups
-    function displayTreatmentGroups(groups) {
-      const container = document.getElementById('treatmentGroupsList');
       
-      if (groups.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <h3>Treatment Group Yok</h3>
-            <p>Bu hasta için henüz treatment group oluşturulmadı.</p>
-          </div>
-        `;
-        return;
+      // Display primary doctor
+      if (currentPatient.doctors) {
+        document.getElementById("primaryDoctorName").textContent =
+          currentPatient.doctors.name || "-";
+      } else {
+        document.getElementById("primaryDoctorName").textContent = "-";
       }
-
-      container.innerHTML = groups.map(group => `
-        <div class="doctor-selector">
-          <h4 style="margin: 0 0 8px 0; color: #fff;">${group.name}</h4>
-          <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 14px;">${group.description || 'Açıklama yok'}</p>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <span class="meta-item">👥 ${group.member_count || 0} doktor</span>
-            <span class="meta-item">📅 ${formatDate(group.created_at)}</span>
-          </div>
-        </div>
-      `).join('');
     }
 
     // Load doctors for selection
@@ -1189,30 +1066,23 @@
         const response = await fetch('/api/admin/assign-patient', {
           method: 'POST',
           headers: {
-
-// Update primary doctor section
-function updatePrimaryDoctorSection() {
-const section = document.getElementById('primaryDoctorSection');
-const container = document.getElementById('primaryDoctorList');
-  
-if (selectedDoctors.size === 0) {
-  section.style.display = 'none';
-  return;
-}
-        }
+            'Authorization': `Bearer ${getAdminToken()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            patient_id: currentPatient.id,
+            doctor_id: selectedAssignDoctorId
+          })
+        });
 
         const data = await response.json();
         if (!data.ok) {
           throw new Error(data.error || 'Atama başarısız');
         }
 
-        const assignmentType = data.data.assignmentType;
-        const groupName = data.data.treatmentGroup.name;
-        
-        alert(`Hasta başarıyla doktora atandı!\n\n${assignmentType === 'new_group' ? 'Yeni Treatment Group oluşturuldu: ' + groupName : 'Mevcut Treatment Group kullanıldı: ' + groupName}`);
-        
+        alert("Primary doctor assigned successfully");
         closeAssignPatientModal();
-        loadTreatmentGroups();
+        loadPatientDetails();
         
       } catch (error) {
         console.error('Assign patient error:', error);
