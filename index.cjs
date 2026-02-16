@@ -8036,7 +8036,14 @@ app.get("/api/icd/search", async (req, res) => {
 
     if (error) {
       console.error("[ICD SEARCH] Database error:", error);
-      return res.status(500).json({ ok: false, error: "search_failed" });
+      console.error("[ICD SEARCH] Full error object:", JSON.stringify(error, null, 2));
+      return res.status(500).json({ 
+        ok: false, 
+        error: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
     }
 
     console.log("[ICD SEARCH] Found results:", codes?.length || 0);
