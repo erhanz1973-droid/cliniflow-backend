@@ -8010,6 +8010,47 @@ app.get("/api/icd10/search", async (req, res) => {
   }
 });
 
+/* ================= ICD SEARCH ================= */
+app.get("/api/icd/search", async (req, res) => {
+  try {
+    console.log("[ICD SEARCH] Request received:", req.query);
+    
+    const { q } = req.query;
+    
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.json({
+        ok: true,
+        results: []
+      });
+    }
+
+    console.log("[ICD SEARCH] Searching for:", q);
+
+    const { data: codes, error } = await supabase
+      .from("icd10_codes")
+      .select("code, title")
+      .or(`code.ilike.%${q}%,title.ilike.%${q}%`)
+      .order("code", { ascending: true })
+      .limit(20);
+
+    if (error) {
+      console.error("[ICD SEARCH] Database error:", error);
+      return res.status(500).json({ ok: false, error: "search_failed" });
+    }
+
+    console.log("[ICD SEARCH] Found results:", codes?.length || 0);
+
+    res.json({
+      ok: true,
+      results: codes || []
+    });
+
+  } catch (err) {
+    console.error("[ICD SEARCH] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
