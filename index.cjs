@@ -4397,38 +4397,7 @@ app.get("/api/doctor/patients", async (req, res) => {
       doctorId
     });
 
-    // 🔥 SECURITY: Only get patients assigned to this doctor via treatment groups
-    // Step 1: Get treatment groups where this doctor is primary or assigned
-    const { data: treatmentGroups, error: groupsError } = await supabase
-      .from("treatment_groups")
-      .select("patient_id")
-      .eq("clinic_id", clinicId)
-      .or(`primary_doctor_id.eq.${doctorId},doctor_ids.cs.{${doctorId}}`)
-      .eq("status", "ACTIVE");
-
-    if (groupsError) {
-      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "failed_to_fetch_treatment_groups",
-        message: "Failed to fetch assigned treatment groups"
-      });
-    }
-
-    // Step 2: Extract unique patient IDs from treatment groups
-    const patientIds = [...new Set(treatmentGroups?.map(group => group.patient_id))].filter(Boolean);
-    
-    if (patientIds.length === 0) {
-      console.log("[DOCTOR PATIENTS] No assigned patients found for doctor:", doctorId);
-      return res.json({
-        ok: true,
-        data: []
-      });
-    }
-
-    console.log("[DOCTOR PATIENTS] Found assigned patient IDs:", patientIds);
-
-    // Step 3: Get patient details for assigned patients only
+    // 🔥 SIMPLE: Get patients where this doctor is the primary doctor
     const { data: patients, error } = await supabase
       .from("patients")
       .select(`
@@ -4440,8 +4409,9 @@ app.get("/api/doctor/patients", async (req, res) => {
         department,
         created_at
       `)
-      .in("id", patientIds)
+      .eq("primary_doctor_id", doctorId)
       .eq("clinic_id", clinicId)
+      .eq("status", "ACTIVE")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -4453,7 +4423,7 @@ app.get("/api/doctor/patients", async (req, res) => {
       });
     }
 
-    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} assigned patients for doctor ${doctorId}`);
+    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for primary doctor ${doctorId}`);
 
     const formattedPatients = (patients || []).map(patient => ({
       id: patient.id,
