@@ -4458,7 +4458,7 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
         patient_encounters!inner(
           id,
           patient_id,
-          doctor_id,
+          created_by_doctor_id as doctor_id,
           status as encounter_status,
           created_at as encounter_created_at
         ),
@@ -4666,7 +4666,7 @@ app.patch("/api/doctor/treatment-plans/:id/submit", async (req, res) => {
         *,
         patient_encounters!inner(
           id,
-          doctor_id,
+          created_by_doctor_id as doctor_id,
           patient_id,
           status
         )
@@ -4728,7 +4728,7 @@ app.patch("/api/doctor/treatment-plans/:id/complete", async (req, res) => {
         *,
         patient_encounters!inner(
           id,
-          doctor_id,
+          created_by_doctor_id as doctor_id,
           patient_id,
           status
         ),
@@ -7107,6 +7107,7 @@ app.post("/api/doctor/encounters", async (req, res) => {
       .select("id")
       .eq("patient_id", patient_id)
       .eq("status", "ACTIVE")
+      .eq("created_by_doctor_id", doctorId)
       .maybeSingle();
 
     if (existing) {
@@ -7121,12 +7122,12 @@ app.post("/api/doctor/encounters", async (req, res) => {
       .from("patient_encounters")
       .insert({
         patient_id: patient_id,
-        doctor_id: doctorId,
+        created_by_doctor_id: doctorId,
         status: "ACTIVE",
         notes: notes || "Initial examination",
         created_at: new Date().toISOString()
       })
-      .select("id, patient_id, doctor_id, status, created_at, notes")
+      .select("id, patient_id, created_by_doctor_id, status, created_at, notes")
       .single();
 
     if (encounterError) {
@@ -7167,7 +7168,7 @@ app.get("/api/doctor/encounters", async (req, res) => {
           email
         )
       `)
-      .eq("doctor_id", doctorId)
+      .eq("created_by_doctor_id", doctorId)
       .eq("status", "ACTIVE")
       .order("created_at", { ascending: false });
 
@@ -7242,7 +7243,7 @@ app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
           email
         )
       `)
-      .eq("doctor_id", doctorId)
+      .eq("created_by_doctor_id", doctorId)
       .eq("patient_id", patientId)
       .order("created_at", { ascending: false });
 
