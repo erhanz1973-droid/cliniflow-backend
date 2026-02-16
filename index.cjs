@@ -4435,115 +4435,359 @@ app.get("/api/doctor/patients", async (req, res) => {
 });
 
 /* ================= DOCTOR TREATMENT PLANS ================= */
+// GET /api/doctor/treatment-plans - Get doctor's treatment plans
 app.get("/api/doctor/treatment-plans", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const { clinicId } = v.decoded;
+    const { doctorId } = v.decoded;
 
-    // Get all treatment plans with patient info
+    // Get treatment plans with encounter and patient info
     const { data: treatmentPlans, error } = await supabase
       .from("treatment_plans")
       .select(`
         *,
+        patient_encounters!inner(
+          id,
+          patient_id,
+          doctor_id,
+          status as encounter_status,
+          created_at as encounter_created_at
+        ),
         patients!inner(
+          id,
           name,
-          name
+          phone,
+          email
+        ),
+        treatment_items!left(
+          id,
+          tooth_fdi_code,
+          procedure_code,
+          procedure_description,
+          status as item_status,
+          is_visible_to_patient
         )
       `)
-      .eq("clinic_id", clinicId)
-      .order("planned_date", { ascending: false });
+      .eq("created_by_doctor_id", doctorId)
+      .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("[DOCTOR TREATMENT PLANS] Error:", error);
+      console.error("[TREATMENT PLANS] Error fetching plans:", error);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    const formattedPlans = treatmentPlans.map(plan => ({
-      id: plan.id,
-      patientId: plan.patients.name,
-      patientName: plan.patients.name,
-      toothNumber: plan.tooth_number,
-      diagnosis: plan.diagnosis,
-      procedure: plan.procedure,
-      price: plan.price,
-      status: plan.status,
-      plannedDate: plan.planned_date,
-      completedDate: plan.completed_date,
-      notes: plan.notes,
-    }));
+    // Group by treatment plan and count items
+    const formattedPlans = treatmentPlans.reduce((acc, plan) => {
+      const planId = plan.id;
+      if (!acc[planId]) {
+        acc[planId] = {
+          id: plan.id,
+          encounter_id: plan.encounter_id,
+          status: plan.status,
+          created_at: plan.created_at,
+          submitted_at: plan.submitted_at,
+          completed_at: plan.completed_at,
+          patient: {
+            id: plan.patients.id,
+            name: plan.patients.name,
+            phone: plan.patients.phone,
+            email: plan.patients.email
+          },
+          encounter: {
+            id: plan.patient_encounters.id,
+            status: plan.encounter_status,
+            created_at: plan.encounter_created_at
+          },
+          items: [],
+          items_count: 0
+        };
+      }
+      
+      // Add item if exists
+      if (plan.treatment_items.id) {
+        acc[planId].items.push({
+          id: plan.treatment_items.id,
+          tooth_fdi_code: plan.treatment_items.tooth_fdi_code,
+          procedure_code: plan.treatment_items.procedure_code,
+          procedure_description: plan.treatment_items.procedure_description,
+          status: plan.treatment_items.item_status,
+          is_visible_to_patient: plan.treatment_items.is_visible_to_patient
+        });
+        acc[planId].items_count++;
+      }
+      
+      return acc;
+    }, {});
 
     res.json({
       ok: true,
-      treatmentPlans: formattedPlans
+      treatment_plans: Object.values(formattedPlans)
     });
+
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR TREATMENT PLANS] Error:", error);
+    console.error("[TREATMENT PLANS] Get exception:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-/* ================= DOCTOR CREATE TREATMENT PLAN ================= */
+/* ================= DOCTOR TREATMENT PLANS ================= */
+
+// POST /api/doctor/treatment-plans - Create new treatment plan
 app.post("/api/doctor/treatment-plans", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const { clinicId } = v.decoded;
-    const { patientId, toothNumber, diagnosis, procedure, price, plannedDate, notes } = req.body || {};
+    const { doctorId, clinicId } = v.decoded;
+    const { encounter_id, items } = req.body || {};
 
     // Validation
-    if (!patientId || !toothNumber || !diagnosis || !procedure || !price || !plannedDate) {
+    if (!encounter_id || !items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
-    // Get patient info to verify they belong to this clinic
-    const { data: patient, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .eq("clinic_id", clinicId)
+    // Rule 1: Token validation - Doctor role check handled by verifyDoctorToken
+
+    // Rule 2: Encounter kontrolü
+    const { data: encounter, error: encounterError } = await supabase
+      .from("patient_encounters")
+      .select("*")
+      .eq("id", encounter_id)
       .single();
 
-    if (patientError || !patient) {
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    if (encounterError || !encounter) {
+      return res.status(404).json({ ok: false, error: "encounter_not_found" });
     }
 
-    // Create treatment plan
-    const { data: treatmentPlan, error: treatmentError } = await supabase
+    if (encounter.status !== "ACTIVE") {
+      return res.status(400).json({ ok: false, error: "encounter_not_active" });
+    }
+
+    if (encounter.doctor_id !== doctorId) {
+      return res.status(403).json({ ok: false, error: "not_assigned_doctor" });
+    }
+
+    // Rule 3: Aynı encounter içinde aktif plan var mı kontrol et
+    const { data: existingPlans, error: existingPlansError } = await supabase
+      .from("treatment_plans")
+      .select("id, status")
+      .eq("encounter_id", encounter_id)
+      .in("status", ["DRAFT", "PROPOSED", "SUBMITTED"]);
+
+    if (existingPlansError) {
+      console.error("[TREATMENT PLANS] Error checking existing plans:", existingPlansError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    if (existingPlans && existingPlans.length > 0) {
+      return res.status(400).json({ ok: false, error: "active_plan_already_exists" });
+    }
+
+    // Rule 4: Plan oluştur
+    const { data: treatmentPlan, error: planError } = await supabase
       .from("treatment_plans")
       .insert({
-        clinic_id: clinicId,
-        patient_id: patient.id,
-        tooth_number: toothNumber,
-        diagnosis: diagnosis,
-        procedure: procedure,
-        price: price,
-        planned_date: plannedDate,
-        notes: notes,
-        status: "planned",
+        encounter_id: encounter_id,
+        status: "DRAFT",
+        created_by_doctor_id: doctorId,
+        assigned_doctor_id: doctorId,
+        created_at: new Date().toISOString()
       })
       .select()
       .single();
 
-    if (treatmentError) {
-      console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", treatmentError);
+    if (planError) {
+      console.error("[TREATMENT PLANS] Error creating plan:", planError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    // Rule 5: Plan items ekle
+    const planItems = items.map(item => ({
+      treatment_plan_id: treatmentPlan.id,
+      tooth_fdi_code: item.tooth_fdi_code,
+      procedure_code: item.procedure_code,
+      procedure_description: item.procedure_description,
+      estimated_duration_minutes: item.estimated_duration_minutes || 30,
+      status: "PLANNED",
+      is_visible_to_patient: false,
+      created_by_doctor_id: doctorId,
+      created_at: new Date().toISOString()
+    }));
+
+    const { error: itemsError } = await supabase
+      .from("treatment_items")
+      .insert(planItems);
+
+    if (itemsError) {
+      console.error("[TREATMENT PLANS] Error creating items:", itemsError);
+      // Rollback plan creation
+      await supabase.from("treatment_plans").delete().eq("id", treatmentPlan.id);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
     res.json({
       ok: true,
-      treatmentPlan: treatmentPlan
+      treatment_plan: treatmentPlan,
+      items_created: planItems.length
     });
+
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", error);
+    console.error("[TREATMENT PLANS] Exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// PATCH /api/doctor/treatment-plans/:id/submit - Submit treatment plan
+app.patch("/api/doctor/treatment-plans/:id/submit", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id } = req.params;
+
+    // Get treatment plan and verify ownership
+    const { data: plan, error: planError } = await supabase
+      .from("treatment_plans")
+      .select(`
+        *,
+        patient_encounters!inner(
+          id,
+          doctor_id,
+          patient_id,
+          status
+        )
+      `)
+      .eq("id", id)
+      .eq("created_by_doctor_id", doctorId)
+      .single();
+
+    if (planError || !plan) {
+      return res.status(404).json({ ok: false, error: "plan_not_found" });
+    }
+
+    if (plan.status !== "DRAFT") {
+      return res.status(400).json({ ok: false, error: "plan_not_draft" });
+    }
+
+    // Update plan status to SUBMITTED
+    const { data: updatedPlan, error: updateError } = await supabase
+      .from("treatment_plans")
+      .update({
+        status: "SUBMITTED",
+        submitted_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[TREATMENT PLANS] Error submitting plan:", updateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      treatment_plan: updatedPlan
+    });
+
+  } catch (err) {
+    console.error("[TREATMENT PLANS] Submit exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// PATCH /api/doctor/treatment-plans/:id/complete - Complete treatment plan
+app.patch("/api/doctor/treatment-plans/:id/complete", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id } = req.params;
+
+    // Get treatment plan with items and encounter
+    const { data: plan, error: planError } = await supabase
+      .from("treatment_plans")
+      .select(`
+        *,
+        patient_encounters!inner(
+          id,
+          doctor_id,
+          patient_id,
+          status
+        ),
+        treatment_items!inner(
+          id,
+          status
+        )
+      `)
+      .eq("id", id)
+      .eq("created_by_doctor_id", doctorId)
+      .single();
+
+    if (planError || !plan) {
+      return res.status(404).json({ ok: false, error: "plan_not_found" });
+    }
+
+    if (plan.status !== "SUBMITTED") {
+      return res.status(400).json({ ok: false, error: "plan_not_submitted" });
+    }
+
+    // Önce kontrol: Tüm item'lar DONE değilse
+    const incompleteItems = plan.treatment_items.filter(item => item.status !== "DONE");
+    if (incompleteItems.length > 0) {
+      return res.status(400).json({ ok: false, error: "items_not_completed" });
+    }
+
+    // Update plan status to COMPLETED
+    const { data: updatedPlan, error: planUpdateError } = await supabase
+      .from("treatment_plans")
+      .update({
+        status: "COMPLETED",
+        completed_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (planUpdateError) {
+      console.error("[TREATMENT PLANS] Error completing plan:", planUpdateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    // Update encounter to CLOSED
+    const { error: encounterUpdateError } = await supabase
+      .from("patient_encounters")
+      .update({
+        status: "CLOSED",
+        closed_at: new Date().toISOString()
+      })
+      .eq("id", plan.patient_encounters.id);
+
+    if (encounterUpdateError) {
+      console.error("[TREATMENT PLANS] Error closing encounter:", encounterUpdateError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      treatment_plan: updatedPlan,
+      encounter_closed: true
+    });
+
+  } catch (err) {
+    console.error("[TREATMENT PLANS] Complete exception:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
