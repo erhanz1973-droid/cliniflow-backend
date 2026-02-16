@@ -7209,11 +7209,26 @@ app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
   try {
     const v = await verifyDoctorToken(req);
     if (!v.ok) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
+      console.error("[ENCOUNTERS BY PATIENT] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
     }
 
     const { doctorId } = v.decoded;
     const { patientId } = req.params;
+
+    // Enhanced logging
+    console.log("[ENCOUNTERS BY PATIENT] Request:", {
+      doctorId,
+      patientId,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!patientId) {
+      console.error("[ENCOUNTERS BY PATIENT] Missing patientId");
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
 
     // Rule: Doctor sadece kendi hastalarının encounter'larını görebilir
     const { data: encounters, error } = await supabase
@@ -7232,18 +7247,27 @@ app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("[ENCOUNTERS BY PATIENT] Error:", error);
-      return res.status(500).json({ ok: false, error: "internal_error" });
+      console.error("[ENCOUNTERS BY PATIENT] Database error:", error.message);
+      return res.status(500).json({ ok: false, error: error.message });
     }
 
-    res.json({
+    // Enhanced logging for successful query
+    console.log("[ENCOUNTERS BY PATIENT] Query result:", {
+      found: encounters ? encounters.length : 0,
+      patientId,
+      doctorId
+    });
+
+    // Return 200 with empty array instead of 500 for no encounters
+    return res.json({
       ok: true,
       encounters: encounters || []
     });
 
   } catch (err) {
-    console.error("[ENCOUNTERS BY PATIENT] Exception:", err);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    console.error("[ENCOUNTERS BY PATIENT] Exception:", err.message);
+    console.error("[ENCOUNTERS BY PATIENT] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
