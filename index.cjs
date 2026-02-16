@@ -4395,99 +4395,42 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
 /* ================= DOCTOR PATIENTS ================= */
 app.get("/api/doctor/patients", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
-    if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
-    }
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) return res.status(401).json({ ok: false, error: "missing_token" });
 
-    const { clinicId, doctorId } = v.decoded;
+    const { doctorId } = v.decoded;
 
-    console.log("[DOCTOR PATIENTS] Request:", {
-      clinicId,
-      doctorId
-    });
-
-    // 🔥 MULTI-DOCTOR MODEL: Get treatment groups where this doctor is assigned
-    const { data: treatmentGroups, error: groupsError } = await supabase
+    const { data: groups, error: groupError } = await supabase
       .from("treatment_groups")
       .select("patient_id")
-      .eq("clinic_id", clinicId)
-      .contains("doctor_ids", [doctorId])
-      .eq("status", "ACTIVE");
+      .contains("doctor_ids", [doctorId]);
 
-    if (groupsError) {
-      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "failed_to_fetch_treatment_groups",
-        message: "Failed to fetch treatment groups"
-      });
+    if (groupError) {
+      console.error("[DOCTOR PATIENTS] Group fetch error:", groupError);
+      return res.status(500).json({ ok: false, error: "group_fetch_failed" });
     }
 
-    // Handle empty result safely
-    if (!treatmentGroups || treatmentGroups.length === 0) {
-      console.log(`[DOCTOR PATIENTS] No treatment groups found for doctor ${doctorId}`);
-      return res.json({
-        ok: true,
-        data: []
-      });
+    if (!groups || groups.length === 0) {
+      return res.json({ ok: true, patients: [] });
     }
 
-    // Extract patient IDs from treatment groups
-    const patientIds = treatmentGroups.map(group => group.patient_id);
-    console.log(`[DOCTOR PATIENTS] Found ${patientIds.length} patient IDs for doctor ${doctorId}`);
+    const patientIds = groups.map(g => g.patient_id);
 
-    // 🔥 Fetch patients using the extracted patient IDs
-    const { data: patients, error: patientsError } = await supabase
+    const { data: patients, error: patientError } = await supabase
       .from("patients")
-      .select(`
-        id,
-        name,
-        phone,
-        email,
-        status,
-        department,
-        created_at
-      `)
-      .in("id", patientIds)
-      .eq("clinic_id", clinicId)
-      .eq("status", "ACTIVE")
-      .order("created_at", { ascending: false });
+      .select("id, name, phone")
+      .in("id", patientIds);
 
-    if (patientsError) {
-      console.error("[DOCTOR PATIENTS] Patients error:", patientsError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "failed_to_fetch_patients",
-        message: "Failed to fetch assigned patients"
-      });
+    if (patientError) {
+      console.error("[DOCTOR PATIENTS] Patient fetch error:", patientError);
+      return res.status(500).json({ ok: false, error: "patient_fetch_failed" });
     }
 
-    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for doctor ${doctorId}`);
-
-    const formattedPatients = (patients || []).map(patient => ({
-      id: patient.id,
-      patientId: patient.id,
-      name: patient.name,
-      phone: patient.phone,
-      email: patient.email,
-      status: patient.status,
-      department: patient.department,
-      createdAt: new Date(patient.created_at).getTime(),
-    }));
-
-    return res.json({
-      ok: true,
-      data: formattedPatients
-    });
+    return res.json({ ok: true, patients: patients || [] });
 
   } catch (err) {
-    console.error("[DOCTOR PATIENTS] Fatal error:", err);
-    return res.status(500).json({ 
-      ok: false, 
-      error: "internal_error",
-      message: "Unexpected server error"
-    });
+    console.error("[DOCTOR PATIENTS] Exception:", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
