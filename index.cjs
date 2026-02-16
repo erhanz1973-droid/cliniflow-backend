@@ -7427,6 +7427,235 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
   }
 });
 
+// GET /api/doctor/encounters/:id - Get specific encounter by ID
+app.get("/api/doctor/encounters/:id", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      console.error("[ENCOUNTER BY ID] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id: encounterId } = req.params;
+
+    // Enhanced logging
+    console.log("[ENCOUNTER BY ID] Request:", {
+      doctorId,
+      encounterId,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!encounterId) {
+      console.error("[ENCOUNTER BY ID] Missing encounterId");
+      return res.status(400).json({ ok: false, error: "encounterId_required" });
+    }
+
+    // Rule: Doctor sadece kendi encounter'larını görebilir
+    const { data: encounter, error } = await supabase
+      .from("patient_encounters")
+      .select(`
+        *,
+        patients!inner(
+          id,
+          name,
+          phone,
+          email
+        )
+      `)
+      .eq("created_by_doctor_id", doctorId)
+      .eq("id", encounterId)
+      .single();
+
+    if (error) {
+      console.error("[ENCOUNTER BY ID] Database error:", error.message);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    // Enhanced logging for successful query
+    console.log("[ENCOUNTER BY ID] Query result:", {
+      found: encounter ? 1 : 0,
+      encounterId,
+      doctorId
+    });
+
+    // Return 200 with null instead of 500 for not found
+    return res.json({
+      ok: true,
+      encounter: encounter || null
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTER BY ID] Exception:", err.message);
+    console.error("[ENCOUNTER BY ID] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// PUT /api/doctor/encounters/:id - Update encounter
+app.put("/api/doctor/encounters/:id", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      console.error("[ENCOUNTER PUT] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id: encounterId } = req.params;
+    const { status, notes } = req.body || {};
+
+    // Enhanced logging
+    console.log("[ENCOUNTER PUT] Request:", {
+      doctorId,
+      encounterId,
+      status,
+      notes,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!encounterId) {
+      console.error("[ENCOUNTER PUT] Missing encounterId");
+      return res.status(400).json({ ok: false, error: "encounterId_required" });
+    }
+
+    // Verify ownership
+    const { data: existingEncounter, error: ownershipError } = await supabase
+      .from("patient_encounters")
+      .select("id, created_by_doctor_id")
+      .eq("id", encounterId)
+      .eq("created_by_doctor_id", doctorId)
+      .single();
+
+    if (ownershipError || !existingEncounter) {
+      console.error("[ENCOUNTER PUT] Ownership check failed");
+      return res.status(404).json({ ok: false, error: "encounter_not_found" });
+    }
+
+    // Update encounter
+    const { data: updatedEncounter, error: updateError } = await supabase
+      .from("patient_encounters")
+      .update({
+        status: status || existingEncounter.status,
+        notes: notes || existingEncounter.notes,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", encounterId)
+      .eq("created_by_doctor_id", doctorId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[ENCOUNTER PUT] Update error:", updateError.message);
+      return res.status(500).json({ ok: false, error: updateError.message });
+    }
+
+    // Enhanced logging for successful update
+    console.log("[ENCOUNTER PUT] Update result:", {
+      updated: updatedEncounter ? 1 : 0,
+      encounterId,
+      doctorId
+    });
+
+    return res.json({
+      ok: true,
+      encounter: updatedEncounter
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTER PUT] Exception:", err.message);
+    console.error("[ENCOUNTER PUT] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// PATCH /api/doctor/encounters/:id/status - Update encounter status
+app.patch("/api/doctor/encounters/:id/status", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      console.error("[ENCOUNTER PATCH STATUS] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id: encounterId } = req.params;
+    const { status } = req.body || {};
+
+    // Enhanced logging
+    console.log("[ENCOUNTER PATCH STATUS] Request:", {
+      doctorId,
+      encounterId,
+      status,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!encounterId) {
+      console.error("[ENCOUNTER PATCH STATUS] Missing encounterId");
+      return res.status(400).json({ ok: false, error: "encounterId_required" });
+    }
+
+    if (!status) {
+      console.error("[ENCOUNTER PATCH STATUS] Missing status");
+      return res.status(400).json({ ok: false, error: "status_required" });
+    }
+
+    // Verify ownership
+    const { data: existingEncounter, error: ownershipError } = await supabase
+      .from("patient_encounters")
+      .select("id, created_by_doctor_id")
+      .eq("id", encounterId)
+      .eq("created_by_doctor_id", doctorId)
+      .single();
+
+    if (ownershipError || !existingEncounter) {
+      console.error("[ENCOUNTER PATCH STATUS] Ownership check failed");
+      return res.status(404).json({ ok: false, error: "encounter_not_found" });
+    }
+
+    // Update encounter status
+    const { data: updatedEncounter, error: updateError } = await supabase
+      .from("patient_encounters")
+      .update({
+        status: status,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", encounterId)
+      .eq("created_by_doctor_id", doctorId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("[ENCOUNTER PATCH STATUS] Update error:", updateError.message);
+      return res.status(500).json({ ok: false, error: updateError.message });
+    }
+
+    // Enhanced logging for successful update
+    console.log("[ENCOUNTER PATCH STATUS] Update result:", {
+      updated: updatedEncounter ? 1 : 0,
+      encounterId,
+      doctorId,
+      newStatus: status
+    });
+
+    return res.json({
+      ok: true,
+      encounter: updatedEncounter
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTER PATCH STATUS] Exception:", err.message);
+    console.error("[ENCOUNTER PATCH STATUS] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ⚠️ Admin architecture uses UUID id only.
 // patient_id (string) is legacy and not used in admin logic.
 
