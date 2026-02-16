@@ -1190,7 +1190,7 @@
       const actualPatientId = patient?.id || patientId; // Use UUID (id) if available
       
       setSelectedPatient(patientId, getPatientNameById(patientId));
-      window.location.href = `/admin-create-treatment-group.html?patientId=${encodeURIComponent(actualPatientId)}`;
+      window.location.href = `/admin-patient-detail.html?patientId=${encodeURIComponent(actualPatientId)}`;
     }
 
     function openChat(patientId) {

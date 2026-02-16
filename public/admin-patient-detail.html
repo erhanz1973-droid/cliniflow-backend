@@ -621,9 +621,6 @@
               </div>
             </div>
             <div class="action-buttons">
-              <button class="btn btn-success" onclick="openCreateTreatmentGroupModal()">
-                ➕ Treatment Group Oluştur
-              </button>
               <button class="btn btn-primary" onclick="openAssignPatientModal()">
                 👨‍⚕️ Hasta Doktora Ata
               </button>
@@ -680,35 +677,6 @@
         </div>
       </div>
     </main>
-
-    <!-- Create Treatment Group Modal -->
-    <div id="createTreatmentGroupModal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3 class="modal-title">➕ Treatment Group Oluştur</h3>
-          <button class="modal-close" onclick="closeCreateTreatmentGroupModal()">×</button>
-        </div>
-        <div class="modal-body">
-          <form id="createTreatmentGroupForm">
-            <div class="form-group">
-              <label class="form-label">Group Adı (Otomatik Oluşturulacak)</label>
-              <input type="text" class="form-input" id="groupName" readonly>
-            </div>
-            <div class="form-group">
-              <p style="color: #6aa6ff; font-size: 14px; margin: 0;">
-                Tedavi grubu otomatik olarak oluşturulacaktır.<br>
-                Grup adı: <strong>{Patient Name} - {Group Number}</strong><br>
-                İlk aktif doktor otomatik olarak atanacaktır.
-              </p>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" onclick="closeCreateTreatmentGroupModal()">İptal</button>
-          <button type="button" class="btn btn-success" onclick="createTreatmentGroup()">Oluştur</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Assign Patient to Doctor Modal -->
     <div id="assignPatientModal" class="modal">
@@ -793,7 +761,6 @@
         if (data.ok) {
           currentPatient = data.patient;
           displayPatientDetails();
-          loadTreatmentGroups();
         } else {
           throw new Error(data.error || 'Hasta yüklenemedi');
         }
@@ -985,52 +952,9 @@
       updatePrimaryDoctorSection();
     }
 
-    // Open create treatment group modal
-    async function openCreateTreatmentGroupModal() {
-  document.getElementById('createTreatmentGroupModal').classList.add('show');
-  loadDoctors();
-
-  if (!currentPatient) return;
-
-  try {
-    const response = await fetch(
-      `/api/treatment-groups?patientId=${currentPatient.id}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${getAdminToken()}` 
-        }
-      }
-    );
-
-    const data = await response.json();
-
-    let existingCount = 0;
-
-    if (data.ok && Array.isArray(data.data)) {
-      existingCount = data.data.length;
-    }
-
-    const patientName =
-      currentPatient.name ||
-      `${currentPatient.first_name || ''} ${currentPatient.last_name || ''}`.trim() ||
-      "Group";
-
-    const autoName = `${patientName} ${existingCount + 1}`;
-
-    document.getElementById("groupName").value = autoName;
-
-  } catch (error) {
-    console.error("Auto group name error:", error);
-    document.getElementById("groupName").value =
-      `${currentPatient.name || "Group"} 1`;
-  }
-}
-
-    // Close create treatment group modal
+        // Close create treatment group modal
     function closeCreateTreatmentGroupModal() {
-      document.getElementById('createTreatmentGroupModal').classList.remove('show');
-      // Reset form
-      document.getElementById('createTreatmentGroupForm').reset();
+      // Modal removed - function disabled
     }
 
     // Open assign patient modal
@@ -1117,7 +1041,6 @@
 
         alert("Treatment Group created successfully");
         closeCreateTreatmentGroupModal();
-        loadTreatmentGroups();
 
       } catch (error) {
         console.error("Create group error:", error);
@@ -1199,10 +1122,6 @@
       }
 
       // Lazy load data based on tab
-      if (tabId === "groups" && currentPatient) {
-        loadTreatmentGroups();
-      }
-
       if (tabId === "plan" && currentPatient) {
         loadTreatmentPlan();
       }
