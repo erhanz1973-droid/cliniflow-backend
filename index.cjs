@@ -7204,6 +7204,49 @@ app.get("/api/doctor/encounters", async (req, res) => {
   }
 });
 
+// GET /api/doctor/encounters/patient/:patientId - Get encounters for specific patient
+app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const { patientId } = req.params;
+
+    // Rule: Doctor sadece kendi hastalarının encounter'larını görebilir
+    const { data: encounters, error } = await supabase
+      .from("patient_encounters")
+      .select(`
+        *,
+        patients!inner(
+          id,
+          name,
+          phone,
+          email
+        )
+      `)
+      .eq("doctor_id", doctorId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ENCOUNTERS BY PATIENT] Error:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    res.json({
+      ok: true,
+      encounters: encounters || []
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTERS BY PATIENT] Exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // ⚠️ Admin architecture uses UUID id only.
 // patient_id (string) is legacy and not used in admin logic.
 
