@@ -3484,66 +3484,6 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
   }
 });
 
-/* ================= DOCTOR CREATE TREATMENT PLAN ================= */
-app.post("/api/doctor/treatment-plans", async (req, res) => {
-  try {
-    const v = await verifyDoctorToken(req);
-    if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
-    }
-
-    const { clinicId } = v.decoded;
-    const { patientId, toothNumber, diagnosis, procedure, price, plannedDate, notes } = req.body || {};
-
-    // Validation
-    if (!patientId || !toothNumber || !diagnosis || !procedure || !price || !plannedDate) {
-      return res.status(400).json({ ok: false, error: "missing_required_fields" });
-    }
-
-    // Get patient info to verify they belong to this clinic
-    const { data: patient, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("patient_id", patientId)
-      .eq("clinic_id", clinicId)
-      .single();
-
-    if (patientError || !patient) {
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
-    }
-
-    // Create treatment plan
-    const { data: treatmentPlan, error: treatmentError } = await supabase
-      .from("treatment_plans")
-      .insert({
-        clinic_id: clinicId,
-        patient_id: patient.id,
-        tooth_number: toothNumber,
-        diagnosis: diagnosis,
-        procedure: procedure,
-        price: price,
-        planned_date: plannedDate,
-        notes: notes,
-        status: "planned",
-      })
-      .select()
-      .single();
-
-    if (treatmentError) {
-      console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", treatmentError);
-      return res.status(500).json({ ok: false, error: "internal_error" });
-    }
-
-    res.json({
-      ok: true,
-      treatmentPlan: treatmentPlan
-    });
-  } catch (error) {
-    console.error("[DOCTOR CREATE TREATMENT PLAN] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
 /* ================= DOCTOR TREATMENT ENDPOINTS ================= */
 
 // Get patient info for doctor

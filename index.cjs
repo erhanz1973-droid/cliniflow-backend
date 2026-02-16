@@ -7079,76 +7079,122 @@ const { clinicId } = req.admin;
 });
 
 /* ================= DOCTOR ENCOUNTERS ================= */
+
+// POST /api/doctor/encounters - Create new encounter
 app.post("/api/doctor/encounters", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
-      return res.status(401).json({ ok: false, error: v.code });
+      return res.status(401).json({ ok: false, error: "missing_token" });
     }
 
-    const { clinicId } = v.decoded;
-    const { treatment_group_id, icd10_codes, notes } = req.body || {};
+    const { doctorId } = v.decoded;
+    const { patient_id, notes } = req.body || {};
 
-    if (!treatment_group_id) {
-      return res.status(400).json({ ok: false, error: "treatment_group_id_required" });
+    // Validation
+    if (!patient_id) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
     }
 
-    if (!icd10_codes || icd10_codes.length === 0) {
-      return res.status(400).json({ ok: false, error: "icd10_codes_required" });
-    }
-
-    // Check if doctor is member of this treatment group
-    const { data: membership, error: membershipError } = await supabase
-      .from("treatment_group_members")
+    // Rule: Aynı hastada aktif encounter var mı?
+    const { data: existing } = await supabase
+      .from("patient_encounters")
       .select("id")
-      .eq("treatment_group_id", treatment_group_id)
-      .eq("doctor_id", v.decoded.doctorId)
+      .eq("patient_id", patient_id)
       .eq("status", "ACTIVE")
-      .single();
+      .maybeSingle();
 
-    if (membershipError || !membership) {
-      return res.status(403).json({ ok: false, error: "not_group_member" });
+    if (existing) {
+      return res.status(400).json({
+        ok: false,
+        error: "active_encounter_already_exists"
+      });
     }
 
-    // Check if treatment group belongs to same clinic
-    const { data: group, error: groupError } = await supabase
-      .from("treatment_groups")
-      .select("clinic_id")
-      .eq("id", treatment_group_id)
-      .single();
-
-    if (groupError || !group || group.clinic_id !== clinicId) {
-      return res.status(403).json({ ok: false, error: "clinic_mismatch" });
-    }
-
-    // Create encounter record
+    // Sonra yeni encounter oluştur
     const { data: encounter, error: encounterError } = await supabase
-      .from("encounters")
+      .from("patient_encounters")
       .insert({
-        treatment_group_id,
-        doctor_id: v.decoded.doctorId,
-        encounter_type: "INITIAL",
-        icd10_codes,
+        patient_id: patient_id,
+        doctor_id: doctorId,
+        status: "ACTIVE",
         notes: notes || "Initial examination",
-        clinic_id: clinicId,
         created_at: new Date().toISOString()
       })
-      .select("id")
+      .select("id, patient_id, doctor_id, status, created_at, notes")
       .single();
 
-    if (encounterError || !encounter) {
-      console.error("[DOCTOR ENCOUNTERS] Error:", encounterError);
+    if (encounterError) {
+      console.error("[ENCOUNTERS] Error creating encounter:", encounterError);
       return res.status(500).json({ ok: false, error: "encounter_creation_failed" });
     }
 
     res.json({
       ok: true,
-      encounter_id: encounter.id,
-      message: "Encounter created successfully"
+      encounter: encounter
     });
 
-  } catch (error) {
-    console.error("[DOCTOR ENCOUNTERS] Error:", error);
+  } catch (err) {
+    console.error("[ENCOUNTERS] Exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// GET /api/doctor/encounters - Get doctor's active encounters
+app.get("/api/doctor/encounters", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+
+    // Rule: 1 doctor → birden fazla hasta için ACTIVE encounter olabilir
+    const { data: encounters, error } = await supabase
+      .from("patient_encounters")
+      .select(`
+        *,
+        patients!inner(
+          id,
+          name,
+          phone,
+          email
+        )
+      `)
+      .eq("doctor_id", doctorId)
+      .eq("status", "ACTIVE")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ENCOUNTERS] Error fetching encounters:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    // Format for dashboard
+    const formattedEncounters = encounters.map(encounter => ({
+      id: encounter.id,
+      patient_id: encounter.patient_id,
+      patient_name: encounter.patients.name,
+      patient_phone: encounter.patients.phone,
+      patient_email: encounter.patients.email,
+      status: encounter.status,
+      created_at: encounter.created_at,
+      notes: encounter.notes,
+      // Dashboard için "Tedaviye Devam Et" butonu
+      action_button: {
+        text: "Tedaviye Devam Et",
+        target: `/treatment/${encounter.patient_id}`
+      }
+    }));
+
+    res.json({
+      ok: true,
+      encounters: formattedEncounters
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTERS] Get exception:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
