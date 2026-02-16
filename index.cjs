@@ -8028,7 +8028,7 @@ app.get("/api/icd/search", async (req, res) => {
     console.log("Running ICD query...");
 
     const { data: codes, error } = await supabase
-      .from("icd10_dental_codes")
+      .from("icd10_codes")
       .select("code, description")
       .or(`code.ilike.%${q}%,description.ilike.%${q}%`)
       .order("code", { ascending: true })
