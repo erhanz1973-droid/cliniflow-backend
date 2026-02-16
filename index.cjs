@@ -5845,79 +5845,79 @@ app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
 // app.get("/api/admin/patients/:patientId/treatment-group", adminAuth, async (req, res) => {
 //   try {
 //     const { patientId } = req.params;
-
-    if (!patientId) {
-      return res.status(400).json({ ok: false, error: "patientId_required" });
-    }
-
-    console.log("[ADMIN PATIENT TREATMENT GROUP] Request:", { patientId });
-
-    // Get patient's treatment group assignment
-    const { data: assignment, error: assignmentError } = await supabase
-      .from("patient_group_assignments")
-      .select(`
-        treatment_group_id,
-        treatment_groups!inner(
-          id,
-          name,
-          description,
-          status,
-          created_at
-        )
-      `)
-      .eq("id", patientId)
-      .eq("treatment_groups.clinic_id", req.admin.clinicId)
-      .single();
-
-    if (assignmentError && assignmentError.code !== 'PGRST116') {
-      console.error("[ADMIN PATIENT TREATMENT GROUP] Assignment error:", assignmentError);
-      return res.status(500).json({ ok: false, error: "assignment_check_failed" });
-    }
-
-    if (!assignment) {
-      return res.json({ ok: true, treatmentGroup: null });
-    }
-
-    // Get group members
-    const { data: members, error: membersError } = await supabase
-      .from("treatment_group_members")
-      .select(`
-        doctor_id,
-        is_primary,
-        patients!inner(
-          id,
-          name,
-          department
-        )
-      `)
-      .eq("treatment_group_id", assignment.treatment_group_id)
-      .eq("patients.clinic_id", req.admin.clinicId);
-
-    if (membersError) {
-      console.error("[ADMIN PATIENT TREATMENT GROUP] Members error:", membersError);
-      return res.status(500).json({ ok: false, error: "members_check_failed" });
-    }
-
-    const treatmentGroup = {
-      ...assignment.treatment_groups,
-      members: members ? members.map(member => ({
-        doctor_id: member.doctor_id,
-        doctor_name: member.patients.name,
-        department: member.patients.department,
-        is_primary: member.is_primary
-      })) : []
-    };
-
-    console.log("[ADMIN PATIENT TREATMENT GROUP] Success:", {
-      patientId,
-      groupId: treatmentGroup.id,
-      memberCount: treatmentGroup.members.length
-    });
-
-    res.json({
-      ok: true,
-      treatmentGroup
-    });
+//
+//     if (!patientId) {
+//       return res.status(400).json({ ok: false, error: "patientId_required" });
+//     }
+//
+//     console.log("[ADMIN PATIENT TREATMENT GROUP] Request:", { patientId });
+//
+//     // Get patient's treatment group assignment
+//     const { data: assignment, error: assignmentError } = await supabase
+//       .from("patient_group_assignments")
+//       .select(`
+//         treatment_group_id,
+//         treatment_groups!inner(
+//           id,
+//           name,
+//           description,
+//           status,
+//           created_at
+//         )
+//       `)
+//       .eq("id", patientId)
+//       .eq("treatment_groups.clinic_id", req.admin.clinicId)
+//       .single();
+//
+//     if (assignmentError && assignmentError.code !== 'PGRST116') {
+//       console.error("[ADMIN PATIENT TREATMENT GROUP] Assignment error:", assignmentError);
+//       return res.status(500).json({ ok: false, error: "assignment_check_failed" });
+//     }
+//
+//     if (!assignment) {
+//       return res.json({ ok: true, treatmentGroup: null });
+//     }
+//
+//     // Get group members
+//     const { data: members, error: membersError } = await supabase
+//       .from("treatment_group_members")
+//       .select(`
+//         doctor_id,
+//         is_primary,
+//         patients!inner(
+//           id,
+//           name,
+          //           department
+//         )
+//       `)
+//       .eq("treatment_group_id", assignment.treatment_group_id)
+//       .eq("patients.clinic_id", req.admin.clinicId);
+//
+//     if (membersError) {
+//       console.error("[ADMIN PATIENT TREATMENT GROUP] Members error:", membersError);
+//       return res.status(500).json({ ok: false, error: "members_check_failed" });
+//     }
+//
+//     const treatmentGroup = {
+//       ...assignment.treatment_groups,
+//       members: members ? members.map(member => ({
+//         doctor_id: member.doctor_id,
+//         doctor_name: member.patients.name,
+//         department: member.patients.department,
+//         is_primary: member.is_primary
+//       })) : []
+//     };
+//
+//     console.log("[ADMIN PATIENT TREATMENT GROUP] Success:", {
+//       patientId,
+//       groupId: treatmentGroup.id,
+//       memberCount: treatmentGroup.members.length
+//     });
+//
+//     res.json({
+//       ok: true,
+//       treatmentGroup
+//     });
 //   } catch (err) {
 //     console.error("REGISTER_DOCTOR_ERROR:", err);
 //     console.error("[ADMIN PATIENT TREATMENT GROUP] Error:", err);
@@ -6090,93 +6090,99 @@ app.post("/api/admin/treatments", adminAuth, async (req, res) => {
 //     }
 // 
 //     const token = authHeader.substring(7);
-
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({
-        ok: false,
-        error: "invalid_token"
-      });
-    }
-
-    const role = decoded.role;
-    const clinicId = decoded.clinicId;
-    const doctorId = decoded.doctorId || decoded.userId;
-
-    if (!role || !clinicId) {
-      return res.status(401).json({
-        ok: false,
-        error: "invalid_token_payload"
-      });
-    }
-
-    // ---- Admin: Tüm clinic grupları ----
-    if (role === "ADMIN") {
-      const { data, error } = await supabase
-        .from("treatment_groups")
-        .select("*")
-        .eq("clinic_id", clinicId)
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        return res.status(500).json({
-          ok: false,
-          error: "fetch_failed",
-          message: error.message
-        });
-      }
-
-      return res.json({
-        ok: true,
-        data: data || []
-      });
-    }
-
-    // ---- Doctor: Sadece kendi grupları ----
-    if (role === "DOCTOR") {
-      const { data, error } = await supabase
-        .from("treatment_groups")
-        .select("*")
-        .eq("clinic_id", clinicId)
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        return res.status(500).json({
-          ok: false,
-          error: "fetch_failed",
-          message: error.message
-        });
-      }
-
-      const filtered = (data || []).filter(group =>
-        group.primary_doctor_id === doctorId ||
-        (Array.isArray(group.doctor_ids) &&
-          group.doctor_ids.includes(doctorId))
-      );
-
-      return res.json({
-        ok: true,
-        data: filtered
-      });
-    }
-
-    return res.status(403).json({
-      ok: false,
-      error: "forbidden"
-    });
-
-  } catch (err) {
-    console.error("TREATMENT_GROUPS_LIST_ERROR:", err);
-    return res.status(500).json({
-      ok: false,
-      error: "internal_server_error"
-    });
-  }
-});
+//
+//     let decoded;
+//     try {
+//       decoded = jwt.verify(token, JWT_SECRET);
+//     } catch (err) {
+//       return res.status(401).json({
+//         ok: false,
+//         error: "invalid_token"
+//       });
+//     }
+//
+//     const role = decoded.role;
+//     const clinicId = decoded.clinicId;
+//     const doctorId = decoded.doctorId || decoded.userId;
+//
+//     if (!role || !clinicId) {
+//       return res.status(401).json({
+//         ok: false,
+//         error: "invalid_token_payload"
+//       });
+//     }
+//
+//     // ---- Admin: Tüm clinic grupları ----
+//     if (role === "ADMIN") {
+//       const { data, error } = await supabase
+//         .from("treatment_groups")
+//         .select("*")
+//         .eq("clinic_id", clinicId)
+//         .eq("patient_id", patientId)
+//         .order("created_at", { ascending: false });
+//
+//       if (error) {
+//         return res.status(500).json({
+//           ok: false,
+//           error: "fetch_failed",
+//           message: error.message
+//         });
+//       }
+//
+//       const filtered = (data || []).filter(group =>
+//         group.primary_doctor_id === doctorId ||
+//         (Array.isArray(group.doctor_ids) &&
+//           group.doctor_ids.includes(doctorId))
+//       );
+//
+//       return res.json({
+//         ok: true,
+//         data: filtered
+//       });
+//     }
+//
+//     // ---- Doctor: Sadece kendi grupları ----
+//     if (role === "DOCTOR") {
+//       const { data, error } = await supabase
+//         .from("treatment_groups")
+//         .select("*")
+//         .eq("clinic_id", clinicId)
+//         .eq("patient_id", patientId)
+//         .order("created_at", { ascending: false });
+//
+//       if (error) {
+//         return res.status(500).json({
+//           ok: false,
+//           error: "fetch_failed",
+//           message: error.message
+//         });
+//       }
+//
+//       const filtered = (data || []).filter(group =>
+//         group.primary_doctor_id === doctorId ||
+//         (Array.isArray(group.doctor_ids) &&
+//           group.doctor_ids.includes(doctorId))
+//       );
+//
+//       return res.json({
+//         ok: true,
+//         data: filtered
+//       });
+//     }
+//
+//     return res.status(403).json({
+//       ok: false,
+//       error: "forbidden"
+//     });
+//
+//   } catch (err) {
+//     console.error("TREATMENT_GROUPS_LIST_ERROR:", err);
+//     return res.status(500).json({
+//       ok: false,
+//       error: "internal_server_error"
+//     });
+//   }
+// });
 
 /* ================= ADMIN TASK ASSIGNMENT ================= */
 app.post("/api/admin/tasks", adminAuth, async (req, res) => {
@@ -6597,58 +6603,59 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 //     }
 // 
 //     // 🔥 Debug log
-    console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId, "patientId:", patientId);
-
-    let query = supabase
-      .from("treatment_groups")
-      .select(`
-        *,
-        patients!tg_patient_fk (*),
-        treatment_group_doctors (
-          doctor_id,
-          is_primary,
-          doctors (*)
-        )
-      `)
-      .eq("clinic_id", clinicId);
-
-    // 🔥 Add patientId filter if provided
-    if (!patientId) {
-      return res.status(400).json({
-        ok: false,
-        error: "patient_id_required"
-      });
-    }
-    
-    if (patientId) {
-      query = query.eq("patient_id", patientId);
-    }
-
-    const { data, error } = await query.order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("[TREATMENT GROUPS LIST] Error:", error);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "failed_to_fetch_treatment_groups",
-        details: error.message 
-      });
-    }
-
-    console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for clinic ${clinicId}${patientId ? ` and patient ${patientId}` : ''}`);
-
-    res.json({
-      ok: true,
-      data: data || []
-    });
-  } catch (err) {
-    console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
-    res.status(500).json({ 
-      ok: false, 
-      error: "internal_error" 
-    });
-  }
-});
+//     console.log("[TREATMENT GROUPS LIST] clinicId:", clinicId, "patientId:", patientId);
+//
+//     let query = supabase
+//       .from("treatment_groups")
+//       .select(`
+//         *,
+//         patients!tg_patient_fk (*),
+//         treatment_group_doctors (
+//           doctor_id,
+//           is_primary,
+//           doctors (*)
+//         )
+//       `)
+//       .eq("clinic_id", clinicId);
+//
+//     // 🔥 Add patientId filter if provided
+//     if (!patientId) {
+//       return res.status(400).json({
+//         ok: false,
+//         error: "patient_id_required"
+//       });
+//     }
+//     
+//     if (patientId) {
+//       query = query.eq("patient_id", patientId);
+//     }
+//
+//     const { data, error } = await query.order("created_at", { ascending: false });
+//
+//     if (error) {
+//       console.error("[TREATMENT GROUPS LIST] Error:", error);
+//       return res.status(500).json({ 
+//         ok: false, 
+//         error: "failed_to_fetch_treatment_groups",
+//         details: error.message 
+//       });
+//     }
+//
+//     console.log(`[TREATMENT GROUPS LIST] Fetched ${data?.length || 0} groups for clinic ${clinicId}${patientId ? ` and patient ${patientId}` : ''}`);
+//
+//     res.json({
+//       ok: true,
+//       data: data || []
+//     });
+//
+//   } catch (err) {
+//     console.error("[TREATMENT GROUPS LIST] Fatal error:", err);
+//     res.status(500).json({ 
+//       ok: false, 
+//       error: "internal_error" 
+//     });
+//   }
+// });
 
 /* ================= ADMIN ASSIGN PATIENT (TREATMENT GROUP) ================= */
 app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (req, res) => {
