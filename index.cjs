@@ -4407,8 +4407,38 @@ app.get("/api/doctor/patients", async (req, res) => {
       doctorId
     });
 
-    // 🔥 SIMPLE: Get patients where this doctor is the primary doctor
-    const { data: patients, error } = await supabase
+    // 🔥 MULTI-DOCTOR MODEL: Get treatment groups where this doctor is assigned
+    const { data: treatmentGroups, error: groupsError } = await supabase
+      .from("treatment_groups")
+      .select("patient_id")
+      .eq("clinic_id", clinicId)
+      .contains("doctor_ids", [doctorId])
+      .eq("status", "ACTIVE");
+
+    if (groupsError) {
+      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_treatment_groups",
+        message: "Failed to fetch treatment groups"
+      });
+    }
+
+    // Handle empty result safely
+    if (!treatmentGroups || treatmentGroups.length === 0) {
+      console.log(`[DOCTOR PATIENTS] No treatment groups found for doctor ${doctorId}`);
+      return res.json({
+        ok: true,
+        data: []
+      });
+    }
+
+    // Extract patient IDs from treatment groups
+    const patientIds = treatmentGroups.map(group => group.patient_id);
+    console.log(`[DOCTOR PATIENTS] Found ${patientIds.length} patient IDs for doctor ${doctorId}`);
+
+    // 🔥 Fetch patients using the extracted patient IDs
+    const { data: patients, error: patientsError } = await supabase
       .from("patients")
       .select(`
         id,
@@ -4419,13 +4449,13 @@ app.get("/api/doctor/patients", async (req, res) => {
         department,
         created_at
       `)
-      .eq("primary_doctor_id", doctorId)
+      .in("id", patientIds)
       .eq("clinic_id", clinicId)
       .eq("status", "ACTIVE")
       .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("[DOCTOR PATIENTS] Patients error:", error);
+    if (patientsError) {
+      console.error("[DOCTOR PATIENTS] Patients error:", patientsError);
       return res.status(500).json({ 
         ok: false, 
         error: "failed_to_fetch_patients",
@@ -4433,7 +4463,7 @@ app.get("/api/doctor/patients", async (req, res) => {
       });
     }
 
-    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for primary doctor ${doctorId}`);
+    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for doctor ${doctorId}`);
 
     const formattedPatients = (patients || []).map(patient => ({
       id: patient.id,
