@@ -7969,6 +7969,47 @@ app.get("/api/icd10/dental", async (req, res) => {
   }
 });
 
+/* ================= ICD-10 SEARCH ================= */
+app.get("/api/icd10/search", async (req, res) => {
+  try {
+    console.log("[ICD10 SEARCH] Request received:", req.query);
+    
+    const { q } = req.query;
+    
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.json({
+        ok: true,
+        results: []
+      });
+    }
+
+    console.log("[ICD10 SEARCH] Searching for:", q);
+
+    const { data: codes, error } = await supabase
+      .from("icd10_dental_codes")
+      .select("code, parent_code, description")
+      .or(`code.ilike.%${q}%,description.ilike.%${q}%`)
+      .order("code", { ascending: true })
+      .limit(20);
+
+    if (error) {
+      console.error("[ICD10 SEARCH] Database error:", error);
+      return res.status(500).json({ ok: false, error: "search_failed" });
+    }
+
+    console.log("[ICD10 SEARCH] Found results:", codes?.length || 0);
+
+    res.json({
+      ok: true,
+      results: codes || []
+    });
+
+  } catch (err) {
+    console.error("[ICD10 SEARCH] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= ADMIN DOCTOR APPLICATIONS ================= */
 // 🔥 CRITICAL: Use doctors table - NOT patients table
 app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
