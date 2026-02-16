@@ -7274,6 +7274,159 @@ app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
   }
 });
 
+// GET /api/doctor/encounters/:id/diagnoses - Get diagnoses for specific encounter
+app.get("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      console.error("[ENCOUNTER DIAGNOSES] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id: encounterId } = req.params;
+
+    // Enhanced logging
+    console.log("[ENCOUNTER DIAGNOSES] Request:", {
+      doctorId,
+      encounterId,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!encounterId) {
+      console.error("[ENCOUNTER DIAGNOSES] Missing encounterId");
+      return res.status(400).json({ ok: false, error: "encounterId_required" });
+    }
+
+    // Rule: Doctor sadece kendi encounter'larının diagnoses'larını görebilir
+    const { data: diagnoses, error } = await supabase
+      .from("encounter_diagnoses")
+      .select(`
+        *,
+        patient_encounters!inner(
+          id,
+          created_by_doctor_id,
+          patient_id,
+          status
+        )
+      `)
+      .eq("patient_encounters.created_by_doctor_id", doctorId)
+      .eq("encounter_id", encounterId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ENCOUNTER DIAGNOSES] Database error:", error.message);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    // Enhanced logging for successful query
+    console.log("[ENCOUNTER DIAGNOSES] Query result:", {
+      found: diagnoses ? diagnoses.length : 0,
+      encounterId,
+      doctorId
+    });
+
+    // Return 200 with empty array instead of 500 for no diagnoses
+    return res.json({
+      ok: true,
+      diagnoses: diagnoses || []
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTER DIAGNOSES] Exception:", err.message);
+    console.error("[ENCOUNTER DIAGNOSES] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/doctor/encounters/:id/diagnoses - Add diagnoses to specific encounter
+app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Auth failed:", v.code);
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const { doctorId } = v.decoded;
+    const { id: encounterId } = req.params;
+    const { diagnoses } = req.body || {};
+
+    // Enhanced logging
+    console.log("[ENCOUNTER DIAGNOSES POST] Request:", {
+      doctorId,
+      encounterId,
+      diagnoses,
+      user: req.user,
+      params: req.params
+    });
+
+    // Input validation
+    if (!encounterId) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Missing encounterId");
+      return res.status(400).json({ ok: false, error: "encounterId_required" });
+    }
+
+    if (!diagnoses || !Array.isArray(diagnoses) || diagnoses.length === 0) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Missing or invalid diagnoses");
+      return res.status(400).json({ ok: false, error: "diagnoses_required" });
+    }
+
+    // Verify encounter ownership
+    const { data: encounter, error: encounterError } = await supabase
+      .from("patient_encounters")
+      .select("id, created_by_doctor_id")
+      .eq("id", encounterId)
+      .eq("created_by_doctor_id", doctorId)
+      .single();
+
+    if (encounterError || !encounter) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Encounter not found or access denied");
+      return res.status(404).json({ ok: false, error: "encounter_not_found" });
+    }
+
+    // Prepare diagnoses for insertion
+    const diagnosesToInsert = diagnoses.map(diagnosis => ({
+      encounter_id: encounterId,
+      icd10_code: diagnosis.icd10_code,
+      icd10_description: diagnosis.icd10_description,
+      is_primary: diagnosis.is_primary || false,
+      created_by_doctor_id: doctorId,
+      created_at: new Date().toISOString()
+    }));
+
+    // Insert diagnoses
+    const { data: insertedDiagnoses, error: insertError } = await supabase
+      .from("encounter_diagnoses")
+      .insert(diagnosesToInsert)
+      .select();
+
+    if (insertError) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Database error:", insertError.message);
+      return res.status(500).json({ ok: false, error: insertError.message });
+    }
+
+    // Enhanced logging for successful insertion
+    console.log("[ENCOUNTER DIAGNOSES POST] Insert result:", {
+      inserted: insertedDiagnoses ? insertedDiagnoses.length : 0,
+      encounterId,
+      doctorId
+    });
+
+    return res.json({
+      ok: true,
+      diagnoses: insertedDiagnoses || []
+    });
+
+  } catch (err) {
+    console.error("[ENCOUNTER DIAGNOSES POST] Exception:", err.message);
+    console.error("[ENCOUNTER DIAGNOSES POST] Stack trace:", err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ⚠️ Admin architecture uses UUID id only.
 // patient_id (string) is legacy and not used in admin logic.
 
