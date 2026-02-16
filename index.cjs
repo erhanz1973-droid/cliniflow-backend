@@ -7141,8 +7141,9 @@ app.post("/api/doctor/encounters", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("[ENCOUNTERS] Exception:", err);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    console.error("[ENCOUNTERS] Exception:", err.message);
+    console.error("[ENCOUNTERS] Stack trace:", err.stack);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
@@ -7200,8 +7201,9 @@ app.get("/api/doctor/encounters", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("[ENCOUNTERS] Get exception:", err);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    console.error("[ENCOUNTERS] Get exception:", err.message);
+    console.error("[ENCOUNTERS] Stack trace:", err.stack);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
