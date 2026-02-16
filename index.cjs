@@ -6538,19 +6538,15 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       });
     }
 
-    // Insert assignment
-    const { data: assignment, error: insertError } = await supabase
-      .from("patient_doctor_assignments")
-      .insert({
-        patient_id,
-        doctor_id,
-        clinic_id: clinicId
-      })
-      .select()
-      .single();
+    // Update patient with primary doctor
+    const { error: updateError } = await supabase
+      .from("patients")
+      .update({ primary_doctor_id: doctor_id })
+      .eq("id", patient_id)
+      .eq("clinic_id", clinicId);
 
-    if (insertError) {
-      console.error("[ADMIN ASSIGN PATIENT] Insert error:", insertError);
+    if (updateError) {
+      console.error("[ADMIN ASSIGN PATIENT] Update error:", updateError);
       return res.status(500).json({
         ok: false,
         error: "assignment_failed"
@@ -6559,12 +6555,17 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
 
     console.log("[ADMIN ASSIGN PATIENT] Success:", {
       patient_id,
-      doctor_id
+      primaryDoctorId: doctor_id,
+      assignmentType: "primary_only"
     });
 
     return res.status(200).json({
       ok: true,
-      message: "Patient assigned successfully"
+      data: {
+        patient_id,
+        primaryDoctorId: doctor_id,
+        assignmentType: "primary_only"
+      }
     });
 
   } catch (error) {
