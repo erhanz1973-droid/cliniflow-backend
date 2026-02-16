@@ -8029,8 +8029,9 @@ app.get("/api/icd/search", async (req, res) => {
 
     const { data: codes, error } = await supabase
       .from("icd10_codes")
-      .select("code, title_tr")
-      .or(`code.ilike.%${q}%,title_tr.ilike.%${q}%`)
+      .select("code, category")
+      .eq("is_dental", true)
+      .or(`code.ilike.%${q}%,category.ilike.%${q}%`)
       .order("code", { ascending: true })
       .limit(20);
 
