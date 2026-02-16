@@ -8013,7 +8013,7 @@ app.get("/api/icd10/search", async (req, res) => {
 /* ================= ICD SEARCH ================= */
 app.get("/api/icd/search", async (req, res) => {
   try {
-    console.log("[ICD SEARCH] Request received:", req.query);
+    console.log("ICD SEARCH QUERY:", req.query.q);
     
     const { q } = req.query;
     
@@ -8025,6 +8025,7 @@ app.get("/api/icd/search", async (req, res) => {
     }
 
     console.log("[ICD SEARCH] Searching for:", q);
+    console.log("Running ICD query...");
 
     const { data: codes, error } = await supabase
       .from("icd10_codes")
@@ -8045,9 +8046,13 @@ app.get("/api/icd/search", async (req, res) => {
       results: codes || []
     });
 
-  } catch (err) {
-    console.error("[ICD SEARCH] Error:", err);
-    res.status(500).json({ ok: false, error: "internal_error" });
+  } catch (error) {
+    console.error("ICD SEARCH ERROR:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
   }
 });
 
