@@ -756,6 +756,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     const decodedPatientId = decoded.patientId;
     const decodedClinicCode = decoded.clinicCode;
     const decodedClinicId = decoded.clinicId;
+    const decodedRole = decoded.role;
     
     const hasPatientId = decodedPatientId !== null && decodedPatientId !== undefined && String(decodedPatientId || "").trim() !== "";
     const hasClinicCode = decodedClinicCode !== null && decodedClinicCode !== undefined;
@@ -766,6 +767,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     // Check if token is admin token (has clinicCode/clinicId but NO patientId)
     const isAdminByToken = hasClinicCode && hasClinicId && !hasPatientId;
     const isAdmin = isAdminByActor || isAdminByToken;
+    const isDoctor = decodedRole === "DOCTOR";
     
     console.log("[TREATMENTS POST] Auth check:", {
       actor,
@@ -875,6 +877,38 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
         clinicId,
         patientName: patientData.name,
         patientStatus: patientData.status
+      });
+    } else if (isDoctor) {
+      // 🔐 PRIMARY DOCTOR CHECK
+      clinicId = decodedClinicId;
+      const doctorId = decoded.doctorId || decodedPatientId;
+      
+      // Get patient and verify primary doctor
+      const { data: patient, error } = await supabase
+        .from("patients")
+        .select("id, primary_doctor_id, name")
+        .eq("id", patientId)
+        .single();
+
+      if (error || !patient) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+
+      if (patient.primary_doctor_id !== doctorId) {
+        return res.status(403).json({
+          ok: false,
+          error: "not_primary_doctor",
+          message: "Bu hastanın primary doktoru değilsiniz."
+        });
+      }
+
+      patientUuid = patient.id;
+      console.log("[TREATMENTS POST] Doctor access granted:", { 
+        patientId, 
+        patientUuid, 
+        clinicId,
+        doctorId,
+        patientName: patient.name
       });
     } else {
       // Patient token - verify patient ID matches and status is APPROVED
