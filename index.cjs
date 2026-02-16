@@ -286,7 +286,12 @@ async function insertReferralWithColumnPruning(payload) {
 }
 
 /* ================= JWT SECRET ================= */
-const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "cliniflow-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error("❌ FATAL: JWT_SECRET is not defined in environment variables");
+  process.exit(1);
+}
 
 /* ================= PATHS ================= */
 const DATA_DIR = path.join(__dirname, "data");
@@ -2571,7 +2576,7 @@ app.post("/api/admin/login", async (req, res) => {
         clinicId: clinic.id,
         clinicCode: trimmedClinicCode
       },
-      process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+      JWT_SECRET,
       { expiresIn: "7d" }
     );
 
@@ -9822,7 +9827,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           };
 
           // Use appropriate secret based on type
-          const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+          JWT_SECRET;
           
           const token = jwt.sign(
             {
@@ -9833,7 +9838,7 @@ app.post("/auth/verify-otp", async (req, res) => {
               type: "patient",
               status: mockPatient.status
             },
-            secret,
+            JWT_SECRET,
             { expiresIn: "30d" }
           );
 
@@ -9865,7 +9870,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         }
 
         // Use appropriate secret based on type
-        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        JWT_SECRET;
         
         const token = jwt.sign(
           {
@@ -9876,7 +9881,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             type: "patient",
             status: patient.status
           },
-          secret,
+          JWT_SECRET,
           { expiresIn: "30d" }
         );
 
@@ -9911,10 +9916,9 @@ app.post("/auth/verify-otp", async (req, res) => {
         }
 
         // Use appropriate secret based on type
-        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        JWT_SECRET;
         
         console.log("=== OTP DOCTOR SIGN DEBUG ===");
-        console.log("Secret used for signing:", secret);
         console.log("JWT_SECRET constant:", JWT_SECRET);
         
         const token = jwt.sign(
@@ -9925,7 +9929,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             type: "doctor",
             status: doctor.status
           },
-          secret,
+          JWT_SECRET,
           { expiresIn: "30d" }
         );
 
@@ -9964,7 +9968,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         }
 
         // Use appropriate secret based on type
-        const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+        JWT_SECRET;
         
         const token = jwt.sign(
           {
@@ -9973,7 +9977,7 @@ app.post("/auth/verify-otp", async (req, res) => {
             role: "ADMIN",
             type: "admin"
           },
-          secret,
+          JWT_SECRET,
           { expiresIn: "30d" }
         );
 
@@ -10026,7 +10030,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
 
       // Use appropriate secret based on type
-      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      JWT_SECRET;
       
       const token = jwt.sign(
         {
@@ -10037,7 +10041,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           type: "patient",
           status: patient.status
         },
-        secret,
+        JWT_SECRET,
         { expiresIn: "30d" }
       );
 
@@ -10072,7 +10076,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
 
       // Use appropriate secret based on type
-      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      JWT_SECRET;
       
       const token = jwt.sign(
         {
@@ -10082,7 +10086,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           type: "doctor",
           status: doctor.status
         },
-        secret,
+        JWT_SECRET,
         { expiresIn: "30d" }
       );
 
@@ -10119,7 +10123,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
 
       // Use appropriate secret based on type
-      const secret = normalizedType === "admin" ? (process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET) : process.env.JWT_SECRET;
+      JWT_SECRET;
       
       const token = jwt.sign(
         {
@@ -10128,7 +10132,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           role: "ADMIN",
           type: "admin"
         },
-        secret,
+        JWT_SECRET,
         { expiresIn: "30d" }
       );
 

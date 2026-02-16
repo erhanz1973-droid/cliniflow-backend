@@ -19,13 +19,11 @@ function verifyAdminToken(req) {
   }
 
   try {
-    // Use ADMIN_JWT_SECRET for admin tokens
-    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET;
-    
-    console.log("[ADMIN DEBUG] Admin secret:", adminSecret ? "present" : "missing");
+    // Use JWT_SECRET for all tokens (admin, doctor, patient)
+    const adminSecret = process.env.JWT_SECRET;
     
     if (!adminSecret) {
-      console.error("[ADMIN] No JWT secret found in environment");
+      console.error("[ADMIN] No JWT_SECRET found in environment");
       return { ok: false, error: "server_config_error" };
     }
 

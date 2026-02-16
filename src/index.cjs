@@ -269,7 +269,12 @@ async function insertReferralWithColumnPruning(payload) {
 }
 
 /* ================= JWT SECRET ================= */
-const JWT_SECRET = process.env.JWT_SECRET || "cliniflow-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error("❌ FATAL: JWT_SECRET is not defined in environment variables");
+  process.exit(1);
+}
 
 /* ================= PATHS ================= */
 const DATA_DIR = path.join(__dirname, "data");
@@ -1959,7 +1964,7 @@ app.post("/api/admin/login", async (req, res) => {
         role: "ADMIN",
         clinicCode: trimmedClinicCode
       },
-      process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET,
+      JWT_SECRET,
       { expiresIn: "7d" }
     );
 

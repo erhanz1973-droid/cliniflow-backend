@@ -14,18 +14,16 @@ function verifyAdminToken(req) {
   }
 
   try {
-    // Use ADMIN_JWT_SECRET for admin tokens
-    const adminSecret = process.env.ADMIN_JWT_SECRET || process.env.JWT_SECRET;
-    console.log("[ADMIN DEBUG] Using JWT secret source:", adminSecret === process.env.ADMIN_JWT_SECRET ? "ADMIN_JWT_SECRET" : "JWT_SECRET");
-    console.log("[ADMIN DEBUG] ADMIN_JWT_SECRET value:", process.env.ADMIN_JWT_SECRET ? "SET" : "NOT SET");
-    console.log("[ADMIN DEBUG] JWT_SECRET value:", process.env.JWT_SECRET ? "SET" : "NOT SET");
+    // Use JWT_SECRET for all tokens (admin, doctor, patient)
+    const adminSecret = process.env.JWT_SECRET;
+    console.log("[ADMIN DEBUG] Using JWT_SECRET:", adminSecret ? "SET" : "NOT SET");
     
     if (!adminSecret) {
       console.error("[ADMIN DEBUG] No JWT secret found in environment");
       return { ok: false, error: "server_config_error" };
     }
 
-    console.log("[ADMIN DEBUG] Verifying token with secret source:", adminSecret === process.env.ADMIN_JWT_SECRET ? "ADMIN_JWT_SECRET" : "JWT_SECRET");
+    console.log("[ADMIN DEBUG] Verifying token with JWT_SECRET");
     
     const decoded = jwt.verify(token, adminSecret);
     console.log("[ADMIN DEBUG] Token decoded successfully:", decoded);

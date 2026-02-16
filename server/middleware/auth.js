@@ -2,7 +2,12 @@
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/database');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error("❌ FATAL: JWT_SECRET is not defined in environment variables");
+  process.exit(1);
+}
 
 // Authenticate token middleware
 function authenticateToken(req, res, next) {
