@@ -8027,10 +8027,12 @@ app.get("/api/icd/search", async (req, res) => {
     console.log("[ICD SEARCH] Searching for:", q);
     console.log("Running ICD query...");
 
+    const search = q.trim();
+
     const { data: codes, error } = await supabase
       .from("icd10_codes")
       .select("code, category")
-      .or(`code.ilike.%${q}%,category.ilike.%${q}%`)
+      .or(`code.ilike.%${search}%,category.ilike.%${search}%`)
       .order("code", { ascending: true })
       .limit(20);
 
