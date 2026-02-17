@@ -57,7 +57,8 @@ router.post('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
   try {
     const { id: encounterId } = req.params;
     const { tooth_number, procedure_name } = req.body;
-    const doctorId = req.user.id;
+    // Handle both new and legacy token formats
+    const doctorId = req.user?.id || req.user?.doctorId;
 
     // Validate required fields
     if (!tooth_number) {
@@ -128,7 +129,8 @@ router.patch('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
   try {
     const { treatmentId } = req.params;
     const { status } = req.body;
-    const doctorId = req.user.id;
+    // Handle both new and legacy token formats
+    const doctorId = req.user?.id || req.user?.doctorId;
 
     // Validate status
     const allowedStatuses = ['planned', 'done', 'cancelled'];
