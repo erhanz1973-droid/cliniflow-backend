@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../../lib/supabase');
+const { supabase } = require('../../supabase');
 const { requireDoctor } = require('../../server/middleware/auth');
 
 // GET treatments by encounter
