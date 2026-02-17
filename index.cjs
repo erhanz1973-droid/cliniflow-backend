@@ -11150,6 +11150,10 @@ app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
 const patientsRoutes = require('./server/routes/patients');
 app.use('/api/patients', patientsRoutes);
 
+// Doctor treatments routes
+const doctorTreatmentRoutes = require('./routes/doctor/treatments');
+app.use('/api/doctor', doctorTreatmentRoutes);
+
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(PUBLIC_DIR));
