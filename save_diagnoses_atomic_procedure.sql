@@ -12,6 +12,7 @@ AS $$
 DECLARE
     v_primary_count INTEGER;
     v_secondary_count INTEGER;
+    v_inserted_count INTEGER;
     v_result JSON;
 BEGIN
     -- Start transaction
@@ -43,23 +44,40 @@ BEGIN
     DELETE FROM encounter_diagnoses 
     WHERE encounter_id = p_encounter_id;
     
-    -- Insert new diagnoses
+    -- DEBUG: Log incoming JSON data
+    RAISE NOTICE 'Diagnoses JSON: %', p_diagnoses;
+    RAISE NOTICE 'JSON length: %', jsonb_array_length(p_diagnoses);
+    
+    -- DEBUG: Verify JSON elements
+    FOR d IN SELECT * FROM jsonb_array_elements(p_diagnoses)
+    LOOP
+      RAISE NOTICE 'Item: %', d;
+      RAISE NOTICE 'ICD10 Code: %', d->>'icd10_code';
+      RAISE NOTICE 'Tooth Number: %', d->>'tooth_number';
+      RAISE NOTICE 'Is Primary: %', d->>'is_primary';
+    END LOOP;
+    
+    -- Insert new diagnoses with tooth_number
     INSERT INTO encounter_diagnoses (
         encounter_id,
+        created_by_doctor_id,
         icd10_code,
         icd10_description,
         is_primary,
-        created_by_doctor_id,
-        created_at
+        tooth_number
     )
-    SELECT 
+    SELECT
         p_encounter_id,
-        (diag->>'icd10_code')::TEXT,
-        (diag->>'icd10_description')::TEXT,
-        (diag->>'is_primary')::boolean,
         p_doctor_id,
-        NOW()
-    FROM jsonb_array_elements(p_diagnoses) AS diag;
+        d->>'icd10_code',
+        d->>'icd10_description',
+        (d->>'is_primary')::boolean,
+        d->>'tooth_number'
+    FROM jsonb_array_elements(p_diagnoses) AS d;
+    
+    -- DEBUG: Log insert results
+    GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
+    RAISE NOTICE 'Inserted % diagnoses', v_inserted_count;
     
     -- Build result object
     SELECT json_build_object(
@@ -73,6 +91,7 @@ BEGIN
                     'icd10_code', icd10_code,
                     'icd10_description', icd10_description,
                     'is_primary', is_primary,
+                    'tooth_number', tooth_number,
                     'created_at', created_at
                 )
             )
