@@ -14,6 +14,7 @@ DECLARE
     v_secondary_count INTEGER;
     v_inserted_count INTEGER;
     v_result JSON;
+    d RECORD;
 BEGIN
     -- Start transaction
     BEGIN
@@ -49,12 +50,12 @@ BEGIN
     RAISE NOTICE 'JSON length: %', jsonb_array_length(p_diagnoses);
     
     -- DEBUG: Verify JSON elements
-    FOR d IN SELECT * FROM jsonb_array_elements(p_diagnoses)
+    FOR d IN SELECT jsonb_array_elements(p_diagnoses) AS diagnosis_item
     LOOP
-      RAISE NOTICE 'Item: %', d;
-      RAISE NOTICE 'ICD10 Code: %', d->>'icd10_code';
-      RAISE NOTICE 'Tooth Number: %', d->>'tooth_number';
-      RAISE NOTICE 'Is Primary: %', d->>'is_primary';
+      RAISE NOTICE 'Item: %', d.diagnosis_item;
+      RAISE NOTICE 'ICD10 Code: %', d.diagnosis_item->>'icd10_code';
+      RAISE NOTICE 'Tooth Number: %', d.diagnosis_item->>'tooth_number';
+      RAISE NOTICE 'Is Primary: %', d.diagnosis_item->>'is_primary';
     END LOOP;
     
     -- Insert new diagnoses with tooth_number
