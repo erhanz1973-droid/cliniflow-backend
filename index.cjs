@@ -11358,6 +11358,61 @@ app.post("/api/admin/timeline/events", adminAuth, async (req, res) => {
   }
 });
 
+// GET /api/treatment-plans/:id/items - Get treatment plan items
+app.get("/api/treatment-plans/:id/items", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "plan_id_required" 
+      });
+    }
+
+    console.log("[TREATMENT PLAN ITEMS] Getting items for plan:", id);
+
+    // Get treatment plan items with proper joins
+    const { data: items, error } = await supabase
+      .from("treatment_items")
+      .select(`
+        id,
+        treatment_plan_id,
+        tooth_number,
+        procedure_code,
+        procedure_description,
+        status,
+        created_at,
+        updated_at
+      `)
+      .eq("treatment_plan_id", id)
+      .order("tooth_number", { ascending: true });
+
+    if (error) {
+      console.error("[TREATMENT PLAN ITEMS] Database error:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "treatment_items_fetch_failed",
+        details: error.message
+      });
+    }
+
+    console.log("[TREATMENT PLAN ITEMS] Found items:", items?.length || 0);
+
+    return res.json({
+      ok: true,
+      data: items || []
+    });
+
+  } catch (err) {
+    console.error("[TREATMENT PLAN ITEMS] Exception:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "internal_error"
+    });
+  }
+});
+
 // Global error handler for production safety
 app.use((err, req, res, next) => {
   console.error("UNHANDLED ERROR:", err);
