@@ -26,4 +26,10 @@ router.get('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
   }
 });
 
+// Test route to verify mounting
+router.get('/test', (req, res) => {
+  console.log('[TREATMENTS TEST ROUTE] - Treatments route is properly mounted!');
+  return res.json({ ok: true, message: 'Treatments route is working!' });
+});
+
 module.exports = router;
