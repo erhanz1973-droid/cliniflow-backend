@@ -16,7 +16,7 @@ DECLARE
     v_result JSON;
 BEGIN
     -- Start transaction
-    BEGIN;
+    BEGIN
     
     -- Count how many primary diagnoses are being submitted
     SELECT COUNT(*) INTO v_primary_count
