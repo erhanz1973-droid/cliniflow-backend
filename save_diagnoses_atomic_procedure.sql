@@ -118,7 +118,7 @@ EXCEPTION
             'details', SQLSTATE
         );
 END;
-$$;
+$$
 
 -- Grant execute permission
 GRANT EXECUTE ON FUNCTION save_diagnoses_atomic TO authenticated, anon;
