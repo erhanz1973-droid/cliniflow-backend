@@ -11154,6 +11154,14 @@ app.use('/api/patients', patientsRoutes);
 const doctorTreatmentRoutes = require('./routes/doctor/treatments');
 app.use('/api/doctor', doctorTreatmentRoutes);
 
+// Doctor suggested procedures routes
+const doctorSuggestedProceduresRoutes = require('./routes/doctor/suggested-procedures');
+app.use('/api/doctor', doctorSuggestedProceduresRoutes);
+
+// Suggested procedures routes
+const suggestedProceduresRoutes = require('./routes/doctor/suggested-procedures');
+app.use('/api/doctor', suggestedProceduresRoutes);
+
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(PUBLIC_DIR));
