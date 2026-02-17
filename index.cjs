@@ -7341,7 +7341,7 @@ app.get("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
   }
 });
 
-// POST /api/doctor/encounters/:id/diagnoses - Add diagnoses to specific encounter
+// POST /api/doctor/encounters/:id/diagnoses - Add diagnoses to specific encounter (ATOMIC)
 app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
   try {
     const v = await verifyDoctorToken(req);
@@ -7387,37 +7387,34 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       return res.status(404).json({ ok: false, error: "encounter_not_found" });
     }
 
-    // Prepare diagnoses for insertion
-    const diagnosesToInsert = diagnoses.map(diagnosis => ({
-      encounter_id: encounterId,
-      icd10_code: diagnosis.icd10_code,
-      icd10_description: diagnosis.icd10_description,
-      is_primary: diagnosis.is_primary || false,
-      created_by_doctor_id: doctorId,
-      created_at: new Date().toISOString()
-    }));
+    // ATOMIC TRANSACTION: Ensure single primary diagnosis
+    const { data: transactionResult, error: transactionError } = await supabase.rpc('save_diagnoses_atomic', {
+      p_encounter_id: encounterId,
+      p_doctor_id: doctorId,
+      p_diagnoses: diagnoses
+    });
 
-    // Insert diagnoses
-    const { data: insertedDiagnoses, error: insertError } = await supabase
-      .from("encounter_diagnoses")
-      .insert(diagnosesToInsert)
-      .select();
-
-    if (insertError) {
-      console.error("[ENCOUNTER DIAGNOSES POST] Database error:", insertError.message);
-      return res.status(500).json({ ok: false, error: insertError.message });
+    if (transactionError) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Transaction error:", transactionError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "transaction_failed",
+        details: transactionError.message 
+      });
     }
 
-    // Enhanced logging for successful insertion
-    console.log("[ENCOUNTER DIAGNOSES POST] Insert result:", {
-      inserted: insertedDiagnoses ? insertedDiagnoses.length : 0,
+    // Enhanced logging for successful transaction
+    console.log("[ENCOUNTER DIAGNOSES POST] Transaction result:", {
+      saved: transactionResult?.saved || 0,
       encounterId,
-      doctorId
+      doctorId,
+      primary_count: transactionResult?.primary_count || 0
     });
 
     return res.json({
       ok: true,
-      diagnoses: insertedDiagnoses || []
+      diagnoses: transactionResult?.diagnoses || [],
+      message: "Diagnoses saved successfully"
     });
 
   } catch (err) {
