@@ -1,6 +1,6 @@
 const express = require('express');
 const { verifyDoctor } = require('../../middleware/auth');
-const { secureGet, securePost, securePatch } = require('../../lib/secure-fetch');
+const { supabase } = require('../../lib/supabase');
 const router = express.Router();
 
 // GET treatments by encounter
@@ -10,12 +10,14 @@ router.get('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
     const doctorId = req.user.id;
 
     // Verify encounter belongs to doctor
-    const encounterCheck = await secureGet(
-      'SELECT id FROM encounters WHERE id = $1 AND doctor_id = $2',
-      [encounterId, doctorId]
-    );
+    const { data: encounterCheck, error: encounterError } = await supabase
+      .from('encounters')
+      .select('id')
+      .eq('id', encounterId)
+      .eq('doctor_id', doctorId)
+      .single();
 
-    if (!encounterCheck || encounterCheck.length === 0) {
+    if (encounterError || !encounterCheck) {
       return res.status(404).json({ 
         ok: false, 
         error: 'Encounter not found or access denied' 
@@ -23,10 +25,19 @@ router.get('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
     }
 
     // Get all treatments for this encounter
-    const treatments = await secureGet(
-      'SELECT * FROM encounter_treatments WHERE encounter_id = $1 ORDER BY created_at DESC',
-      [encounterId]
-    );
+    const { data: treatments, error: treatmentsError } = await supabase
+      .from('encounter_treatments')
+      .select('*')
+      .eq('encounter_id', encounterId)
+      .order('created_at', { ascending: false });
+
+    if (treatmentsError) {
+      console.error('[TREATMENTS GET ERROR]', treatmentsError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: 'Failed to fetch treatments' 
+      });
+    }
 
     res.json({
       ok: true,
@@ -64,12 +75,14 @@ router.post('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
     }
 
     // Verify encounter belongs to doctor
-    const encounterCheck = await secureGet(
-      'SELECT id FROM encounters WHERE id = $1 AND doctor_id = $2',
-      [encounterId, doctorId]
-    );
+    const { data: encounterCheck, error: encounterError } = await supabase
+      .from('encounters')
+      .select('id')
+      .eq('id', encounterId)
+      .eq('doctor_id', doctorId)
+      .single();
 
-    if (!encounterCheck || encounterCheck.length === 0) {
+    if (encounterError || !encounterCheck) {
       return res.status(404).json({ 
         ok: false, 
         error: 'Encounter not found or access denied' 
@@ -77,14 +90,29 @@ router.post('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
     }
 
     // Insert new treatment
-    const newTreatment = await securePost(
-      'INSERT INTO encounter_treatments (encounter_id, tooth_number, procedure_name, status, created_by_doctor_id) VALUES ($1, $2, $3, \'planned\', $4) RETURNING *',
-      [encounterId, tooth_number, procedure_name, doctorId]
-    );
+    const { data: newTreatment, error: insertError } = await supabase
+      .from('encounter_treatments')
+      .insert({
+        encounter_id: encounterId,
+        tooth_number: tooth_number,
+        procedure_name: procedure_name,
+        status: 'planned',
+        created_by_doctor_id: doctorId
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error('[TREATMENTS POST ERROR]', insertError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: 'Failed to create treatment' 
+      });
+    }
 
     res.json({
       ok: true,
-      treatment: newTreatment[0]
+      treatment: newTreatment
     });
   } catch (error) {
     console.error('[TREATMENTS POST ERROR]', error);
@@ -112,14 +140,20 @@ router.patch('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
     }
 
     // Verify treatment belongs to doctor's encounter
-    const treatmentCheck = await secureGet(
-      `SELECT t.id FROM encounter_treatments t
-       JOIN encounters e ON t.encounter_id = e.id
-       WHERE t.id = $1 AND e.doctor_id = $2`,
-      [treatmentId, doctorId]
-    );
+    const { data: treatmentCheck, error: checkError } = await supabase
+      .from('encounter_treatments')
+      .select(`
+        id,
+        encounters!inner(
+          id,
+          doctor_id
+        )
+      `)
+      .eq('id', treatmentId)
+      .eq('encounters.doctor_id', doctorId)
+      .single();
 
-    if (!treatmentCheck || treatmentCheck.length === 0) {
+    if (checkError || !treatmentCheck) {
       return res.status(404).json({ 
         ok: false, 
         error: 'Treatment not found or access denied' 
@@ -127,14 +161,27 @@ router.patch('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
     }
 
     // Update treatment status
-    const updatedTreatment = await securePatch(
-      'UPDATE encounter_treatments SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-      [status, treatmentId]
-    );
+    const { data: updatedTreatment, error: updateError } = await supabase
+      .from('encounter_treatments')
+      .update({ 
+        status: status, 
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', treatmentId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('[TREATMENTS PATCH ERROR]', updateError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: 'Failed to update treatment' 
+      });
+    }
 
     res.json({
       ok: true,
-      treatment: updatedTreatment[0]
+      treatment: updatedTreatment
     });
   } catch (error) {
     console.error('[TREATMENTS PATCH ERROR]', error);
