@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../../lib/supabase');
-const verifyDoctor = require('../../middleware/auth');
+const { requireDoctor } = require('../../server/middleware/auth');
 
 // GET treatments by encounter
-router.get('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
+router.get('/encounters/:id/treatments', requireDoctor, async (req, res) => {
   try {
     const encounterId = req.params.id;
 
@@ -28,7 +28,7 @@ router.get('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
 });
 
 // POST create treatment
-router.post('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
+router.post('/encounters/:id/treatments', requireDoctor, async (req, res) => {
   try {
     const encounterId = req.params.id;
     const { tooth_number, procedure_name } = req.body;
@@ -67,7 +67,7 @@ router.post('/encounters/:id/treatments', verifyDoctor, async (req, res) => {
 });
 
 // PATCH update treatment
-router.patch('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
+router.patch('/treatments/:treatmentId', requireDoctor, async (req, res) => {
   try {
     const { treatmentId } = req.params;
     const { status } = req.body;
@@ -103,7 +103,7 @@ router.patch('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
 });
 
 // DELETE treatment
-router.delete('/treatments/:treatmentId', verifyDoctor, async (req, res) => {
+router.delete('/treatments/:treatmentId', requireDoctor, async (req, res) => {
   try {
     const { treatmentId } = req.params;
 
