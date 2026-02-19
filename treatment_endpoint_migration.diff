@@ -1,0 +1,93 @@
+# DIFF: Migrate from /api/doctor/encounters/:encounterId/treatments to /api/patient/:patientId/treatments
+
+## File: cliniflow-app/app/diagnosis.tsx
+
+### Line 247-250: loadAllTreatments function
+```diff
+-     const response = await secureGet(
+-       `/api/doctor/encounters/${encounterId}/treatments`,
+-       user?.token
+-     );
++     const response = await secureGet(
++       `/api/patient/${patientId}/treatments`,
++       user?.token
++     );
+```
+
+### Line 275-278: loadTreatments function  
+```diff
+-     const response = await secureGet(
+-       `/api/doctor/encounters/${encounterId}/treatments`,
+-       user?.token
+-     );
++     const response = await secureGet(
++       `/api/patient/${patientId}/treatments`,
++       user?.token
++     );
+```
+
+### Line 300-301: createTreatment function
+```diff
+-     const response = await securePost(
+-       `/api/doctor/encounters/${encounterId}/treatments`,
+-       {
+-         tooth_number: activeTooth,
+-         procedure_name: procedureName
+-       },
+-       user?.token
+-     );
++     const response = await securePost(
++       `/api/patient/${patientId}/treatments`,
++       {
++         tooth_number: activeTooth,
++         procedure_name: procedureName
++       },
++       user?.token
++     );
+```
+
+### Line 241-242: Update response handling
+```diff
+-      if (response.ok && response.treatments) {
+-        setAllTreatments(response.treatments);
+-      }
++      if (response.ok && response.teeth) {
++        setAllTreatments(response.teeth.flat() || []);
++      }
+```
+
+### Line 279-280: Update response handling
+```diff
+-      if (response.ok && response.treatments) {
+-        setToothTreatments(response.treatments.filter(
+-          (t: any) => t.tooth_number === activeTooth
+-        ));
+-      }
++      if (response.ok && response.teeth) {
++        setToothTreatments(response.teeth.flat().filter(
++          (t: any) => t.tooth_number === activeTooth
++        ));
++      }
+```
+
+### Line 317-318: Update response handling
+```diff
+-      if (response.ok && response.treatment) {
+-        // Reload treatments
+-        loadTreatments();
+-        // Close modal
+-        setIsTreatmentModalVisible(false);
+-      }
++      if (response.ok) {
++        // Reload treatments
++        loadTreatments();
++        // Close modal
++        setIsTreatmentModalVisible(false);
++      }
+```
+
+## Summary of Changes:
+1. Replace all `/api/doctor/encounters/${encounterId}/treatments` with `/api/patient/${patientId}/treatments`
+2. Update response handling to work with `{ schemaVersion, updatedAt, patientId, teeth: [] }` format
+3. Remove encounterId dependency from treatment loading logic
+4. Keep all existing logic minimal and production-safe

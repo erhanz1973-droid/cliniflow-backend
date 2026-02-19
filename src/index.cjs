@@ -581,27 +581,6 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
     let clinicId;
     let patientUuid;
 
-    } else if (isDoctor) {    if (isAdmin) {
-      // Admin token - verify admin has access to this clinic
-      clinicId = decoded.clinicId;
-      const doctorId = decoded.doctorId;
-      
-      const { data: patient, error } = await supabase
-        .from("patients")
-        .select("id, primary_doctor_id")
-        .eq("id", patientId)
-        .single();
-      
-      if (error || !patient) {
-        return res.status(404).json({ ok: false, error: "patient_not_found" });
-      }
-      
-      if (patient.primary_doctor_id !== doctorId) {
-        return res.status(403).json({
-          ok: false,
-          error: "not_primary_doctor"
-        });
-      }
       
     }      patientUuid = patient.id;      if (!decoded.clinicId || !decoded.clinicCode) {
         return res.status(401).json({ ok: false, error: "invalid_admin_token" });

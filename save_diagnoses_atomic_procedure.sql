@@ -31,19 +31,22 @@ BEGIN
     
     -- RAISE NOTICE 'Processing %d primary and %d secondary diagnoses', v_primary_count, v_secondary_count;
     
-    -- If we have primary diagnoses, reset existing ones first
+    -- If we have primary diagnoses, update existing primary diagnoses for the same teeth to false
     IF v_primary_count > 0 THEN
+        -- Update existing primary diagnoses for the same teeth to false
         UPDATE encounter_diagnoses 
         SET is_primary = false 
         WHERE encounter_id = p_encounter_id 
-        AND is_primary = true;
+        AND is_primary = true
+        AND tooth_number IN (
+            SELECT (diag->>'tooth_number')::text
+            FROM jsonb_array_elements(p_diagnoses) AS diag
+            WHERE (diag->>'is_primary')::boolean = true
+            AND diag->>'tooth_number' IS NOT NULL
+        );
         
-        RAISE NOTICE 'Reset existing primary diagnoses for encounter %', p_encounter_id;
+        RAISE NOTICE 'Updated existing primary diagnoses to false for same teeth in encounter %', p_encounter_id;
     END IF;
-    
-    -- Delete all existing diagnoses for this encounter (atomic replace)
-    DELETE FROM encounter_diagnoses 
-    WHERE encounter_id = p_encounter_id;
     
     -- DEBUG: Log incoming JSON data
     RAISE NOTICE 'Diagnoses JSON: %', p_diagnoses;
