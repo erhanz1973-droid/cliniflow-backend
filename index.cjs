@@ -12,6 +12,15 @@ console.log("[INIT] Server starting up");
 console.log("[INIT] Node version:", process.version);
 console.log("[INIT] Environment:", process.env.NODE_ENV || "development");
 console.log("[INIT] Working directory:", __dirname);
+console.log("[INIT] Process cwd:", process.cwd());
+
+// JWT_SECRET validation
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is not defined in environment variables");
+  process.exit(1);
+}
+
+console.log("[INIT] JWT_SECRET: ✅ Defined");
 
 const express = require('express');
 const path = require('path');
@@ -11150,13 +11159,13 @@ app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
 const patientsRoutes = require('./server/routes/patients');
 app.use('/api/patients', patientsRoutes);
 
+// Treatment routes - MUST come before doctor routes to avoid conflicts
+const treatmentRoutes = require('./server/routes/treatment');
+app.use('/api/treatment', treatmentRoutes);
+
 // Doctor treatments routes
 const doctorTreatmentRoutes = require('./routes/doctor/treatments');
 app.use('/api/doctor', doctorTreatmentRoutes);
-
-// Treatment routes
-const treatmentRoutes = require('./server/routes/treatment');
-app.use('/api', treatmentRoutes);
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -11371,7 +11380,15 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
   try {
     const { id } = req.params;
     
+    console.log("[TREATMENT PLAN ITEMS] === DEBUG START ===");
+    console.log("[TREATMENT PLAN ITEMS] Requested planId:", id);
+    console.log("[TREATMENT PLAN ITEMS] Requested planId type:", typeof id);
+    console.log("[TREATMENT PLAN ITEMS] Requested planId null?:", id === null);
+    console.log("[TREATMENT PLAN ITEMS] Requested planId undefined?:", id === undefined);
+    console.log("[TREATMENT PLAN ITEMS] Full req.params:", req.params);
+    
     if (!id) {
+      console.log("[TREATMENT PLAN ITEMS] ERROR: Plan ID missing");
       return res.status(400).json({ 
         ok: false, 
         error: "plan_id_required" 
@@ -11386,7 +11403,7 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
       .select(`
         id,
         treatment_plan_id,
-        tooth_number,
+        tooth_fdi_code,
         procedure_code,
         procedure_description,
         status,
@@ -11394,7 +11411,11 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
         updated_at
       `)
       .eq("treatment_plan_id", id)
-      .order("tooth_number", { ascending: true });
+      .order("tooth_fdi_code", { ascending: true });
+
+    console.log("[TREATMENT PLAN ITEMS] Supabase data:", items);
+    console.log("[TREATMENT PLAN ITEMS] Supabase error:", error);
+    console.log("[TREATMENT PLAN ITEMS] Items length:", items?.length || 0);
 
     if (error) {
       console.error("[TREATMENT PLAN ITEMS] Database error:", error);
@@ -11406,6 +11427,7 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
     }
 
     console.log("[TREATMENT PLAN ITEMS] Found items:", items?.length || 0);
+    console.log("[TREATMENT PLAN ITEMS] === DEBUG END ===");
 
     return res.json({
       ok: true,

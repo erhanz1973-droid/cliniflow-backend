@@ -654,7 +654,6 @@ module.exports = {
   createPatientToken,
   updatePatientTokenRole,
   updatePatientTokensByPatientId,
-  // Export Supabase client for direct use
+  supabase,
   getSupabaseClient: () => supabase,
 };
-
