@@ -4985,9 +4985,9 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
         patient_encounters!inner(
           id,
           patient_id,
-          created_by_doctor_id as doctor_id,
-          status as encounter_status,
-          created_at as encounter_created_at
+          created_by_doctor_id,
+          status,
+          created_at
         ),
         patients!inner(
           id,
@@ -5012,52 +5012,45 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    // Group by treatment plan and count items
-    const formattedPlans = treatmentPlans.reduce((acc, plan) => {
-      const planId = plan.id;
-      if (!acc[planId]) {
-        acc[planId] = {
-          id: plan.id,
-          encounter_id: plan.encounter_id,
-          status: plan.status,
-          created_at: plan.created_at,
-          submitted_at: plan.submitted_at,
-          completed_at: plan.completed_at,
-          patient: {
-            id: plan.patients.id,
-            name: plan.patients.name,
-            phone: plan.patients.phone,
-            email: plan.patients.email
-          },
-          encounter: {
-            id: plan.patient_encounters.id,
-            status: plan.encounter_status,
-            created_at: plan.encounter_created_at
-          },
-          items: [],
-          items_count: 0
-        };
-      }
-      
-      // Add item if exists
-      if (plan.treatment_items.id) {
-        acc[planId].items.push({
-          id: plan.treatment_items.id,
-          tooth_fdi_code: plan.treatment_items.tooth_fdi_code,
-          procedure_code: plan.treatment_items.procedure_code,
-          procedure_description: plan.treatment_items.procedure_description,
-          status: plan.treatment_items.item_status,
-          is_visible_to_patient: plan.treatment_items.is_visible_to_patient
-        });
-        acc[planId].items_count++;
-      }
-      
-      return acc;
-    }, {});
+    const formattedPlans = (treatmentPlans || []).map((plan) => {
+      const rawItems = Array.isArray(plan.treatment_items) ? plan.treatment_items : [];
+      const items = rawItems
+        .filter((item) => item && item.id)
+        .map((item) => ({
+          id: item.id,
+          tooth_fdi_code: item.tooth_fdi_code,
+          procedure_code: item.procedure_code,
+          procedure_description: item.procedure_description,
+          status: item.item_status,
+          is_visible_to_patient: item.is_visible_to_patient,
+        }));
+
+      return {
+        id: plan.id,
+        encounter_id: plan.encounter_id,
+        status: plan.status,
+        created_at: plan.created_at,
+        submitted_at: plan.submitted_at,
+        completed_at: plan.completed_at,
+        patient: {
+          id: plan?.patients?.id,
+          name: plan?.patients?.name,
+          phone: plan?.patients?.phone,
+          email: plan?.patients?.email,
+        },
+        encounter: {
+          id: plan?.patient_encounters?.id,
+          status: plan?.patient_encounters?.status,
+          created_at: plan?.patient_encounters?.created_at,
+        },
+        items,
+        items_count: items.length,
+      };
+    });
 
     res.json({
       ok: true,
-      treatment_plans: Object.values(formattedPlans)
+      treatment_plans: formattedPlans
     });
 
   } catch (err) {
@@ -5914,12 +5907,12 @@ app.post("/api/treatment/plans/:id/items", async (req, res) => {
 // Get patient info for doctor
 app.get("/api/doctor/patient/:patientId", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
 
-    const { clinicId, patientId: doctorId } = v.decoded;
+    const { clinicId, doctorId } = v.decoded;
     const { patientId } = req.params;
 
     // Doctor cannot access their own treatment data
@@ -5932,13 +5925,13 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
       .from("patients")
       .select(`
         id,
-        name,
+        patient_id,
         name,
         status,
         created_at,
         last_visit
       `)
-      .eq("patient_id", patientId)
+      .or(`patient_id.eq.${patientId},id.eq.${patientId}`)
       .eq("clinic_id", clinicId)
       .single();
 
@@ -5950,15 +5943,14 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
       ok: true,
       patient: {
         id: patient.id,
-        patientId: patient.name,
+        patientId: patient.patient_id || patient.id,
         name: patient.name,
         status: patient.status === "ACTIVE" ? "Active" : "Pending",
         lastVisit: patient.last_visit,
       }
     });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR PATIENT INFO] Error:", error);
+    console.error("[DOCTOR PATIENT INFO] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
