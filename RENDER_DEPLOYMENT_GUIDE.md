@@ -148,13 +148,13 @@ const API_BASE = "https://YOUR_RENDER_URL";
 ## 🌐 **EXPECTED FINAL OUTPUT**
 
 ### **Public Backend URL:**
-`https://cliniflow-backend.onrender.com`
+`https://cliniflow-backend-1.onrender.com`
 
 ### **Health Endpoint:**
-`https://cliniflow-backend.onrender.com/health`
+`https://cliniflow-backend-1.onrender.com/health`
 
 ### **Admin Login Endpoint:**
-`https://cliniflow-backend.onrender.com/api/admin/login`
+`https://cliniflow-backend-1.onrender.com/api/admin/login`
 
 ---
 

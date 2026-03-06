@@ -84,8 +84,8 @@
   <div class="card">
     <h2>Android Studio Emülatörü İçin</h2>
     <div class="url-box">
-      http://10.0.2.2:5050/admin.html
-      <button class="copy-btn" onclick="copyToClipboard('http://10.0.2.2:5050/admin.html')">Kopyala</button>
+      http://10.0.2.2:10000/admin.html
+      <button class="copy-btn" onclick="copyToClipboard('http://10.0.2.2:10000/admin.html')">Kopyala</button>
     </div>
     <div class="info">
       Android Studio emülatöründe host makineye erişmek için <strong>10.0.2.2</strong> IP adresini kullanın.
@@ -144,11 +144,11 @@
             <br><br>
             Terminal'de şu komutu çalıştırın: <code>ifconfig | grep "inet " | grep -v 127.0.0.1</code>
             <br>
-            Bulduğunuz IP ile: <code>http://[IP_ADRESI]:5050/admin.html</code>
+            Bulduğunuz IP ile: <code>http://[IP_ADRESI]:10000/admin.html</code>
           </div>
         `;
       } else if (hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.')) {
-        const baseUrl = `http://${hostname}:5050/admin.html`;
+        const baseUrl = `http://${hostname}:10000/admin.html`;
         document.getElementById('networkUrl').innerHTML = `
           ${baseUrl}
           <button class="copy-btn" onclick="copyToClipboard('${baseUrl}')">Kopyala</button>
@@ -182,7 +182,7 @@
 
       const baseUrl =
       window.location.hostname === "localhost"
-        ? "http://localhost:5050"
+        ? "http://localhost:10000"
         : "https://cliniflow-backend-dg8a.onrender.com";
       try {
         const response = await fetch(`${baseUrl}/health`);

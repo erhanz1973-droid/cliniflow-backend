@@ -27,39 +27,27 @@ function authenticateToken(req, res, next) {
     console.log("[AUTHENTICATE TOKEN] Decoded token:", decoded);
 
     try {
-      // 🔥 CRITICAL: Handle doctor tokens with role field
-      if (decoded.role === "DOCTOR") {
-        // Doctor tokens from login endpoint have role field
-        req.decoded = decoded;
-        req.user = {
-          id: decoded.doctorId,
-          role: decoded.role
-        };
-        console.log("[AUTHENTICATE TOKEN] Doctor user set:", { 
-          decoded: req.decoded, 
-          user: req.user 
-        });
-        return next();
-      }
+      // 🔥 Her zaman DB'den kullanıcıyı çek
+      const result = await pool.query(
+        'SELECT id, email, role FROM users WHERE id = $1',
+        [decoded.id]
+      );
 
-      // Get user info based on type (legacy tokens)
-      let user;
-      if (decoded.type === 'doctor') {
-        const result = await pool.query('SELECT id, name, email FROM doctors WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      } else if (decoded.type === 'admin') {
-        const result = await pool.query('SELECT id, name, email FROM admins WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      } else if (decoded.type === 'patient') {
-        const result = await pool.query('SELECT id, name, phone FROM patients WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      }
+      const user = result.rows[0];
 
       if (!user) {
         return res.status(403).json({ error: 'User not found' });
       }
 
-      req.user = { ...user, type: decoded.type };
+      req.user = user;  // 🔥 KRİTİK
+      req.decoded = decoded;
+
+      console.log("[AUTHENTICATE TOKEN] User authenticated:", {
+        id: user.id,
+        email: user.email,
+        role: user.role
+      });
+
       next();
     } catch (error) {
       console.error('Auth middleware error:', error);
@@ -70,50 +58,41 @@ function authenticateToken(req, res, next) {
 
 // Require doctor role middleware
 function requireDoctor(req, res, next) {
-  console.log("[REQUIRE DOCTOR] Checking user:", {
-    user: req.user,
-    decoded: req.decoded
-  });
+  console.log("[REQUIRE DOCTOR] Checking user:", req.user);
 
-  // 🔥 CRITICAL: Check both role fields with case-insensitive comparison
-  const role = req.user?.role || req.user?.type;
-  const roleUpper = role?.toUpperCase();
-  
-  console.log("[REQUIRE DOCTOR] Role check:", {
-    role,
-    roleUpper,
-    isDoctor: roleUpper === 'DOCTOR'
-  });
-
-  if (!role || roleUpper !== 'DOCTOR') {
+  // 🔥 KRİTİK: Sadece DB'den gelen role alanını kontrol et
+  if (!req.user || req.user.role !== 'DOCTOR') {
     console.error("[REQUIRE DOCTOR] Access denied - not a doctor:", {
-      role,
-      roleUpper,
+      role: req.user?.role,
       expected: 'DOCTOR'
     });
     return res.status(403).json({ error: 'Doctor access required' });
   }
 
-  console.log("[REQUIRE DOCTOR] Access granted for doctor");
+  console.log("[REQUIRE DOCTOR] Access granted for doctor:", {
+    id: req.user.id,
+    email: req.user.email
+  });
   next();
 }
 
 // Require admin role middleware
 function requireAdmin(req, res, next) {
-  // 🔥 CRITICAL: Check both role fields with case-insensitive comparison
-  const role = req.user?.role || req.user?.type;
-  const roleUpper = role?.toUpperCase();
-  
-  if (!role || roleUpper !== 'ADMIN') {
+  console.log("[REQUIRE ADMIN] Checking user:", req.user);
+
+  // 🔥 KRİTİK: Sadece DB'den gelen role alanını kontrol et
+  if (!req.user || req.user.role !== 'ADMIN') {
     console.error("[REQUIRE ADMIN] Access denied - not an admin:", {
-      role,
-      roleUpper,
+      role: req.user?.role,
       expected: 'ADMIN'
     });
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  console.log("[REQUIRE ADMIN] Access granted for admin");
+  console.log("[REQUIRE ADMIN] Access granted for admin:", {
+    id: req.user.id,
+    email: req.user.email
+  });
   next();
 }
 

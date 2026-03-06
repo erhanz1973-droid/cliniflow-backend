@@ -243,7 +243,7 @@
     </div>
 
     <div class="nav">
-      <a href="/admin-dashboard.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
       <span style="margin: 0 8px; color: var(--muted);">|</span>
       <a href="/doctor-login.html" data-i18n="login.doctorLogin">Doctor Login</a>
     </div>
@@ -252,7 +252,7 @@
 <script>
   const API =
     window.location.hostname === "localhost"
-      ? "http://localhost:5050"
+      ? "http://localhost:10000"
       : "https://cliniflow-backend-dg8a.onrender.com";
   
   function showAlert(message, type = "error") {
@@ -332,17 +332,21 @@
         body: JSON.stringify({ email, clinicCode, password }),
       });
       
-      const json = await res.json();
+      console.log("[LOGIN] Response status:", res.status);
+      const data = await res.json();
+      console.log("[LOGIN] Response JSON:", data);
       
-      if (!res.ok) {
-        let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
-        if (json.error === "invalid_admin_credentials") {
+      // Validate success
+      if (!(res.ok && data.ok === true)) {
+        // determine message if available
+        let errorMsg = data.message || data.error || i18n.t("login.errors.loginFailed");
+        if (data.error === "invalid_admin_credentials" || data.error === "PASSWORD_INVALID") {
           errorMsg = i18n.t("login.errors.invalidCredentials");
-        } else if (json.error === "email_required") {
+        } else if (data.error === "email_required") {
           errorMsg = i18n.t("login.errors.emailRequired");
-        } else if (json.error === "clinic_code_required") {
+        } else if (data.error === "clinic_code_required") {
           errorMsg = i18n.t("login.errors.clinicCodeRequired");
-        } else if (json.error === "password_required") {
+        } else if (data.error === "password_required") {
           errorMsg = i18n.t("login.errors.passwordRequired");
         }
         setMsg(errorMsg, "err");
@@ -351,32 +355,31 @@
         return;
       }
       
-      if (json.ok && json.requiresOTP) {
+      if (data.ok && data.requiresOTP) {
         // OTP required - show OTP input form
-        showOTPForm(json.clinicCode, json.email);
+        showOTPForm(data.clinicCode, data.email);
         return;
       }
       
-      if (json.ok && json.token) {
-        // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
-        localStorage.setItem("adminToken", json.token);
-        localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
-        localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
-        
-        console.log("[LOGIN] Token saved to localStorage:", json.token.substring(0, 20) + "...");
-        console.log("[LOGIN] Admin data:", json.admin);
-        
-        setMsg(i18n.t("login.success", { name: json.admin?.clinicCode || clinicCode }), "ok");
-        
-        console.log("[LOGIN] Login successful, redirecting to dashboard...");
-        
-        // Redirect immediately to correct port
-        window.location.href = window.location.origin + "/admin-dashboard.html";
-      } else {
-        setMsg(i18n.t("login.errors.loginFailed"), "err");
-        submitBtn.disabled = false;
-        submitBtn.textContent = i18n.t("login.submit");
+      // store token ensure exists
+      if (data.token) {
+        localStorage.setItem("adminToken", data.token);
       }
+      if (data.admin && data.admin.clinicCode) {
+        localStorage.setItem("clinic_code", data.admin.clinicCode);
+      }
+      if (data.admin && data.admin.name) {
+        localStorage.setItem("clinic_name", data.admin.name);
+      }
+
+      // optionally keep user
+      localStorage.setItem("user", JSON.stringify(data.admin || {}));
+
+      console.log("[LOGIN] Token saved:", (data.token || "").substring(0, 20) + "...");
+
+      setMsg("Login successful", "ok");
+
+      window.location.href = "/admin.html";
     } catch (error) {
       console.error("Login error:", error);
       setMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
@@ -507,23 +510,27 @@
           return;
         }
         
-        if (json.ok && json.token) {
-          // Save token and redirect
-          localStorage.setItem("adminToken", json.token);
-          localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
-          localStorage.setItem("clinic_name", json.clinicName || "");
-          
-          setOTPMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
-          
-          // Redirect to dashboard
-          setTimeout(() => {
-            window.location.href = window.location.origin + "/admin-dashboard.html";
-          }, 1000);
-        } else {
-          setOTPMsg(i18n.t("login.errors.otpFailed"), "err");
+        if (!res.ok || !json.ok || !json.user || !json.user.token) {
+          setOTPMsg("Login failed", "error");
           submitBtn.disabled = false;
           submitBtn.textContent = i18n.t("login.verifyOTP");
+          return;
         }
+
+        // Correct token storage
+        localStorage.setItem("adminToken", json.user.token);
+        localStorage.setItem("clinic_code", json.user.clinicCode);
+        localStorage.setItem("clinic_name", json.user.name || "");
+
+        // Save full user object
+        localStorage.setItem("user", JSON.stringify(json.user));
+
+        setOTPMsg("Login successful", "ok");
+
+        // Redirect to dashboard
+        setTimeout(() => {
+          window.location.href = "/admin.html";
+        }, 800);
       } catch (error) {
         console.error("OTP verification error:", error);
         setOTPMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");

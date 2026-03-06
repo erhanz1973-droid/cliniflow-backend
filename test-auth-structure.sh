@@ -5,7 +5,7 @@ echo "=================================="
 
 # Test 1: Check if backend is returning proper structure
 echo "📋 Test 1: Testing patient login endpoint..."
-curl -X POST "https://cliniflow-backend.onrender.com/api/login/patient" \
+curl -X POST "https://cliniflow-backend-1.onrender.com/api/login/patient" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@patient.com",
@@ -14,7 +14,7 @@ curl -X POST "https://cliniflow-backend.onrender.com/api/login/patient" \
 
 echo ""
 echo "📋 Test 2: Testing admin login endpoint..."
-curl -X POST "https://cliniflow-backend.onrender.com/api/admin/login" \
+curl -X POST "https://cliniflow-backend-1.onrender.com/api/admin/login" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@cliniflow.com",
@@ -23,7 +23,7 @@ curl -X POST "https://cliniflow-backend.onrender.com/api/admin/login" \
 
 echo ""
 echo "📋 Test 3: Testing doctor login endpoint..."
-curl -X POST "https://cliniflow-backend.onrender.com/api/login/doctor" \
+curl -X POST "https://cliniflow-backend-1.onrender.com/api/login/doctor" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@doctor.com",

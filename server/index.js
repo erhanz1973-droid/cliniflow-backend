@@ -15,9 +15,11 @@ const treatmentRoutes = require("./routes/treatment");
 const treatmentGroupRoutes = require("./routes/treatment-groups");
 const patientRoutes = require("./routes/patients");
 const patientGroupAssignmentRoutes = require("./routes/patient-group-assignments");
+// Mount admin procedure stats API
+const adminProcedureStatsRoutes = require("./routes/admin/procedure-stats");
 
 const app = express();
-const PORT = process.env.PORT || 5050;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
@@ -27,6 +29,7 @@ app.use("/api/treatment", treatmentRoutes);
 app.use("/api/treatment-groups", treatmentGroupRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/patient-group-assignments", patientGroupAssignmentRoutes);
+app.use("/api/admin", adminProcedureStatsRoutes);
 
 // HEALTH CHECK
 app.get("/health", (req, res) => {
