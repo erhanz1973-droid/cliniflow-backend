@@ -17,7 +17,7 @@ const patientRoutes = require("./routes/patients");
 const patientGroupAssignmentRoutes = require("./routes/patient-group-assignments");
 
 const app = express();
-const PORT = process.env.PORT || 5050;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());

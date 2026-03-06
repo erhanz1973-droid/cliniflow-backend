@@ -171,12 +171,12 @@ git push origin main
 ## 🌐 **EXPECTED FINAL OUTPUT**
 
 ### **Public Backend URL:**
-`https://cliniflow-backend.onrender.com`
+`https://cliniflow-backend-1.onrender.com`
 
 ### **Production Endpoints:**
-- **Health:** `https://cliniflow-backend.onrender.com/health`
-- **Admin Login:** `https://cliniflow-backend.onrender.com/api/admin/login`
-- **Static Files:** `https://cliniflow-backend.onrender.com/admin-login.html`
+- **Health:** `https://cliniflow-backend-1.onrender.com/health`
+- **Admin Login:** `https://cliniflow-backend-1.onrender.com/api/admin/login`
+- **Static Files:** `https://cliniflow-backend-1.onrender.com/admin-login.html`
 
 ### **Test Credentials:**
 - **Email:** `cem@clinifly.net`

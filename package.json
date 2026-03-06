@@ -2,9 +2,9 @@
   "name": "cliniflow-server",
   "version": "1.0.0",
   "type": "commonjs",
-  "main": "index.cjs",
+  "main": "cliniflow-admin/index.cjs",
   "scripts": {
-    "start": "node index.cjs"
+    "start": "node cliniflow-admin/index.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -16,7 +16,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
     "pg": "^8.18.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zustand": "^5.0.11"
   },
   "keywords": [],
   "author": "",

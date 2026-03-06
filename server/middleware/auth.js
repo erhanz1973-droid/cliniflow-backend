@@ -1,6 +1,6 @@
 // server/middleware/auth.js
 const jwt = require('jsonwebtoken');
-const { pool } = require('../config/database');
+const { createClient } = require("@supabase/supabase-js");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -42,24 +42,17 @@ function authenticateToken(req, res, next) {
         return next();
       }
 
-      // Get user info based on type (legacy tokens)
-      let user;
-      if (decoded.type === 'doctor') {
-        const result = await pool.query('SELECT id, name, email FROM doctors WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      } else if (decoded.type === 'admin') {
-        const result = await pool.query('SELECT id, name, email FROM admins WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      } else if (decoded.type === 'patient') {
-        const result = await pool.query('SELECT id, name, phone FROM patients WHERE id = $1', [decoded.id]);
-        user = result.rows[0];
-      }
-
-      if (!user) {
-        return res.status(403).json({ error: 'User not found' });
-      }
-
-      req.user = { ...user, type: decoded.type };
+      // For Supabase-based authentication, use decoded token directly
+      req.decoded = decoded;
+      req.user = {
+        id: decoded.adminId || decoded.id,
+        email: decoded.email,
+        role: decoded.role || 'ADMIN'
+      };
+      console.log("[AUTHENTICATE TOKEN] Supabase user set:", { 
+        decoded: req.decoded, 
+        user: req.user 
+      });
       next();
     } catch (error) {
       console.error('Auth middleware error:', error);

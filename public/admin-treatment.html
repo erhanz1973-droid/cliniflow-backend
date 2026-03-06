@@ -184,6 +184,17 @@
     .tooth:active{ transform:scale(0.95); }
     .tooth.active{ border-color:#be185d; background:#f9a8d4; color:#111827; }
     .tooth.has{ border-color:var(--g); background:#bbf7d0; color:#111827; }
+    .tooth.has-diagnosis{
+      border-color:#dc2626;
+      background:#fee2e2;
+      color:#7f1d1d;
+      box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.25);
+    }
+    .tooth.has-diagnosis.active{
+      border-color:#b91c1c;
+      background:#fecaca;
+      color:#7f1d1d;
+    }
     .tooth.badge::before{
       content: attr(data-count);
       display:inline-flex;
@@ -301,6 +312,40 @@
       font-size:48px;
       margin-bottom:12px;
     }
+    .diagnosis-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .diagnosis-visit {
+      border: 1px solid var(--b);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+    }
+    .diagnosis-visit-title {
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .diagnosis-item {
+      padding: 6px 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #111827;
+    }
+    .diagnosis-item:last-child {
+      margin-bottom: 0;
+    }
+    .diagnosis-code {
+      font-weight: 800;
+      color: #1d4ed8;
+      margin-right: 6px;
+    }
   </style>
 </head>
   <body>
@@ -350,6 +395,16 @@
     <div id="loading" class="loading" style="display:none;">Yükleniyor...</div>
 
     <div id="content" style="display:none;">
+      <div class="card" id="diagnosisCard" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between;">
+          <b>Diagnosis</b>
+          <span class="pill">Visit Seviyesi</span>
+        </div>
+        <div id="diagnosisList" class="diagnosis-list">
+          <div class="muted">Tanı eklenmemiş</div>
+        </div>
+      </div>
+
       <div class="two" style="margin-top:12px;">
         <div class="card">
           <div class="row" style="justify-content:space-between;">
@@ -414,6 +469,14 @@
             <label>Saat</label>
             <input id="procTime" type="time" style="width:100%"/>
           </div>
+
+          <div style="flex:1; min-width:170px;">
+            <label>Tarih Politikası</label>
+            <select id="procDatePolicy" style="width:100%">
+              <option value="MANUAL">MANUAL (alarm oluştur)</option>
+              <option value="AUTO">AUTO (otomatik tarih ata)</option>
+            </select>
+          </div>
         </div>
 
         <div class="row" style="flex-wrap:wrap; margin-top:12px;">
@@ -436,6 +499,11 @@
             <input id="procQuantity" type="number" min="1" value="1" placeholder="1" style="width:100%"/>
           </div>
 
+          <div style="flex:1; min-width:120px;">
+            <label>Chair No</label>
+            <input id="procChairNo" type="text" placeholder="örn: 1" style="width:100%"/>
+          </div>
+
           <div style="flex:1; min-width:200px;">
             <label>&nbsp;</label>
             <button id="btnAddProcedure" style="width:100%; background:var(--g);" onclick="addProcedure()">+ Prosedur Ekle</button>
@@ -444,6 +512,10 @@
 
         <div class="hr"></div>
 
+        <b>Bu dişteki tanılar</b>
+        <div class="list" id="selToothDiagnosisList"></div>
+
+        <div style="height:10px;"></div>
         <b>Bu dişteki işlemler</b>
         <div class="list" id="procList"></div>
       </div>
@@ -508,6 +580,16 @@
           </table>
         </div>
       </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between;">
+          <b>Hastanın Diş Tanıları</b>
+          <span class="pill">Diş No + Doktor Tanısı</span>
+        </div>
+        <div id="toothDiagnosisSummaryList" class="diagnosis-list" style="margin-top:10px;">
+          <div class="muted">Tanı kaydı bulunamadı.</div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyState" class="empty-state" style="display:none;">
@@ -528,10 +610,7 @@
     } catch {}
   })();
 
-  const API =
-      window.location.hostname === "localhost"
-        ? "http://localhost:5050"
-        : "https://cliniflow-backend-dg8a.onrender.com";
+  const API_BASE = window.location.origin;
   const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
   let PROCEDURE_DEFS = []; // from /api/procedures
   let TYPE_TO_CATEGORY = {}; // { [type]: category }
@@ -575,7 +654,7 @@
       const token = getAdminToken();
       if (!token) return;
       
-      const res = await fetch(`${API}/api/admin/treatment-prices`, {
+      const res = await fetch(`${API_BASE}/api/admin/treatment-prices`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
@@ -671,12 +750,14 @@
   const elPatientName = document.getElementById("patientName");
   const elPatientId = document.getElementById("patientId");
   const elSelTooth = document.getElementById("selTooth");
+  const elSelToothDiagnosisList = document.getElementById("selToothDiagnosisList");
   const elProcList = document.getElementById("procList");
   
   console.log('[SCRIPT START] DOM elements:', {
     patientName: !!elPatientName,
     patientId: !!elPatientId,
     selTooth: !!elSelTooth,
+    selToothDiagnosisList: !!elSelToothDiagnosisList,
     procList: !!elProcList
   });
 
@@ -719,7 +800,7 @@
         return;
       }
       
-      const res = await fetch(`${API}/api/admin/patients`, {
+      const res = await fetch(`${API_BASE}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
@@ -761,7 +842,9 @@
         } else {
           patients.forEach(p => {
             const pid = p.patientId || p.patient_id || p.id || "";
-            const name = p.fullName || p.name || pid;
+            const rawName = String(p.name || "").trim();
+            const normalized = rawName.toLowerCase();
+            const name = (rawName && !["unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) ? rawName : pid;
             if (pid) {
             const opt = document.createElement("option");
             opt.value = pid;
@@ -820,7 +903,7 @@
 
   async function loadProcedureDefs(){
     try {
-      const r = await fetch(`${API}/api/procedures`, { headers: { Accept: "application/json" } });
+      const r = await fetch(`${API_BASE}/api/procedures`, { headers: { Accept: "application/json" } });
       const j = await r.json().catch(()=>null);
       if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       PROCEDURE_DEFS = Array.isArray(j.types) ? j.types : [];
@@ -904,16 +987,25 @@
       const id = toothKey(el.textContent);
       const t = findTooth(id);
       const count = (t?.procedures || []).length;
+      const diagnosisCount = [
+        ...(Array.isArray(t?.diagnosis) ? t.diagnosis : []),
+        ...(Array.isArray(t?.diagnoses) ? t.diagnoses : []),
+      ].length;
       if (count > 0) {
         console.log(`[refreshBadgeAndColors] Tooth ${id} has ${count} procedures`);
       }
 
-      el.classList.remove("has","badge","active");
+      el.classList.remove("has","badge","active","has-diagnosis");
       el.removeAttribute("data-count");
+      el.removeAttribute("title");
 
       if (count > 0){
         el.classList.add("has","badge");
         el.setAttribute("data-count", String(count));
+      }
+      if (diagnosisCount > 0) {
+        el.classList.add("has-diagnosis");
+        el.setAttribute("title", `Bu dişte ${diagnosisCount} tanı kaydı var`);
       }
       if (SELECTED_TOOTH && id === SELECTED_TOOTH){
         el.classList.add("active");
@@ -940,7 +1032,82 @@
     SELECTED_TOOTH = null;
     elSelTooth.textContent = "—";
     elProcList.innerHTML = "";
+    if (elSelToothDiagnosisList) {
+      elSelToothDiagnosisList.innerHTML = '<div class="muted">Diş seçmek için yukarıdaki diş haritasından bir dişe tıklayın.</div>';
+    }
     refreshBadgeAndColors();
+  }
+
+  function renderSelectedToothDiagnoses(){
+    if (!elSelToothDiagnosisList) return;
+
+    elSelToothDiagnosisList.innerHTML = "";
+
+    if (!SELECTED_TOOTH) {
+      elSelToothDiagnosisList.innerHTML = '<div class="muted">Diş seçmek için yukarıdaki diş haritasından bir dişe tıklayın.</div>';
+      return;
+    }
+
+    const toothId = toothKey(SELECTED_TOOTH);
+    const tooth = findTooth(toothId);
+
+    const legacyDiagnoses = [
+      ...(Array.isArray(tooth?.diagnosis) ? tooth.diagnosis : []),
+      ...(Array.isArray(tooth?.diagnoses) ? tooth.diagnoses : []),
+    ].map((diagnosis) => ({
+      code: diagnosis?.code || diagnosis?.icd10_code || null,
+      description:
+        diagnosis?.description ||
+        diagnosis?.icd10_description ||
+        diagnosis?.icdCode?.title_tr ||
+        diagnosis?.icdCode?.title_en ||
+        diagnosis?.icdCode?.description_tr ||
+        diagnosis?.icdCode?.description_en ||
+        null,
+    }));
+
+    const visitDiagnoses = (Array.isArray(DATA?.diagnoses) ? DATA.diagnoses : [])
+      .filter((diagnosis) => {
+        const rawTooth = diagnosis?.tooth_number ?? diagnosis?.toothNumber ?? diagnosis?.tooth_id ?? diagnosis?.toothId;
+        return rawTooth !== undefined && rawTooth !== null && toothKey(rawTooth) === toothId;
+      })
+      .map((diagnosis) => ({
+        code: diagnosis?.icd10_code || diagnosis?.icdCode?.code || null,
+        description:
+          diagnosis?.icd10_description ||
+          diagnosis?.icdCode?.title_tr ||
+          diagnosis?.icdCode?.title_en ||
+          diagnosis?.icdCode?.description_tr ||
+          diagnosis?.icdCode?.description_en ||
+          null,
+      }));
+
+    const unique = new Map();
+    [...legacyDiagnoses, ...visitDiagnoses].forEach((diagnosis) => {
+      const code = String(diagnosis?.code || "").trim();
+      const description = String(diagnosis?.description || "").trim();
+      if (!code && !description) return;
+      const key = `${code}__${description}`;
+      if (!unique.has(key)) {
+        unique.set(key, {
+          code: code || "-",
+          description: description || "Açıklama yok",
+        });
+      }
+    });
+
+    const diagnoses = Array.from(unique.values());
+    if (diagnoses.length === 0) {
+      elSelToothDiagnosisList.innerHTML = '<div class="muted">Bu dişte tanı kaydı yok.</div>';
+      return;
+    }
+
+    diagnoses.forEach((diagnosis) => {
+      const row = document.createElement("div");
+      row.className = "diagnosis-item";
+      row.innerHTML = `<span class="diagnosis-code">${diagnosis.code}</span><span>${diagnosis.description}</span>`;
+      elSelToothDiagnosisList.appendChild(row);
+    });
   }
 
   function fmtDate(ts){
@@ -949,6 +1116,121 @@
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "—";
     return d.toISOString().slice(0,10);
+  }
+
+  function formatVisitHeader(visitId, visitData){
+    const visitDate = visitData?.visit_date || visitData?.created_at || null;
+    const dateText = visitDate ? fmtDate(visitDate) : "Tarihsiz Visit";
+    if (!visitId) return `Visit • ${dateText}`;
+    return `Visit ${String(visitId).slice(0, 8)} • ${dateText}`;
+  }
+
+  function renderDiagnoses(){
+    const container = document.getElementById("diagnosisList");
+    if (!container) return;
+
+    const diagnoses = Array.isArray(DATA?.diagnoses) ? DATA.diagnoses : [];
+    const visits = Array.isArray(DATA?.visits) ? DATA.visits : [];
+    const visitMap = new Map(visits.map((visit) => [String(visit.id), visit]));
+
+    container.innerHTML = "";
+
+    if (!diagnoses.length) {
+      container.innerHTML = '<div class="muted">Tanı eklenmemiş</div>';
+      return;
+    }
+
+    const grouped = new Map();
+    diagnoses.forEach((diagnosis) => {
+      const key = String(diagnosis.visit_id || "no-visit");
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(diagnosis);
+    });
+
+    const groups = Array.from(grouped.entries()).sort((a, b) => {
+      const aVisit = visitMap.get(String(a[0])) || a[1]?.[0]?.visit || null;
+      const bVisit = visitMap.get(String(b[0])) || b[1]?.[0]?.visit || null;
+      const aTime = new Date(aVisit?.visit_date || aVisit?.created_at || 0).getTime();
+      const bTime = new Date(bVisit?.visit_date || bVisit?.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+
+    groups.forEach(([visitId, items]) => {
+      const visitData = visitMap.get(String(visitId)) || items?.[0]?.visit || null;
+      const groupEl = document.createElement("div");
+      groupEl.className = "diagnosis-visit";
+
+      const title = document.createElement("div");
+      title.className = "diagnosis-visit-title";
+      title.textContent = formatVisitHeader(visitId === "no-visit" ? "" : visitId, visitData);
+      groupEl.appendChild(title);
+
+      items.forEach((diagnosis) => {
+        const row = document.createElement("div");
+        row.className = "diagnosis-item";
+        const code = diagnosis.icd10_code || diagnosis.icdCode?.code || "-";
+        const description = diagnosis.icd10_description
+          || diagnosis.icdCode?.title_tr
+          || diagnosis.icdCode?.title_en
+          || diagnosis.icdCode?.description_tr
+          || diagnosis.icdCode?.description_en
+          || "Açıklama yok";
+
+        row.innerHTML = `<span class="diagnosis-code">${code}</span><span>${description}</span>`;
+        groupEl.appendChild(row);
+      });
+
+      container.appendChild(groupEl);
+    });
+  }
+
+  function renderToothDiagnosisSummary(){
+    const container = document.getElementById("toothDiagnosisSummaryList");
+    if (!container) return;
+
+    const bucket = new Map();
+    const diagnoses = Array.isArray(DATA?.diagnoses) ? DATA.diagnoses : [];
+
+    diagnoses.forEach((diagnosis) => {
+      const rawTooth = diagnosis?.tooth_number ?? diagnosis?.toothNumber ?? diagnosis?.tooth_id ?? diagnosis?.toothId;
+      if (rawTooth === undefined || rawTooth === null || rawTooth === "") return;
+
+      const toothId = String(rawTooth).trim();
+      const description = String(
+        diagnosis?.icd10_description
+          || diagnosis?.icdCode?.title_tr
+          || diagnosis?.icdCode?.title_en
+          || diagnosis?.icdCode?.description_tr
+          || diagnosis?.icdCode?.description_en
+          || diagnosis?.notes
+          || ""
+      ).trim();
+
+      if (!description) return;
+
+      if (!bucket.has(toothId)) bucket.set(toothId, new Set());
+      bucket.get(toothId).add(description);
+    });
+
+    container.innerHTML = "";
+
+    const rows = Array.from(bucket.entries())
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .flatMap(([toothId, descriptions]) =>
+        Array.from(descriptions).map((description) => ({ toothId, description }))
+      );
+
+    if (rows.length === 0) {
+      container.innerHTML = '<div class="muted">Tanı kaydı bulunamadı.</div>';
+      return;
+    }
+
+    rows.forEach((rowData) => {
+      const row = document.createElement("div");
+      row.className = "diagnosis-item";
+      row.innerHTML = `<span class="diagnosis-code">${rowData.toothId}</span><span>${rowData.description}</span>`;
+      container.appendChild(row);
+    });
   }
 
   function normalizeEvents(ev){
@@ -1004,7 +1286,7 @@
 
   async function loadTreatmentEvents(patientId){
     try {
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
         headers: adminHeaders({ Accept: "application/json" }),
       });
       const j = await r.json().catch(()=>null);
@@ -1026,7 +1308,7 @@
 
   async function saveTreatmentEvents(patientId){
     const payload = { events: Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [] };
-    const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
+    const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
       method: "PUT",
       headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
@@ -1087,6 +1369,7 @@
   }
 
   function renderSelectedToothList(){
+    renderSelectedToothDiagnoses();
     elProcList.innerHTML = "";
     if (!SELECTED_TOOTH) {
       const div = document.createElement("div");
@@ -1148,6 +1431,10 @@
           } catch {
             scheduledText = `Tarih: ${fmtDate(p.scheduledAt)}`;
           }
+        }
+        const chairText = String(p.chairNo || p.chair || "").trim();
+        if (chairText) {
+          scheduledText = scheduledText ? `${scheduledText} • Chair ${chairText}` : `Chair ${chairText}`;
         }
         
         left.innerHTML = `<b>${toothDisplay}${p.type || "PROC"}</b>
@@ -1278,6 +1565,12 @@
           quantityInput.style.width = "70px";
           quantityInput.value = p.quantity ? String(p.quantity) : "1";
 
+          const chairInput = document.createElement("input");
+          chairInput.type = "text";
+          chairInput.placeholder = "Chair No";
+          chairInput.style.width = "90px";
+          chairInput.value = String(p.chairNo || p.chair || "").trim();
+
           const saveBtn = document.createElement("button");
           saveBtn.textContent = "Kaydet";
           saveBtn.className = "btn-save";
@@ -1297,7 +1590,8 @@
               timeInput.value,
               priceInput.value,
               currencySelect.value,
-              quantityInput.value
+              quantityInput.value,
+              chairInput.value
             );
           };
 
@@ -1322,6 +1616,7 @@
           fields.appendChild(priceInput);
           fields.appendChild(currencySelect);
           fields.appendChild(quantityInput);
+          fields.appendChild(chairInput);
           fields.appendChild(saveBtn);
           fields.appendChild(cancelBtn);
           right.appendChild(fields);
@@ -1350,7 +1645,7 @@
       });
   }
 
-  async function saveProcedureInlineEdit(procedureId, toothId, newTypeRaw, newDateStr, newTimeStr, newPriceRaw, newCurrency, newQuantityRaw){
+  async function saveProcedureInlineEdit(procedureId, toothId, newTypeRaw, newDateStr, newTimeStr, newPriceRaw, newCurrency, newQuantityRaw, newChairNoRaw){
     const pid = CURRENT_PATIENT_ID;
     if (!pid) return setMsg("Patient ID bulunamadı.", "err");
     if (!procedureId || !toothId) return setMsg("Procedure/Tooth ID bulunamadı.", "err");
@@ -1360,6 +1655,8 @@
     if (!proc) return setMsg("Procedure bulunamadı.", "err");
 
     const newType = String(newTypeRaw || "").trim().toUpperCase() || String(proc.type || "").toUpperCase() || "";
+    const policyEl = document.getElementById("procDatePolicy");
+    const missingDatePolicy = String(policyEl?.value || "MANUAL").toUpperCase() === "AUTO" ? "AUTO" : "MANUAL";
     
     // Combine date and time into timestamp
     let newScheduledAt = null;
@@ -1388,10 +1685,13 @@
     const quantity = newQuantityRaw && String(newQuantityRaw).trim() ? parseInt(newQuantityRaw) : 1;
     const currency = newCurrency || proc.currency || "EUR";
     const totalPrice = unitPrice !== null && unitPrice > 0 ? unitPrice * quantity : null;
+    const chairNo = String(newChairNoRaw || "").trim();
 
-    const prev = { type: proc.type, scheduledAt: proc.scheduledAt, unit_price: proc.unit_price, quantity: proc.quantity, currency: proc.currency, total_price: proc.total_price };
+    const prev = { type: proc.type, scheduledAt: proc.scheduledAt, unit_price: proc.unit_price, quantity: proc.quantity, currency: proc.currency, total_price: proc.total_price, chairNo: proc.chairNo, chair: proc.chair };
     proc.type = newType;
     proc.scheduledAt = newScheduledAt;
+    proc.chairNo = chairNo;
+    proc.chair = chairNo;
 
     try {
       setMsg("Procedure güncelleniyor...");
@@ -1405,9 +1705,13 @@
           status: normalizeStatusUI(proc.status || "PLANNED"),
           createdAt: proc.createdAt,
           date: proc.scheduledAt,
-          scheduledAt: proc.scheduledAt
+          scheduledAt: proc.scheduledAt,
+          missingDatePolicy
         }
       };
+
+      payload.procedure.chairNo = chairNo;
+      payload.procedure.chair = chairNo;
 
       // Add pricing fields if provided
       if (unitPrice !== null && unitPrice > 0) {
@@ -1421,7 +1725,7 @@
         }
       }
 
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1429,13 +1733,15 @@
 
       const j = await r.json().catch(()=>null);
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = j?.message || j?.error || `${r.status}`;
         proc.type = prev.type;
         proc.scheduledAt = prev.scheduledAt;
         proc.unit_price = prev.unit_price;
         proc.quantity = prev.quantity;
         proc.currency = prev.currency;
         proc.total_price = prev.total_price;
+        proc.chairNo = prev.chairNo;
+        proc.chair = prev.chair;
         setMsg(`Procedure güncelleme başarısız: ${err}`, "err");
         return;
       }
@@ -1453,6 +1759,8 @@
       proc.quantity = prev.quantity;
       proc.currency = prev.currency;
       proc.total_price = prev.total_price;
+      proc.chairNo = prev.chairNo;
+      proc.chair = prev.chair;
       setMsg("Procedure güncelleme hatası: " + e.message, "err");
       renderSelectedToothList();
     }
@@ -1523,7 +1831,7 @@
       
       console.log('[changeProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1617,7 +1925,7 @@
       
       console.log('[toggleProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1656,7 +1964,7 @@
 
   async function loadPatientInfo(patientId) {
     try {
-      const res = await fetch(`${API}/api/admin/patients`, {
+      const res = await fetch(`${API_BASE}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
@@ -1665,7 +1973,9 @@
         if (json.ok && Array.isArray(json.patients)) {
           const patient = json.patients.find(p => (p.patientId || p.patient_id) === patientId);
           if (patient) {
-            elPatientName.textContent = patient.fullName || patient.name || patientId;
+            const rawName = String(patient.name || "").trim();
+            const normalized = rawName.toLowerCase();
+            elPatientName.textContent = (rawName && !["unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) ? rawName : patientId;
             elPatientId.textContent = `ID: ${patientId}`;
             elPatientInfo.style.display = 'block';
             return;
@@ -1697,7 +2007,7 @@
 
     try{
       setMsg("Treatments yükleniyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatments`, {
         headers: adminHeaders({ Accept: "application/json" }),
       });
       const j = await r.json().catch(()=>null);
@@ -1736,6 +2046,12 @@
       if (!Array.isArray(DATA.teeth)) {
         DATA.teeth = [];
       }
+      if (!Array.isArray(DATA.diagnoses)) {
+        DATA.diagnoses = [];
+      }
+      if (!Array.isArray(DATA.visits)) {
+        DATA.visits = [];
+      }
       console.log('[loadTreatments] Final DATA.teeth:', DATA.teeth);
       
       elLoading.style.display = 'none';
@@ -1749,6 +2065,8 @@
       }
       
       clearSelection();
+      renderDiagnoses();
+      renderToothDiagnosisSummary();
     }catch(e){
       console.error('Load treatments error:', e);
       setMsg("Yükleme hatası: " + e.message, "err");
@@ -1792,24 +2110,28 @@
     const status = document.getElementById("procStatus").value;
     const date = document.getElementById("procDate").value;
     const time = document.getElementById("procTime")?.value || "00:00";
+    const datePolicyEl = document.getElementById("procDatePolicy");
+    const missingDatePolicy = String(datePolicyEl?.value || "MANUAL").toUpperCase() === "AUTO" ? "AUTO" : "MANUAL";
     const priceValue = document.getElementById("procPrice").value;
     const currency = document.getElementById("procCurrency").value;
     const quantity = document.getElementById("procQuantity").value;
+    const chairNo = String(document.getElementById("procChairNo")?.value || "").trim();
     
     if (!type) return setMsg("İşlem türü seç.", "err");
-    if (!date) return setMsg("Tarih seç.", "err");
     
     // Combine date and time into timestamp
     let scheduledAtTimestamp = null;
-    try {
-      const dateTimeStr = `${date}T${time}:00`;
-      const dateObj = new Date(dateTimeStr);
-      if (!isNaN(dateObj.getTime())) {
-        scheduledAtTimestamp = dateObj.getTime(); // Store as timestamp
+    if (date && String(date).trim()) {
+      try {
+        const dateTimeStr = `${date}T${time}:00`;
+        const dateObj = new Date(dateTimeStr);
+        if (!isNaN(dateObj.getTime())) {
+          scheduledAtTimestamp = dateObj.getTime(); // Store as timestamp
+        }
+      } catch (e) {
+        console.error("[addProcedure] Error parsing date/time:", e);
+        return setMsg("Tarih/saat formatı geçersiz.", "err");
       }
-    } catch (e) {
-      console.error("[addProcedure] Error parsing date/time:", e);
-      return setMsg("Tarih/saat formatı geçersiz.", "err");
     }
     const normType = String(type).toUpperCase();
     const normStatus = normalizeStatusUI(status);
@@ -1846,7 +2168,10 @@
           status: normStatus,
           createdAt,
           date: scheduledAtTimestamp,
-          scheduledAt: scheduledAtTimestamp
+          scheduledAt: scheduledAtTimestamp,
+          chairNo,
+          chair: chairNo,
+          missingDatePolicy
         }
       };
       
@@ -1864,7 +2189,7 @@
       
       console.log('[addProcedure] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1873,7 +2198,7 @@
       const j = await r.json().catch(()=>null);
 
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = j?.message || j?.error || `${r.status}`;
         setMsg(`Kaydetme başarısız: ${err}`, "err");
         return;
       }
@@ -2016,7 +2341,7 @@
         }
         
         try {
-          const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+          const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
             method: "POST",
             headers: adminHeaders({ "Content-Type":"application/json" }),
             body: JSON.stringify(item)
@@ -2186,7 +2511,7 @@
     const token = getAdminToken();
     if (!token) return;
     try {
-      const res = await fetch(`${API}/api/admin/clinic`, {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
         headers: adminHeaders({ 'Accept': 'application/json' })
       });
       if (res.ok) {

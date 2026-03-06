@@ -57,26 +57,19 @@
             updated_at
           `)
           .eq('clinic_code', 'SAVSAT')
-          .order('created_at', { ascending: false })
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[SUPABASE] Failed to load doctors:', error);
-              throw new Error(error.message);
-            }
+          .order('created_at', { ascending: false });
 
-            console.log("[SUPABASE] Doctors loaded successfully:", data);
-            
-            allDoctors = data || [];
-            filteredDoctors = [...allDoctors];
-            updateStats();
-            renderDoctors();
-            
-          } catch (error) {
-            console.error("Load doctors error:", error);
-            errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
-          } finally {
-            loadingContainer.style.display = "none";
-          }
+        if (error) {
+          console.error('[SUPABASE] Failed to load doctors:', error);
+          throw new Error(error.message);
+        }
+
+        console.log("[SUPABASE] Doctors loaded successfully:", data);
+        
+        allDoctors = data || [];
+        filteredDoctors = [...allDoctors];
+        updateStats();
+        renderDoctors();
     }
 
     function updateStats() {
@@ -138,7 +131,7 @@
       return statusMap[status] || status;
     }
 
-    function approveDoctor(doctorId) {
+    async function approveDoctor(doctorId) {
       if (!confirm("Bu doktoru onaylamak istediğinizden emin misiniz?")) {
         return;
       }
@@ -171,7 +164,7 @@
       }
     }
 
-    function rejectDoctor(doctorId) {
+    async function rejectDoctor(doctorId) {
       if (!confirm("Bu doktoru reddetmek istediğinizden emin misiniz?")) {
         return;
       }

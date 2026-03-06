@@ -170,7 +170,7 @@ const chatUpload = multer({
   }
 });
 
-const PORT = process.env.PORT || 5050;
+const PORT = 10000;
 
 /* ================= SUPABASE CLIENT ================= */
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -581,8 +581,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
     let clinicId;
     let patientUuid;
 
-      
-    }      patientUuid = patient.id;      if (!decoded.clinicId || !decoded.clinicCode) {
+    if (isAdmin) {
+      if (!decoded.clinicId || !decoded.clinicCode) {
         return res.status(401).json({ ok: false, error: "invalid_admin_token" });
       }
       clinicId = decoded.clinicId;
@@ -3105,7 +3105,7 @@ app.post("/api/admin/approve", adminAuth, async (req, res) => {
     const { data: updatedPatient, error: updateError } = await supabase
       .from("patients")
       .update({ status: "APPROVED" })
-      .eq("id", patient.id)
+      .eq("patient_id", patient.patient_id)
       .select()
       .single();
 
@@ -3411,8 +3411,12 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
 /* ================= DOCTOR PATIENTS ================= */
 app.get("/api/doctor/patients", async (req, res) => {
   try {
+    console.log("REQ USER DEBUG:", req.user);
+    console.log("AUTH HEADER DEBUG:", req.headers.authorization);
+    
     const v = await verifyDoctorToken(req);
     if (!v.ok) {
+      console.log("VERIFY DOCTOR TOKEN FAILED:", v);
       return res.status(401).json({ ok: false, error: v.code });
     }
 
@@ -4184,10 +4188,10 @@ app.post("/api/register/doctor", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
     }
 
-    // Check clinic limits
-    const { data: existingPatients, error: countError } = await supabase
-      .from("patients")
-      .select("patient_id")
+    // Check clinic limits for doctors
+    const { data: existingDoctors, error: countError } = await supabase
+      .from("doctors")
+      .select("doctor_id")
       .eq("clinic_id", clinic.id);
 
     if (countError) {
@@ -4195,39 +4199,35 @@ app.post("/api/register/doctor", async (req, res) => {
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    const patientCount = existingPatients?.length || 0;
-    const maxPatients = clinic.max_patients || 10;
+    const doctorCount = existingDoctors?.length || 0;
+    const maxDoctors = clinic.max_doctors || clinic.max_patients || 50; // Use max_doctors or fallback to max_patients or 50
 
-    if (patientCount >= maxPatients) {
+    if (doctorCount >= maxDoctors) {
       return res.status(400).json({ ok: false, error: "clinic_full" });
     }
 
-    // Generate patient ID
-    const patient_id = generatePatientIdFromName(name || patientName);
+    // Generate doctor ID
+    const doctor_id = await generatePatientIdFromName(name || patientName);
     const referral_code = generateReferralCode();
 
-    // Create doctor with PENDING status
-    const newPatient = {
-      patient_id,
-      name: name || patientName,
-      phone: phone.trim(),
+    // Create doctor with PENDING status in doctors table
+    const newDoctor = {
+      doctor_id,
+      full_name: name || patientName,
       email: email?.trim() || null,
-      clinic_id: clinic.id,
-      clinic_code: clinicCode.trim(),
-      referral_code,
-      status: "PENDING", // Doctors start as PENDING
-      role: "DOCTOR", // Explicitly DOCTOR
+      phone: phone.trim(),
+      license_number: req.body.licenseNumber || null,
       department: req.body.department || null,
       specialties: req.body.specialties || [],
-      title: req.body.title || null,
-      experience_years: req.body.experienceYears || null,
-      languages: req.body.languages || [],
+      clinic_id: clinic.id,
+      clinic_code: clinicCode.trim(),
+      status: "PENDING", // Doctors start as PENDING
       created_at: new Date().toISOString(),
     };
 
-    const { data: insertedPatient, error: insertError } = await supabase
-      .from("patients")
-      .insert(newPatient)
+    const { data: insertedDoctor, error: insertError } = await supabase
+      .from("doctors")
+      .insert(newDoctor)
       .select()
       .single();
 
@@ -4248,7 +4248,7 @@ app.post("/api/register/doctor", async (req, res) => {
         if (referrer) {
           await supabase.from("referrals").insert({
             referrer_id: referrer.patient_id,
-            referred_id: patient_id,
+            referred_id: doctor_id,
             referral_code: inviterReferralCode,
             status: "pending",
           });
@@ -4261,7 +4261,7 @@ app.post("/api/register/doctor", async (req, res) => {
     // Create JWT token for doctor
     const doctorToken = jwt.sign(
       { 
-        patientId: patient_id, 
+        patientId: doctor_id, 
         clinicId: clinic.id,
         clinicCode: clinicCode.trim(),
         role: "DOCTOR",
@@ -4272,7 +4272,7 @@ app.post("/api/register/doctor", async (req, res) => {
     );
 
     console.log("[DOCTOR REGISTER] Doctor registered successfully:", {
-      patient_id,
+      doctor_id,
       name: patientName,
       role: "DOCTOR",
       status: "PENDING"
@@ -4281,13 +4281,11 @@ app.post("/api/register/doctor", async (req, res) => {
     res.json({
       ok: true,
       message: "Doctor registration successful. Awaiting admin approval.",
-      doctorId: patient_id, // 🔥 FIX: Return doctorId for doctors
-      referralCode: referral_code,
-      name: patientName,
+      doctorId: doctor_id, 
+      full_name: name || patientName,
       phone: phone,
       email: email,
       status: "PENDING",
-      role: "DOCTOR",
       token: doctorToken,
     });
   } catch (error) {
@@ -4470,13 +4468,79 @@ app.get("/api/admin/doctor-applications", adminAuth, async (req, res) => {
   }
 });
 
-// Patient info endpoint
-require('./patient-info-endpoint.js')(app);
+// Patient info endpoint - Module not found, commented out
+// require('./patient-info-endpoint.js')(app);
 
-// Admin enhanced APIs integration
-require('./admin-enhanced-apis.js')(app);
+// Admin enhanced APIs integration - Module not found, commented out  
+// require('./admin-enhanced-apis.js')(app);
 
-/* ================= ADMIN ROUTE ALIASES ================= */
+/* ================= ADMIN DOCTOR APPROVAL ================= */
+app.post("/api/admin/approve-doctor", adminAuth, async (req, res) => {
+  try {
+    console.log("[APPROVE DOCTOR] Request received");
+    console.log("[APPROVE DOCTOR] Admin info:", req.admin);
+    
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId required" });
+    }
+
+    console.log("[APPROVE DOCTOR] Approving doctor:", doctorId);
+
+    const { data, error } = await supabase
+      .from("doctors")
+      .update({ status: "APPROVED", updated_at: new Date().toISOString() })
+      .eq("id", doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[APPROVE DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log("[APPROVE DOCTOR] Doctor approved successfully:", data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error("[APPROVE DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/reject-doctor", adminAuth, async (req, res) => {
+  try {
+    console.log("[REJECT DOCTOR] Request received");
+    console.log("[REJECT DOCTOR] Admin info:", req.admin);
+    
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId required" });
+    }
+
+    console.log("[REJECT DOCTOR] Rejecting doctor:", doctorId);
+
+    const { data, error } = await supabase
+      .from("doctors")
+      .update({ status: "REJECTED", updated_at: new Date().toISOString() })
+      .eq("id", doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[REJECT DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log("[REJECT DOCTOR] Doctor rejected successfully:", data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error("[REJECT DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // Simple route aliases to redirect /admin to /api routes
 console.log("[INIT] Admin route aliases loaded");
 
@@ -6324,11 +6388,12 @@ function checkOtpRateLimit(email) {
 /* ================= OTP SEND ================= */
 app.post("/auth/send-otp", async (req, res) => {
   try {
-    const { phone, email } = req.body || {};
+    const { phone, email, role } = req.body || {};
 
     console.log("[OTP SEND] Request received:", {
       phone,
-      email
+      email,
+      role
     });
 
     // Validation
@@ -6340,6 +6405,10 @@ app.post("/auth/send-otp", async (req, res) => {
       });
     }
 
+    // Normalize phone number (remove +, spaces, etc.)
+    const normalizedPhone = phone.replace(/[^\d]/g, '').trim();
+    console.log("[OTP SEND] Normalized phone:", { original: phone, normalized: normalizedPhone });
+
     // DEV bypass for OTP
     if (process.env.NODE_ENV !== "production") {
       const otp = "123456";
@@ -6348,8 +6417,10 @@ app.post("/auth/send-otp", async (req, res) => {
         ok: true,
         message: "OTP sent successfully",
         otp: otp, // Only for dev
-        patientId: "DEV_PATIENT",
-        phone: phone.trim()
+        patientId: role === "DOCTOR" ? "DEV_DOCTOR" : "DEV_PATIENT",
+        doctorId: role === "DOCTOR" ? "DEV_DOCTOR" : undefined,
+        phone: phone.trim(),
+        role: role
       });
     }
 
@@ -6366,19 +6437,47 @@ app.post("/auth/send-otp", async (req, res) => {
       }
     }
 
-    // Find patient by phone
-    const { data: patient, error: patientError } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("phone", normalizedPhone)
-      .single();
+    let user = null;
+    let userType = "";
 
-    if (patientError || !patient) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "patient_not_found",
-        message: "Patient not found" 
-      });
+    // Try to find user by role
+    if (role === "DOCTOR") {
+      // Find doctor by phone
+      const { data: doctor, error: doctorError } = await supabase
+        .from("doctors")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .single();
+
+      if (doctorError || !doctor) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "doctor_not_found",
+          message: "Doctor not found" 
+        });
+      }
+
+      user = doctor;
+      userType = "doctor";
+    } else {
+      // Default to PATIENT
+      // Find patient by phone
+      const { data: patient, error: patientError } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .single();
+
+      if (patientError || !patient) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "patient_not_found",
+          message: "Patient not found" 
+        });
+      }
+
+      user = patient;
+      userType = "patient";
     }
 
     // For demo purposes, simulate OTP sending
@@ -6387,16 +6486,18 @@ app.post("/auth/send-otp", async (req, res) => {
     console.log("[OTP SEND] OTP sent (demo):", {
       phone: phone.trim(),
       otp: otp,
-      patientId: patient.patient_id,
-      role: patient.role
+      userId: userType === "doctor" ? user.doctor_id : user.patient_id,
+      role: role || user.role
     });
 
     res.json({
       ok: true,
       message: "OTP sent successfully",
       otp: otp, // Only for demo purposes
-      patientId: patient.patient_id,
-      phone: phone.trim()
+      patientId: userType === "patient" ? user.patient_id : undefined,
+      doctorId: userType === "doctor" ? user.doctor_id : undefined,
+      phone: phone.trim(),
+      role: role || user.role
     });
 
   } catch (error) {
@@ -6417,6 +6518,69 @@ app.get("/health", (req, res) => {
 /* ================= FAVICON ================= */
 app.get("/favicon.ico", (req, res) => {
   res.status(404).send("Favicon not found");
+});
+
+/* ================= TOKEN VERIFICATION ================= */
+app.post("/auth/verify-token", async (req, res) => {
+  try {
+    const { type } = req.body || {};
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const token = authHeader.substring(7);
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (jwtError) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    console.log("[VERIFY TOKEN] Token verified:", {
+      type,
+      role: decoded.role,
+      doctorId: decoded.doctorId,
+      patientId: decoded.patientId
+    });
+
+    if (type === "doctor") {
+      // Get current doctor status from doctors table
+      const { data: doctor, error } = await supabase
+        .from("doctors")
+        .select("status")
+        .eq("doctor_id", decoded.patientId)
+        .single();
+
+      if (error || !doctor) {
+        return res.status(404).json({ ok: false, error: "doctor_not_found" });
+      }
+
+      return res.json({
+        ok: true,
+        status: doctor.status,
+        role: decoded.role,
+        type: decoded.type,
+        patientId: decoded.patientId,
+        clinicId: decoded.clinicId
+      });
+    } else if (type === "patient") {
+      return res.json({
+        ok: true,
+        status: decoded.status,
+        role: decoded.role,
+        type: decoded.type
+      });
+    } else {
+      return res.status(400).json({ ok: false, error: "invalid_type" });
+    }
+
+  } catch (error) {
+    console.error("[VERIFY TOKEN] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
 });
 
 /* ================= OTP VERIFICATION ================= */
@@ -6780,6 +6944,14 @@ app.post("/auth/verify-otp", async (req, res) => {
       message: error.message 
     });
   }
+});
+
+// DEV login route removed; development use should call real /api/doctor/login endpoint
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  res.json({ ok: true, token, doctor });
 });
 
 /* ================= TEST CLINIC CREATE ================= */

@@ -242,9 +242,8 @@
   </div>
 
 <script>
-  const DEFAULT_API_BASE = (location.origin && location.origin.startsWith("http"))
-    ? location.origin
-    : "http://127.0.0.1:5050";
+  const API_BASE = window.location.origin;
+  const DEFAULT_API_BASE = API_BASE;
 
   let state = { hotel: null, flights: [], notes: "", events: [] };
   const $ = (id) => document.getElementById(id);

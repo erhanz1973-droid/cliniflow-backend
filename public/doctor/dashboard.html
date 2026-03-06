@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Doktor Panel - Cliniflow</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("doctor_token");
+      if (!token) {
+        window.location.href = "/doctor-login.html";
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --muted:#a7b2c8;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+    }
+    .navbar{ 
+      display:flex; 
+      justify-content:space-between; 
+      align-items:center; 
+      padding:16px 24px; 
+      border-bottom:1px solid var(--b); 
+      background:var(--card);
+    }
+    .logo{ 
+      font-size:20px; 
+      font-weight:700; 
+      color:#fff;
+    }
+    .nav-links{ 
+      display:flex; 
+      gap:24px; 
+      align-items:center;
+    }
+    .nav-link{ 
+      color:var(--muted); 
+      text-decoration:none; 
+      padding:8px 16px; 
+      border-radius:8px; 
+      transition:all 0.2s;
+    }
+    .nav-link:hover{ 
+      background:var(--b); 
+      color:#fff;
+    }
+    .container{ 
+      max-width:1200px; 
+      margin:0 auto; 
+      padding:24px;
+    }
+    .welcome-card{ 
+      background:var(--card); 
+      border:1px solid var(--b); 
+      border-radius:12px; 
+      padding:32px; 
+      margin-bottom:24px;
+      text-align:center;
+    }
+    .status-badge{ 
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      background:var(--g); 
+      color:#fff; 
+      padding:8px 16px; 
+      border-radius:8px; 
+      font-weight:600; 
+      margin-bottom:16px;
+    }
+    .title{ 
+      font-size:24px; 
+      font-weight:700; 
+      margin-bottom:8px; 
+      color:#fff;
+    }
+    .subtitle{ 
+      color:var(--muted); 
+      margin-bottom:24px;
+    }
+    .actions-grid{ 
+      display:grid; 
+      grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); 
+      gap:16px; 
+      margin-top:32px;
+    }
+    .action-card{ 
+      background:var(--card); 
+      border:1px solid var(--b); 
+      border-radius:12px; 
+      padding:24px; 
+      text-align:center;
+      transition:all 0.2s;
+      cursor:pointer;
+    }
+    .action-card:hover{ 
+      transform:translateY(-2px); 
+      box-shadow:0 4px 12px rgba(0,0,0,0.15);
+    }
+    .action-icon{ 
+      font-size:32px; 
+      margin-bottom:12px;
+    }
+    .action-title{ 
+      font-size:16px; 
+      font-weight:600; 
+      margin-bottom:8px; 
+      color:#fff;
+    }
+    .action-desc{ 
+      font-size:14px; 
+      color:var(--muted);
+    }
+    .logout-btn{ 
+      background:var(--r); 
+      color:#fff; 
+      border:none; 
+      padding:8px 16px; 
+      border-radius:8px; 
+      font-weight:600; 
+      cursor:pointer; 
+      transition:all 0.2s;
+    }
+    .logout-btn:hover{ 
+      background:#b91c1c; 
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="logo">🏥 Cliniflow Doktor Panel</div>
+    <div class="nav-links">
+      <a href="#" class="nav-link">Dashboard</a>
+      <a href="#" class="nav-link">Hastalar</a>
+      <a href="#" class="nav-link">Randevular</a>
+      <button class="logout-btn" onclick="logout()">Çıkış</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="welcome-card">
+      <div class="status-badge">
+        ✅ Onaylı Doktor
+      </div>
+      
+      <h1 class="title">Hoş Geldiniz, Doktor!</h1>
+      <p class="subtitle">
+        Başvurunuz onaylanmıştır. Cliniflow doktor paneline hoş geldiniz.
+      </p>
+      
+      <div class="actions-grid">
+        <div class="action-card" onclick="handleAction('patients')">
+          <div class="action-icon">👥</div>
+          <div class="action-title">Hastalarım</div>
+          <div class="action-desc">Atanmış hastaları görüntüle</div>
+        </div>
+        
+        <div class="action-card" onclick="handleAction('appointments')">
+          <div class="action-icon">📅</div>
+          <div class="action-title">Randevular</div>
+          <div class="action-desc">Yaklaşan randevuları yönet</div>
+        </div>
+        
+        <div class="action-card" onclick="handleAction('profile')">
+          <div class="action-icon">👤</div>
+          <div class="action-title">Profil</div>
+          <div class="action-desc">Profil bilgilerini düzenle</div>
+        </div>
+        
+        <div class="action-card" onclick="handleAction('settings')">
+          <div class="action-icon">⚙️</div>
+          <div class="action-title">Ayarlar</div>
+          <div class="action-desc">Uygulama ayarlarını yönet</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Handle action clicks
+    function handleAction(action) {
+      console.log(`[DASHBOARD] Action clicked: ${action}`);
+      
+      switch(action) {
+        case 'patients':
+          // TODO: Navigate to patients page
+          alert('Hastalar sayfası yakında...');
+          break;
+        case 'appointments':
+          // TODO: Navigate to appointments page
+          alert('Randevular sayfası yakında...');
+          break;
+        case 'profile':
+          // TODO: Navigate to profile page
+          alert('Profil sayfası yakında...');
+          break;
+        case 'settings':
+          // TODO: Navigate to settings page
+          alert('Ayarlar sayfası yakında...');
+          break;
+        default:
+          console.log('Unknown action:', action);
+      }
+    }
+
+    // Logout function
+    function logout() {
+      if (confirm('Çıkış yapmak istediğinizden emin misiniz?')) {
+        localStorage.removeItem("doctor_token");
+        localStorage.removeItem("doctor_id");
+        localStorage.removeItem("clinic_id");
+        localStorage.removeItem("doctor_status");
+        window.location.href = "/doctor-login.html";
+      }
+    }
+
+    // Initialize dashboard
+    document.addEventListener("DOMContentLoaded", () => {
+      console.log("[DASHBOARD] Doctor dashboard loaded");
+      
+      const doctorStatus = localStorage.getItem("doctor_status");
+      const doctorId = localStorage.getItem("doctor_id");
+      
+      console.log("[DASHBOARD] Doctor info:", {
+        status: doctorStatus,
+        id: doctorId
+      });
+      
+      // Double-check status
+      if (doctorStatus !== "APPROVED") {
+        console.warn("[DASHBOARD] Doctor not approved, redirecting...");
+        window.location.href = "/doctor/pending.html";
+      }
+    });
+  </script>
+</body>
+</html>

@@ -276,10 +276,7 @@
 
   <script>
     // Dashboard functionality
-    const API =
-      window.location.hostname === "localhost"
-        ? "http://localhost:5050"
-        : "https://cliniflow-backend-dg8a.onrender.com";
+    const API_BASE = window.location.origin;
 
     async function loadTimeline() {
       try {
@@ -290,7 +287,7 @@
         }
 
         // 🔥 CRITICAL: Use new timeline endpoint
-        const res = await fetch(`${API}/api/admin/timeline`, {
+        const res = await fetch(`${API_BASE}/api/admin/timeline`, {
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json"
@@ -304,8 +301,9 @@
         const response = await res.json();
         console.log("Timeline data:", response);
 
-        // 🔥 CRITICAL: Check if response has events array
-        const events = response.events || [];
+        const events = Array.isArray(response)
+          ? response
+          : (Array.isArray(response.events) ? response.events : []);
         const container = document.getElementById("treatmentTimeline");
         container.innerHTML = "";
 
@@ -319,11 +317,15 @@
           item.className = "timeline-item";
 
           // 🔥 CRITICAL: Use new timeline event structure
+          const patientMeta = event.patient_name ? `Hasta: ${event.patient_name}` : "";
+          const doctorMeta = event.doctor_name ? `Doktor: ${event.doctor_name}` : "";
+          const nameMeta = [patientMeta, doctorMeta].filter(Boolean).join(" • ");
+
           item.innerHTML = `
             <div class="timeline-date">${event.relative_time || new Date(event.created_at).toLocaleString()}</div>
             <div class="timeline-title">${event.icon || '📝'} ${event.title || 'System Event'}</div>
             <div class="timeline-meta">
-              ${event.subtitle || event.message || 'No details'}
+              ${nameMeta || event.subtitle || event.message || 'No details'}
             </div>
           `;
 
@@ -342,7 +344,7 @@
         const token = localStorage.getItem("adminToken");
         if (!token) return;
 
-        const response = await fetch(`${API}/api/admin/clinic`, {
+        const response = await fetch(`${API_BASE}/api/admin/clinic`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }

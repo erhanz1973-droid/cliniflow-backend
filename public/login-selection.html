@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cliniflow Giriş</title>
+  <style>
+    body {
+      font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      background: #0f172a;
+      color: #e6eaf2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .container {
+      background: #020617;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+      padding: 48px 32px;
+      text-align: center;
+      max-width: 400px;
+      width: 100%;
+    }
+    .logo {
+      width: 180px;
+      margin-bottom: 24px;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 16px;
+      font-weight: 900;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      margin: 16px 0;
+      font-size: 1.1rem;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #2563eb;
+      color: #fff;
+      transition: background 0.2s;
+    }
+    .btn:hover {
+      background: #1d4ed8;
+    }
+    .btn-secondary {
+      background: #1f2937;
+      color: #a7b2c8;
+    }
+    .btn-secondary:hover {
+      background: #374151;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="/logo-full-colorful.svg" alt="Cliniflow" class="logo">
+    <h1>Giriş Seçimi</h1>
+    <button class="btn" onclick="window.location.href='doctor-login.html'">Doktor Girişi</button>
+    <button class="btn btn-secondary" onclick="window.location.href='patient-login.html'">Hasta Girişi</button>
+  </div>
+</body>
+</html>

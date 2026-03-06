@@ -252,7 +252,7 @@
 <script>
   const API =
     window.location.hostname === "localhost"
-      ? "http://localhost:5050"
+      ? "http://localhost:10000"
       : "https://cliniflow-backend-dg8a.onrender.com";
   
   function showAlert(message, type = "error") {
@@ -291,6 +291,7 @@
     // Clear any existing admin token before login
     try {
       localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       console.log("[LOGIN] Cleared existing admin token before login");
     } catch (e) {
       console.error("[LOGIN] Error clearing token:", e);
@@ -334,6 +335,8 @@
       
       const json = await res.json();
       
+      console.log("LOGIN RESPONSE:", json);
+      
       if (!res.ok) {
         let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
         if (json.error === "invalid_admin_credentials") {
@@ -357,26 +360,39 @@
         return;
       }
       
-      if (json.ok && json.token) {
-        // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
-        localStorage.setItem("adminToken", json.token);
-        localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
-        localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
-        
-        console.log("[LOGIN] Token saved to localStorage:", json.token.substring(0, 20) + "...");
-        console.log("[LOGIN] Admin data:", json.admin);
-        
-        setMsg(i18n.t("login.success", { name: json.admin?.clinicCode || clinicCode }), "ok");
-        
-        console.log("[LOGIN] Login successful, redirecting to dashboard...");
-        
-        // Redirect immediately to correct port
-        window.location.href = window.location.origin + "/admin-dashboard.html";
-      } else {
-        setMsg(i18n.t("login.errors.loginFailed"), "err");
+      const normalizedToken = String(json?.token || json?.user?.token || '').trim();
+      const normalizedAdmin = json?.admin || json?.user || {};
+      const normalizedUser = {
+        ...normalizedAdmin,
+        token: normalizedToken,
+        clinicCode: normalizedAdmin?.clinicCode || normalizedAdmin?.clinic_code || clinicCode,
+        name: normalizedAdmin?.name || normalizedAdmin?.clinicName || normalizedAdmin?.clinic_name || '',
+      };
+
+      console.log("res.ok:", res.ok, "json.ok:", json.ok, "normalizedUser:", normalizedUser);
+      if (!res.ok || !json.ok || !normalizedToken) {
+        showAlert("Login failed", "error");
         submitBtn.disabled = false;
         submitBtn.textContent = i18n.t("login.submit");
+        return;
       }
+
+      // ✅ DOĞRU KEY
+      console.log("SAVING TOKEN:", normalizedToken);
+      localStorage.setItem("adminToken", normalizedToken);
+      localStorage.setItem("admin_token", normalizedToken);
+      localStorage.setItem("token", normalizedToken);
+      localStorage.setItem("clinic_code", normalizedUser.clinicCode || clinicCode);
+      localStorage.setItem("clinic_name", normalizedUser.name || "");
+
+      // user data
+      localStorage.setItem("user", JSON.stringify(normalizedUser));
+
+      showAlert("Login successful", "success");
+
+      setTimeout(() => {
+        window.location.href = "/admin.html";
+      }, 800);
     } catch (error) {
       console.error("Login error:", error);
       setMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
@@ -507,23 +523,38 @@
           return;
         }
         
-        if (json.ok && json.token) {
-          // Save token and redirect
-          localStorage.setItem("adminToken", json.token);
-          localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
-          localStorage.setItem("clinic_name", json.clinicName || "");
-          
-          setOTPMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
-          
-          // Redirect to dashboard
-          setTimeout(() => {
-            window.location.href = window.location.origin + "/admin-dashboard.html";
-          }, 1000);
-        } else {
-          setOTPMsg(i18n.t("login.errors.otpFailed"), "err");
+        const normalizedToken = String(json?.token || json?.user?.token || '').trim();
+        const normalizedAdmin = json?.admin || json?.user || {};
+        const normalizedUser = {
+          ...normalizedAdmin,
+          token: normalizedToken,
+          clinicCode: normalizedAdmin?.clinicCode || normalizedAdmin?.clinic_code || clinicCode,
+          name: normalizedAdmin?.name || normalizedAdmin?.clinicName || normalizedAdmin?.clinic_name || '',
+        };
+
+        if (!res.ok || !json.ok || !normalizedToken) {
+          setOTPMsg("Login failed", "error");
           submitBtn.disabled = false;
           submitBtn.textContent = i18n.t("login.verifyOTP");
+          return;
         }
+        
+        // ✅ DOĞRU TOKEN
+        localStorage.setItem("adminToken", normalizedToken);
+        localStorage.setItem("admin_token", normalizedToken);
+        localStorage.setItem("token", normalizedToken);
+        localStorage.setItem("clinic_code", normalizedUser.clinicCode || clinicCode);
+        localStorage.setItem("clinic_name", normalizedUser.name || "");
+        
+        // ✅ USER DATA
+        localStorage.setItem("user", JSON.stringify(normalizedUser));
+        
+        setOTPMsg(i18n.t("login.success", { name: normalizedUser.name || clinicCode }), "ok");
+        
+        // Redirect to dashboard
+        setTimeout(() => {
+          window.location.href = window.location.origin + "/admin-dashboard.html";
+        }, 800);
       } catch (error) {
         console.error("OTP verification error:", error);
         setOTPMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");

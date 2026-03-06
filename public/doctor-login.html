@@ -219,12 +219,15 @@
           />
         </div>
 
-        <button type="submit" class="btn btn-primary" id="login-btn" data-i18n="login.login">Login</button>
+          <a href="/patient-login.html" class="alt-btn" style="margin-right:10px;">Hasta Girişi</a>
+          <a href="/patient-register.html" class="alt-btn">Hasta Kaydı</a>
       </form>
     </div>
 
     <div class="nav">
       <a href="/admin-login.html" data-i18n="login.adminLogin">Admin Login</a>
+      <br />
+      <a href="/patient-login.html" style="margin-top:8px;display:inline-block;" data-i18n="login.patientLogin">Hasta Girişi</a>
     </div>
   </div>
 
@@ -463,12 +466,20 @@
           localStorage.setItem("doctor_token", json.token);
           localStorage.setItem("doctor_id", json.doctorId);
           localStorage.setItem("clinic_id", json.clinicId);
+          localStorage.setItem("doctor_status", json.status);
           
           setOTPMsg(i18n.t("login.success"), "success");
           
-          // Redirect to doctor dashboard
+          // Redirect based on doctor status
           setTimeout(() => {
-            window.location.href = "/doctor-initial-examination.html";
+            if (json.status === "PENDING") {
+              window.location.href = "/doctor/pending";
+            } else if (json.status === "APPROVED") {
+              window.location.href = "/doctor/dashboard";
+            } else {
+              // Fallback to initial examination for other statuses
+              window.location.href = "/doctor-initial-examination.html";
+            }
           }, 1000);
           
         } catch (error) {

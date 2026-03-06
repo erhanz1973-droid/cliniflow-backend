@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- ACTIVE FILE --><h1 style="color:red;">TEST FILE</h1><!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
@@ -173,6 +173,37 @@
       min-width:240px;
     }
     input::placeholder{ color:#94a3b8; }
+    
+    /* Doctor Dropdown Styles */
+    .doctor-select {
+      background: white;
+      color: black;
+      border: 1px solid #ddd;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 14px;
+      min-width: 180px;
+      margin-top: 8px;
+    }
+    .doctor-select:focus {
+      outline: 2px solid var(--g);
+      border-color: var(--g);
+    }
+    
+    /* Assign Button Styles */
+    .btn-assign {
+      background: var(--g);
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-top: 8px;
+      cursor: pointer;
+    }
+    .btn-assign:hover {
+      background: #15803d;
+    }
 
     /* Mini Card Grid Layout */
     .patients-grid {
@@ -447,6 +478,63 @@
         margin: 20px;
       }
     }
+
+    /* Custom Doctor Dropdown */
+    .doctor-dropdown {
+      position: relative;
+      width: 100%;
+    }
+
+    .doctor-dropdown-btn {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      background: white;
+      cursor: pointer;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    .doctor-dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 9999;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .doctor-dropdown.open .doctor-dropdown-menu {
+      display: block;
+    }
+
+    .doctor-option {
+      padding: 8px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background-color 0.2s;
+    }
+
+    .doctor-option:last-child {
+      border-bottom: none;
+    }
+
+    .doctor-option:hover {
+      background: #f3f4f6;
+    }
+
+    .doctor-option.selected {
+      background: #e3f2fd;
+      color: #2563eb;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -598,13 +686,18 @@
       } catch {}
     })();
 
-    const API_BASE =
-      window.location.hostname === "localhost"
-        ? "http://localhost:5050"
-        : "https://cliniflow-backend-dg8a.onrender.com";
+    const API_BASE = window.location.origin;
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
+    let DOCTORS_CACHE = [];
+    
+    // Clean protection for doctor select
+    document.addEventListener('click', function(e) {
+      if (e.target.closest('.doctor-select')) {
+        e.stopPropagation();
+      }
+    }, true);
     
     function getAdminToken() {
       return localStorage.getItem('adminToken') || '';
@@ -625,11 +718,10 @@
 
     function setSelectedPatient(patientId, name) {
       if (!patientId) return;
+      
       localStorage.setItem('selected_patient_id', patientId);
       if (name) localStorage.setItem('selected_patient_name', name);
       renderSelectedBar();
-      // refresh row highlighting
-      applyFilters();
     }
 
     function clearSelectedPatient() {
@@ -837,6 +929,105 @@
       }
     }
 
+    // 🔥 FIXED: Load doctors for dropdowns
+    async function loadDoctors() {
+      const token = getAdminToken();
+      console.log("[LOAD DOCTORS] Token from localStorage:", token ? "exists" : "missing");
+
+      if (!token) {
+        console.error("[LOAD DOCTORS] No admin token found");
+        return [];
+      }
+
+      try {
+        console.log("[LOAD DOCTORS] Fetching doctors...");
+        const res = await fetch(`${API_BASE}/api/admin/doctors`, {
+          headers: {
+            'Authorization': `Bearer ${token}` 
+          }
+        });
+
+        console.log("[LOAD DOCTORS] Response status:", res.status);
+
+        if (!res.ok) {
+          console.error("Doctors fetch failed:", res.status);
+          return [];
+        }
+
+        const data = await res.json();
+        console.log("[LOAD DOCTORS] Response data:", data);
+
+        // 🔥 BURASI EKSİKTİ
+        if (Array.isArray(data.items)) {
+          return data.items;
+        }
+
+        if (Array.isArray(data.doctors)) {
+          return data.doctors;
+        }
+
+        if (Array.isArray(data)) {
+          return data;
+        }
+
+        return [];
+      } catch (error) {
+        console.error("[LOAD DOCTORS] Error loading doctors:", error);
+        return [];
+      }
+    }
+
+    // Load doctors once into cache
+    async function loadDoctorsCache() {
+      if (DOCTORS_CACHE.length > 0) {
+        console.log("[DOCTORS CACHE] Using cached doctors:", DOCTORS_CACHE.length);
+        return DOCTORS_CACHE;
+      }
+
+      console.log("[DOCTORS CACHE] Loading doctors into cache...");
+      const doctors = await loadDoctors();
+      DOCTORS_CACHE = doctors;
+      console.log("[DOCTORS CACHE] Doctors cached:", doctors.length);
+      return doctors;
+    }
+
+    
+    // 🔥 FIXED: Assign doctor to patient
+    async function assignDoctor(patientId, doctorId) {
+      console.log("ASSIGN TRIGGERED", patientId, doctorId);
+      
+      const token = getAdminToken();
+      if (!token) {
+        showError('Authorization required');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/patients/assign-doctor`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ patientId, doctorId })
+        });
+
+        const data = await res.json();
+        
+        if (data.ok) {
+          const successMessage = window.i18n ? window.i18n.t('patients.assignSuccess') : '✅ Doctor assigned successfully';
+          alert(successMessage);
+        } else {
+          const errorMessage = window.i18n ? window.i18n.t('patients.errors.assignFailed') : '❌ Failed to assign doctor';
+          showError(errorMessage);
+        }
+      } catch (error) {
+        console.error('Assign doctor error:', error);
+        const errorMessage = window.i18n ? window.i18n.t('patients.errors.assignFailed') : '❌ Failed to assign doctor';
+        showError(errorMessage);
+      }
+    }
+
     // Helper function to get translation
     function t(key, params = {}) {
       if (window.i18n && window.i18n.t) {
@@ -907,9 +1098,8 @@
         const clinicCode = p.clinicCode || p.clinic_code || '';
         
         return `
-          <div class="patient-card ${isSelected ? 'selected' : ''}" onclick="setSelectedPatient('${escapeHtml(patientId)}', '${escapeHtml(displayName)}')">
+          <div class="patient-card ${isSelected ? 'selected' : ''}">
             <div class="patient-card-header">
-              <h3 class="patient-name">
                 <a href="/admin-patient-detail.html?patientId=${escapeHtml(patientId)}" style="color: inherit; text-decoration: none;" onclick="event.stopPropagation()">
                   ${escapeHtml(displayName)}${clinicCode ? `<span class="clinic-code-badge">${escapeHtml(clinicCode)}</span>` : ''}
                 </a>
@@ -954,10 +1144,31 @@
               <button class="btn-chat" onclick="openChat('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.chat') : t('patients.chat')}</button>
               <button class="btn-travel" onclick="openTravel('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.travel') : t('patients.travel')}</button>
               <button class="btn-health" onclick="openHealth('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.health') : t('patients.health')}</button>
+              ${status === 'APPROVED' ? `
+                <select 
+                  id="doctor-${escapeHtml(patientId)}"
+                  class="doctor-select"
+                  onchange="assignDoctor('${escapeHtml(patientId)}', this.value)">
+                  <option value="">Select Doctor</option>
+                  ${DOCTORS_CACHE.map(doctor => {
+                    const name = doctor.name || doctor.full_name || doctor.email || "Doctor";
+                    return `<option value="${escapeHtml(doctor.id)}">${escapeHtml(name)}</option>`;
+                  }).join('')}
+                </select>
+                <button 
+                  type="button"
+                  class="btn-assign"
+                  onclick="assignDoctor('${escapeHtml(patientId)}', this.closest('.card-actions').querySelector('.doctor-select').value)">
+                  Assign
+                </button>
+              ` : ''}
             </div>
           </div>
         `;
       }).join('');
+      
+      // Debug visibility
+      console.log("doctor selects:", document.querySelectorAll('.doctor-select').length);
     }
 
     function escapeHtml(text) {
@@ -1163,6 +1374,8 @@
 
       // Close on backdrop click
       modal.addEventListener('click', (e) => {
+        if (e.target.closest('.doctor-select')) return;
+        if (e.target.closest('.card-actions')) return;
         if (e.target === modal) {
           modal.remove();
         }
@@ -1177,16 +1390,19 @@
     }
 
     function openTravel(patientId) {
+      if (event && event.target.closest('.doctor-select')) return;
       setSelectedPatient(patientId, getPatientNameById(patientId));
       window.location.href = `/admin-travel.html?patientId=${encodeURIComponent(patientId)}`;
     }
 
     function openChat(patientId) {
+      if (event && event.target.closest('.doctor-select')) return;
       setSelectedPatient(patientId, getPatientNameById(patientId));
       window.location.href = `/admin-chat.html?patientId=${encodeURIComponent(patientId)}`;
     }
 
     function openHealth(patientId) {
+      if (event && event.target.closest('.doctor-select')) return;
       setSelectedPatient(patientId, getPatientNameById(patientId));
       window.location.href = `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
     }
@@ -1285,10 +1501,6 @@
     }
 
     // Badge loading functions
-    const API =
-      window.location.hostname === "localhost"
-        ? "http://localhost:5050"
-        : "https://cliniflow-backend-dg8a.onrender.com";
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
@@ -1348,7 +1560,7 @@
       const token = getAdminToken();
       if (!token) return;
       try {
-        const unreadRes = await fetch(`${API}/api/admin/unread-count`, {
+        const unreadRes = await fetch(`${API_BASE}/api/admin/unread-count`, {
           headers: adminHeaders({ Accept: "application/json" }),
         });
         if (!unreadRes.ok) return;
@@ -1384,7 +1596,7 @@
           const stored = localStorage.getItem('chat_last_seen_timestamp');
           if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
         } catch (e) {}
-        const patientsRes = await fetch(`${API}/api/admin/patients`, {
+        const patientsRes = await fetch(`${API_BASE}/api/admin/patients`, {
           headers: adminHeaders({ Accept: "application/json" }),
         });
         if (!patientsRes.ok) return;
@@ -1396,7 +1608,7 @@
           const patientId = patient.patientId || patient.id;
           if (!patientId) continue;
           try {
-            const messagesRes = await fetch(`${API}/api/admin/patient/${encodeURIComponent(patientId)}/messages`, {
+            const messagesRes = await fetch(`${API_BASE}/api/admin/patient/${encodeURIComponent(patientId)}/messages`, {
               headers: adminHeaders({ Accept: "application/json" }),
             });
             if (!messagesRes.ok) continue;
@@ -1436,7 +1648,7 @@
       const token = getAdminToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API}/api/admin/patients`, {
+        const res = await fetch(`${API_BASE}/api/admin/patients`, {
           headers: adminHeaders({ Accept: "application/json" }),
           signal: AbortSignal.timeout(10000) // 10 second timeout
         });
@@ -1467,7 +1679,7 @@
       const token = getAdminToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+        const res = await fetch(`${API_BASE}/api/admin/referrals?status=PENDING`, {
           headers: adminHeaders({ Accept: "application/json" }),
           signal: AbortSignal.timeout(10000) // 10 second timeout
         });
@@ -1581,20 +1793,39 @@
       if (f) f.addEventListener('change', () => applyFilters());
     });
 
+    // Global event prevention for doctor dropdowns
+    document.addEventListener('pointerdown', function(e) {
+      if (e.target.classList.contains('doctor-select')) {
+        e.stopPropagation();
+      }
+    });
+
     // Initialize page
     document.addEventListener('DOMContentLoaded', () => {
       if (typeof bindNavTravelLink === "function") {
         bindNavTravelLink();
       }
       
-      // Load patients first (this manages its own loading state)
-      loadPatients().then(() => {
-        // After patients are loaded, load only patients badge
-        loadPendingPatientsCount();
+      // Load doctors cache first
+      loadDoctorsCache().then(() => {
+        // Load patients first (this manages its own loading state)
+        loadPatients().then(() => {
+          // After patients are loaded, load only patients badge
+          loadPendingPatientsCount();
+        }).catch(err => {
+          console.error('Failed to load patients:', err);
+          // Still load patients badge even if patients fail
+          loadPendingPatientsCount();
+        });
       }).catch(err => {
-        console.error('Failed to load patients:', err);
-        // Still load patients badge even if patients fail
-        loadPendingPatientsCount();
+        console.error('Failed to load doctors cache:', err);
+        // Still try to load patients even if doctors fail
+        loadPatients().then(() => {
+          loadPendingPatientsCount();
+        }).catch(patientsErr => {
+          console.error('Failed to load patients:', patientsErr);
+          loadPendingPatientsCount();
+        });
       });
       
       // Add event listener for add patient button

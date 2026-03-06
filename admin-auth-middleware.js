@@ -35,14 +35,19 @@ function verifyAdminToken(req) {
       return { ok: false, error: "invalid_token" };
     }
 
-    // Check admin role
-    if (!decoded.role || decoded.role !== "ADMIN") {
+    // Accept both new and legacy admin role formats
+    const normalizedRole = String(decoded.role || "").trim().toUpperCase();
+    const hasClinicScope = !!(decoded.clinicId || decoded.clinicCode);
+    const isLegacyAdminToken = hasClinicScope && !decoded.patientId;
+    const hasValidRole = normalizedRole === "ADMIN" || (!normalizedRole && isLegacyAdminToken);
+    if (!hasValidRole) {
       console.log("[ADMIN DEBUG] Role check failed. Got:", decoded.role);
       return { ok: false, error: "invalid_role" };
     }
 
-    // Check adminId (not userId)
-    if (!decoded.adminId) {
+    // Accept adminId, fallback to userId/clinicId for legacy tokens
+    const effectiveAdminId = decoded.adminId || decoded.userId || decoded.clinicId || decoded.clinicCode;
+    if (!effectiveAdminId) {
       return { ok: false, error: "invalid_admin_token" };
     }
 
@@ -50,8 +55,8 @@ function verifyAdminToken(req) {
     
     return {
       ok: true,
-      adminId: decoded.adminId,
-      role: decoded.role,
+      adminId: effectiveAdminId,
+      role: normalizedRole || "ADMIN",
       clinicCode: decoded.clinicCode,
       clinicId: decoded.clinicId // Remove fallback, use actual value
     };

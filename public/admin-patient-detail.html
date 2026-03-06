@@ -7,7 +7,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("adminToken");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -501,6 +501,64 @@
     .treatment-plan-section {
       margin-top: 24px;
     }
+    .visit-context-section {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .visit-context-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .visit-context-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .visit-selector {
+      min-width: 260px;
+      max-width: 100%;
+      background: var(--bg);
+      color: #fff;
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .visit-diagnoses-panel {
+      background: var(--bg);
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .visit-diagnosis-item {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--b);
+      border-radius: 6px;
+      padding: 10px;
+    }
+    .visit-diagnosis-code {
+      color: var(--p);
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    .visit-diagnosis-text {
+      color: #fff;
+      font-size: 13px;
+    }
+    .visit-empty {
+      color: var(--muted);
+      font-size: 13px;
+    }
     .plan-actions {
       display: flex;
       gap: 12px;
@@ -667,6 +725,17 @@
               </button>
             </div>
           </div>
+          <div class="visit-context-section">
+            <div class="visit-context-head">
+              <h4 class="visit-context-title">Diagnosis</h4>
+              <select id="visitSelector" class="visit-selector" onchange="onVisitChange(this.value)">
+                <option value="">Visit bulunamadı</option>
+              </select>
+            </div>
+            <div id="visitDiagnosisPanel" class="visit-diagnoses-panel">
+              <div class="visit-empty">Diagnosis yükleniyor...</div>
+            </div>
+          </div>
           <div id="treatmentPlanContent">
             <div class="empty-state">
               <h3>Treatment Plan</h3>
@@ -710,7 +779,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeAssignPatientModal()">İptal</button>
-          <button type="button" class="btn btn-primary" onclick="assignPatientToDoctor()">Ata</button>
+          <button type="button" class="btn btn-primary" onclick="event.stopPropagation(); assignPatientToDoctor()">Ata</button>
         </div>
       </div>
     </div>
@@ -722,6 +791,8 @@
     let primaryDoctorId = null;
     let allDoctors = [];
     let selectedAssignDoctorId = null;
+    let currentVisits = [];
+    let selectedVisitId = null;
 
     // Get patient ID from URL
     function getPatientId() {
@@ -731,7 +802,7 @@
 
     // Get admin token helper function
     function getAdminToken() {
-      return localStorage.getItem("adminToken") || "";
+      return localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "";
     }
 
     // Load patient details
@@ -758,7 +829,16 @@
         const data = await response.json();
         if (data.ok) {
           currentPatient = data.patient;
+          currentVisits = Array.isArray(data.visits)
+            ? data.visits
+            : (Array.isArray(data.patient?.visits) ? data.patient.visits : []);
+          if (currentVisits.length > 0) {
+            selectedVisitId = currentVisits[0].id;
+          } else {
+            selectedVisitId = null;
+          }
           displayPatientDetails();
+          initializeVisitContext();
         } else {
           throw new Error(data.error || 'Hasta yüklenemedi');
         }
@@ -767,6 +847,76 @@
         alert('Hasta yüklenemedi: ' + error.message);
         window.location.href = '/admin-patients.html';
       }
+    }
+
+    function formatVisitLabel(visit, index) {
+      const rawDate = visit.visit_date || visit.created_at;
+      const dateText = rawDate ? formatDate(rawDate) : `Visit ${index + 1}`;
+      return `${dateText}${visit.notes ? ` • ${visit.notes}` : ''}`;
+    }
+
+    function initializeVisitContext() {
+      const selector = document.getElementById('visitSelector');
+      if (!selector) return;
+
+      if (!Array.isArray(currentVisits) || currentVisits.length === 0) {
+        selector.innerHTML = '<option value="">Visit bulunamadı</option>';
+        selector.value = '';
+        renderVisitDiagnoses();
+        return;
+      }
+
+      selector.innerHTML = currentVisits.map((visit, index) => {
+        const selected = String(visit.id) === String(selectedVisitId) ? 'selected' : '';
+        return `<option value="${visit.id}" ${selected}>${escapeHtml(formatVisitLabel(visit, index))}</option>`;
+      }).join('');
+
+      if (!selectedVisitId) {
+        selectedVisitId = currentVisits[0].id;
+      }
+
+      selector.value = selectedVisitId;
+      renderVisitDiagnoses();
+    }
+
+    function onVisitChange(visitId) {
+      selectedVisitId = visitId || null;
+      renderVisitDiagnoses();
+    }
+
+    function renderVisitDiagnoses() {
+      const panel = document.getElementById('visitDiagnosisPanel');
+      if (!panel) return;
+
+      if (!Array.isArray(currentVisits) || currentVisits.length === 0 || !selectedVisitId) {
+        panel.innerHTML = '<div class="visit-empty">Tanı eklenmemiş</div>';
+        return;
+      }
+
+      const selectedVisit = currentVisits.find((visit) => String(visit.id) === String(selectedVisitId));
+      const diagnoses = Array.isArray(selectedVisit?.diagnoses) ? selectedVisit.diagnoses : [];
+
+      if (diagnoses.length === 0) {
+        panel.innerHTML = '<div class="visit-empty">Tanı eklenmemiş</div>';
+        return;
+      }
+
+      panel.innerHTML = diagnoses.map((diagnosis) => {
+        const code = diagnosis.icd10_code || diagnosis.icdCode?.code || '-';
+        const description = diagnosis.icd10_description
+          || diagnosis.icdCode?.title_tr
+          || diagnosis.icdCode?.title_en
+          || diagnosis.icdCode?.description_tr
+          || diagnosis.icdCode?.description_en
+          || 'Açıklama yok';
+
+        return `
+          <div class="visit-diagnosis-item">
+            <span class="visit-diagnosis-code">${escapeHtml(code)}</span>
+            <span class="visit-diagnosis-text">${escapeHtml(description)}</span>
+          </div>
+        `;
+      }).join('');
     }
 
     // Display patient details
@@ -890,7 +1040,7 @@
       }
 
       container.innerHTML = doctors.map(doctor => `
-        <div class="doctor-item ${selectedAssignDoctorId === doctor.id ? 'selected' : ''}" onclick="selectAssignDoctor('${doctor.id}')" data-doctor-id="${doctor.id}">
+        <div class="doctor-item ${selectedAssignDoctorId === doctor.id ? 'selected' : ''}" onclick="event.stopPropagation(); selectAssignDoctor('${doctor.id}')" data-doctor-id="${doctor.id}">
           <div class="doctor-checkbox">
             ${selectedAssignDoctorId === doctor.id ? '✓' : ''}
           </div>
@@ -919,6 +1069,7 @@
 
     // Select doctor for assignment
     function selectAssignDoctor(doctorId) {
+      console.log("selectAssignDoctor triggered", doctorId);
       selectedAssignDoctorId = doctorId;
       displayAssignDoctors(allDoctors.filter(d => d.status === 'ACTIVE'));
     }
@@ -974,12 +1125,16 @@
 
     // Assign patient to doctor
     async function assignPatientToDoctor() {
+      console.log("assignPatientToDoctor triggered", { selectedAssignDoctorId, currentPatient });
+      
       if (!selectedAssignDoctorId) {
+        console.log("No doctor selected");
         alert('Doktor seçmelisiniz');
         return;
       }
 
       if (!currentPatient) {
+        console.log("No current patient");
         alert('Hasta bilgisi bulunamadı');
         return;
       }
@@ -1071,6 +1226,7 @@
 
     function logout() {
       localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       window.location.href = '/admin-login.html';
     }
 
@@ -1121,6 +1277,7 @@
 
       // Lazy load data based on tab
       if (tabId === "plan" && currentPatient) {
+        initializeVisitContext();
         loadTreatmentPlan();
       }
     }

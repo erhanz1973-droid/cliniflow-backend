@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const { createClient } = require("@supabase/supabase-js");
+const { authenticateToken } = require("../middleware/auth");
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -13,6 +14,15 @@ console.log("[TREATMENT ROUTE] Supabase import result:", { supabase: !!supabase 
 // Test route without authentication
 router.get('/test', async (req, res) => {
   return res.json({ ok: true, message: 'Treatment router is working!' });
+});
+
+// Protected route using authenticateToken
+router.get('/protected', authenticateToken, async (req, res) => {
+  return res.json({ 
+    ok: true, 
+    message: 'Protected route working!', 
+    user: req.user 
+  });
 });
 
 // GET treatment plan by diagnosis
