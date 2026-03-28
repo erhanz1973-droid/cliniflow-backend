@@ -66,7 +66,7 @@
       // After the original function completes, check for suspended status
       try {
         const API = "https://cliniflow-admin.onrender.com";
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
         if (token) {
           const res = await fetch(`${API}/api/admin/clinic`, {
             headers: {

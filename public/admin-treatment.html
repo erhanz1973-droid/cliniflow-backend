@@ -3,20 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"/>
-  <title>🦷 Treatment - Clinifly Admin</title>
-  <script>
-    // Token check - redirect to login if not authenticated
-    (function() {
-      const token = localStorage.getItem("admin_token");
-      if (!token) {
-        window.location.href = "/admin-login.html";
-      }
-    })();
-  </script>
+  <title data-i18n="treatment.pageTitle">Tedaviler - Clinifly Admin</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <script src="/admin-i18n.js"></script>
   <style>
-    body { font-family: system-ui; background:#111827; color:#e5e7eb; }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; background:#1f2937; border-radius: 16px; }
+    body { font-family: system-ui; }
+    /* Treatment page has its own dark UI — override the layout background for this page */
+    body.al-ready { background: #111827; color: #e6eaf2; }
+    body.al-ready .al-topbar { background: #1f2937; border-bottom-color: #374151; }
+    body.al-ready .al-topbar .al-page-title { color: #e5e7eb; }
+    body.al-ready .al-lang { background: #111827; border-color: #374151; }
+    body.al-ready .al-lang span { color: #94A3B8; }
+    .wrap { padding: 20px; background:#111827; color:#e5e7eb; min-height: 100%; }
     h1 { margin: 0 0 20px; font-size: 24px; font-weight: 700; }
     .muted { opacity:.75; font-size: 13px; }
     label { display:block; margin-top: 10px; font-weight: 600; }
@@ -184,6 +182,17 @@
     .tooth:active{ transform:scale(0.95); }
     .tooth.active{ border-color:#be185d; background:#f9a8d4; color:#111827; }
     .tooth.has{ border-color:var(--g); background:#bbf7d0; color:#111827; }
+    .tooth.has-diagnosis{
+      border-color:#dc2626;
+      background:#fee2e2;
+      color:#7f1d1d;
+      box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.25);
+    }
+    .tooth.has-diagnosis.active{
+      border-color:#b91c1c;
+      background:#fecaca;
+      color:#7f1d1d;
+    }
     .tooth.badge::before{
       content: attr(data-count);
       display:inline-flex;
@@ -301,35 +310,44 @@
       font-size:48px;
       margin-bottom:12px;
     }
+    .diagnosis-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .diagnosis-visit {
+      border: 1px solid var(--b);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+    }
+    .diagnosis-visit-title {
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .diagnosis-item {
+      padding: 6px 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #111827;
+    }
+    .diagnosis-item:last-child {
+      margin-bottom: 0;
+    }
+    .diagnosis-code {
+      font-weight: 800;
+      color: #1d4ed8;
+      margin-right: 6px;
+    }
   </style>
 </head>
   <body>
   <div class="wrap">
-    <h1>🦷 Clinifly Admin – Treatment</h1>
-    <nav class="navbar">
-      <div class="navbar-left">
-        <div class="navbar-logo">
-          <img src="/logo.svg" alt="Clinifly" />
-          <span class="navbar-logo-text">Clinifly</span>
-    </div>
-        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
-      </div>
-      <div class="navbar-center">
-        <a href="/admin.html" class="nav-link">Dashboard</a>
-        <a href="/admin-patients.html" class="nav-link">Patients</a>
-        <a href="/admin-treatment.html" class="nav-link active">Treatment</a>
-        <a href="/admin-chat.html" class="nav-link">Chat</a>
-      </div>
-      <div class="navbar-right">
-        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span class="active" onclick="window.switchLanguage('tr')">TR</span>
-          <span>|</span>
-          <span onclick="window.switchLanguage('en')">EN</span>
-        </div>
-        <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
-      </div>
-    </nav>
 
     <div class="card" style="margin-bottom:12px;">
       <label data-i18n="treatment.patientName">Hasta Adı (Seç)</label>
@@ -347,14 +365,14 @@
 
     <div id="msg" class="muted" style="margin-top:8px;"></div>
 
-    <div id="loading" class="loading" style="display:none;">Yükleniyor...</div>
+    <div id="loading" class="loading" style="display:none;" data-i18n="common.loading">Yükleniyor...</div>
 
     <div id="content" style="display:none;">
       <div class="two" style="margin-top:12px;">
         <div class="card">
           <div class="row" style="justify-content:space-between;">
-            <b>Üst Çene</b>
-            <span class="pill">FDI 11–18 / 21–28</span>
+            <b data-i18n="treatment.upperJaw">Üst Çene</b>
+            <span class="pill" data-i18n="treatment.fdiUpper">FDI 11–18 / 21–28</span>
           </div>
           <div class="gridWrap" style="margin-top:10px;">
             <div class="grid" id="upperRow1"></div>
@@ -365,8 +383,8 @@
 
         <div class="card">
           <div class="row" style="justify-content:space-between;">
-            <b>Alt Çene</b>
-            <span class="pill">FDI 31–38 / 41–48</span>
+            <b data-i18n="treatment.lowerJaw">Alt Çene</b>
+            <span class="pill" data-i18n="treatment.fdiLower">FDI 31–38 / 41–48</span>
           </div>
           <div class="gridWrap" style="margin-top:10px;">
             <div class="grid" id="lowerRow1"></div>
@@ -379,24 +397,24 @@
       <div class="card" style="margin-top:12px;">
         <div class="row" style="justify-content:space-between; flex-wrap:wrap;">
           <div style="flex:1; min-width:200px;">
-            <b>Seçili Diş: </b><span id="selTooth" class="pill">—</span>
-            <div class="muted" id="selToothHint" style="margin-top:4px;">Dişe tıkla, işlem ekle.</div>
+            <b><span data-i18n="treatment.selectedTooth">Seçili Diş:</span> </b><span id="selTooth" class="pill">—</span>
+            <div class="muted" id="selToothHint" style="margin-top:4px;" data-i18n="treatment.selToothHint">Dişe tıkla, işlem ekle.</div>
           </div>
-          <button class="ghost" onclick="clearSelection()" style="width:auto; min-width:120px;">Seçimi Temizle</button>
+          <button class="ghost" onclick="clearSelection()" style="width:auto; min-width:120px;" data-i18n="treatment.clearSelection">Seçimi Temizle</button>
         </div>
 
         <div class="hr"></div>
 
         <div class="row" style="flex-wrap:wrap;">
           <div style="flex:1; min-width:200px;">
-            <label>İşlem Türü</label>
+            <label data-i18n="treatment.procedureType">İşlem Türü</label>
             <select id="procType" style="width:100%">
-              <option value="">Yükleniyor...</option>
+              <option value="" data-i18n="treatment.loadingProcedures">Yükleniyor...</option>
             </select>
           </div>
 
           <div style="flex:1; min-width:200px;">
-            <label>Status</label>
+            <label data-i18n="treatment.statusLabel">Status</label>
             <select id="procStatus" style="width:100%">
               <option value="PLANNED">PLANNED</option>
               <option value="ACTIVE">ACTIVE</option>
@@ -406,24 +424,32 @@
           </div>
 
           <div style="flex:1; min-width:200px;">
-            <label>Tarih</label>
+            <label data-i18n="treatment.dateLabel">Tarih</label>
             <input id="procDate" type="date" style="width:100%"/>
           </div>
 
           <div style="flex:1; min-width:150px;">
-            <label>Saat</label>
+            <label data-i18n="treatment.timeLabel">Saat</label>
             <input id="procTime" type="time" style="width:100%"/>
+          </div>
+
+          <div style="flex:1; min-width:170px;">
+            <label data-i18n="treatment.datePolicy">Tarih Politikası</label>
+            <select id="procDatePolicy" style="width:100%">
+              <option value="MANUAL">MANUAL (alarm oluştur)</option>
+              <option value="AUTO">AUTO (otomatik tarih ata)</option>
+            </select>
           </div>
         </div>
 
         <div class="row" style="flex-wrap:wrap; margin-top:12px;">
           <div style="flex:1; min-width:150px;">
-            <label>Fiyat (ops.)</label>
+            <label data-i18n="treatment.priceOptional">Fiyat (ops.)</label>
             <input id="procPrice" type="number" step="0.01" min="0" placeholder="800.00" style="width:100%"/>
           </div>
 
           <div style="flex:1; min-width:120px;">
-            <label>Para Birimi</label>
+            <label data-i18n="treatment.currencyLabel">Para Birimi</label>
             <select id="procCurrency" style="width:100%">
               <option value="EUR">EUR (€)</option>
               <option value="USD">USD ($)</option>
@@ -432,41 +458,87 @@
           </div>
 
           <div style="flex:1; min-width:100px;">
-            <label>Adet</label>
+            <label data-i18n="treatment.quantityLabel">Adet</label>
             <input id="procQuantity" type="number" min="1" value="1" placeholder="1" style="width:100%"/>
+          </div>
+
+          <div style="flex:1; min-width:120px;">
+            <label data-i18n="treatment.chairNo">Chair No</label>
+            <input id="procChairNo" type="text" placeholder="örn: 1" style="width:100%"/>
+          </div>
+
+          <div style="flex:1; min-width:200px;">
+            <label data-i18n="treatment.doctorLabel">Doktor</label>
+            <select id="procDoctor" style="width:100%">
+              <option value="" data-i18n="treatment.doctorSelectOptional">-- Doktor Seç (ops.) --</option>
+            </select>
           </div>
 
           <div style="flex:1; min-width:200px;">
             <label>&nbsp;</label>
-            <button id="btnAddProcedure" style="width:100%; background:var(--g);" onclick="addProcedure()">+ Prosedur Ekle</button>
+            <button id="btnAddProcedure" style="width:100%; background:var(--g);" onclick="addProcedure()" data-i18n="treatment.addProcedure">+ Prosedur Ekle</button>
           </div>
         </div>
 
         <div class="hr"></div>
 
-        <b>Bu dişteki işlemler</b>
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <b data-i18n="treatment.diagnosesOnTooth">Bu dişteki tanılar</b>
+          <button class="ghost" style="width:auto; padding:4px 10px; font-size:12px;" onclick="toggleDiagForm()" data-i18n="treatment.addDiagnosisBtn">+ Tanı Ekle</button>
+        </div>
+        <div class="list" id="selToothDiagnosisList"></div>
+
+        <!-- Diagnosis Add Form (hidden by default) -->
+        <div id="diagFormWrap" style="display:none; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-top:10px;">
+          <div style="font-weight:600; margin-bottom:10px; font-size:13px;" data-i18n="treatment.newDiagnosisTitle">Yeni Tanı Ekle</div>
+          <div class="row" style="flex-wrap:wrap; gap:8px;">
+            <div style="flex:1; min-width:130px;">
+              <label style="font-size:12px;" data-i18n="treatment.icdCodeLabel">ICD-10 Kodu</label>
+              <input id="diagCode" type="text" placeholder="örn: K02.1" style="width:100%; font-size:13px;"/>
+            </div>
+            <div style="flex:2; min-width:200px;">
+              <label style="font-size:12px;" data-i18n="treatment.descriptionLabel">Açıklama</label>
+              <input id="diagDesc" type="text" placeholder="örn: Dentin çürüğü" style="width:100%; font-size:13px;"/>
+            </div>
+            <div style="flex:1; min-width:100px;">
+              <label style="font-size:12px;" data-i18n="treatment.toothNoLabel">Diş No</label>
+              <input id="diagTooth" type="text" data-i18n-placeholder="treatment.toothPlaceholderAuto" placeholder="otomatik" style="width:100%; font-size:13px;" readonly/>
+            </div>
+          </div>
+          <div style="margin-top:6px;">
+            <label style="font-size:12px;" data-i18n="treatment.notesOptionalLabel">Not (ops.)</label>
+            <input id="diagNotes" type="text" data-i18n-placeholder="treatment.notesPlaceholder" placeholder="Opsiyonel not..." style="width:100%; font-size:13px;"/>
+          </div>
+          <div class="row" style="gap:8px; margin-top:10px; justify-content:flex-end;">
+            <button class="ghost" style="width:auto; padding:6px 14px;" onclick="toggleDiagForm()" data-i18n="common.cancel">İptal</button>
+            <button style="width:auto; padding:6px 14px; background:var(--b, #2563eb); color:#fff; border:none; border-radius:6px; cursor:pointer;" onclick="saveDiagnosis()" data-i18n="common.save">Kaydet</button>
+          </div>
+        </div>
+
+        <div style="height:10px;"></div>
+        <b data-i18n="treatment.proceduresOnTooth">Bu dişteki işlemler</b>
         <div class="list" id="procList"></div>
       </div>
 
       <div class="card" style="margin-top:12px;">
         <div class="row" style="justify-content:space-between; align-items:flex-start;">
           <div>
-            <b>🦷 Treatment Events (Takvim)</b>
-            <div class="muted" style="margin-top:4px;">Not: Event'ler <b>treatment_events</b> altında saklanır.</div>
+            <b data-i18n="treatment.treatmentEventsTitle">🦷 Treatment Events (Takvim)</b>
+            <div class="muted" style="margin-top:4px;" data-i18n="treatment.treatmentEventsHelp">Not: Event'ler treatment_events tablosunda saklanır.</div>
           </div>
         </div>
 
         <div class="row" style="margin-top:10px; flex-wrap:wrap;">
           <div style="flex:1; min-width:160px;">
-            <label>Tarih</label>
+            <label data-i18n="treatment.dateLabel">Tarih</label>
             <input id="te_date" type="date" style="width:100%"/>
           </div>
           <div style="flex:1; min-width:140px;">
-            <label>Saat</label>
+            <label data-i18n="treatment.timeLabel">Saat</label>
             <input id="te_time" type="time" style="width:100%"/>
           </div>
           <div style="flex:1; min-width:180px;">
-            <label>Tip</label>
+            <label data-i18n="treatment.thType">Tip</label>
             <select id="te_type" style="width:100%">
               <option value="TREATMENT">Treatment</option>
               <option value="CONSULT">Consultation</option>
@@ -478,29 +550,29 @@
 
         <div class="row" style="margin-top:10px; flex-wrap:wrap;">
           <div style="flex:1; min-width:220px;">
-            <label>Başlık</label>
-            <input id="te_title" placeholder="Implant Day 1" style="width:100%"/>
+            <label data-i18n="treatment.thTitle">Başlık</label>
+            <input id="te_title" data-i18n-placeholder="treatment.eventTitlePlaceholder" placeholder="Implant Day 1" style="width:100%"/>
           </div>
           <div style="flex:1; min-width:220px;">
-            <label>Açıklama (ops.)</label>
-            <input id="te_desc" placeholder="CT scan + implant placement" style="width:100%"/>
+            <label data-i18n="treatment.eventDescOptional">Açıklama (ops.)</label>
+            <input id="te_desc" data-i18n-placeholder="treatment.eventDescPlaceholder" placeholder="CT scan + implant placement" style="width:100%"/>
           </div>
           <div style="min-width:180px;">
             <label>&nbsp;</label>
-            <button class="secondary" id="btnAddEvent" style="width:100%;" onclick="addTreatmentEvent()">➕ Event Ekle</button>
+            <button class="secondary" id="btnAddEvent" style="width:100%;" onclick="addTreatmentEvent()" data-i18n="treatment.addEvent">➕ Event Ekle</button>
           </div>
         </div>
 
         <div class="hr"></div>
 
-        <b>Event listesi</b>
+        <b data-i18n="treatment.eventListTitle">Event listesi</b>
         <div class="gridWrap" style="margin-top:10px;">
           <table style="width:100%; border-collapse:collapse;">
             <thead>
               <tr>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Tarih/Saat</th>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Tip</th>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Başlık</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thDateTime">Tarih/Saat</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thType">Tip</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thTitle">Başlık</th>
                 <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b); width:120px;"></th>
               </tr>
             </thead>
@@ -508,12 +580,22 @@
           </table>
         </div>
       </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between;">
+          <b data-i18n="treatment.patientToothDiagnoses">Hastanın Diş Tanıları</b>
+          <span class="pill" data-i18n="treatment.badgeToothDoctor">Diş No + Doktor Tanısı</span>
+        </div>
+        <div id="toothDiagnosisSummaryList" class="diagnosis-list" style="margin-top:10px;">
+          <div class="muted" id="toothDiagSummaryEmpty" data-i18n="treatment.noDiagnosisSummary">Tanı kaydı bulunamadı.</div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyState" class="empty-state" style="display:none;">
       <div class="empty-state-icon">🦷</div>
-      <div><strong>Henüz treatment kaydı yok</strong></div>
-      <div class="muted" style="margin-top:8px;">Treatment'lar yüklendiğinde burada görünecek.</div>
+      <div><strong data-i18n="treatment.emptyStateTitle">Henüz treatment kaydı yok</strong></div>
+      <div class="muted" style="margin-top:8px;" data-i18n="treatment.emptyStateSub">Treatment'lar yüklendiğinde burada görünecek.</div>
     </div>
   </div>
 
@@ -528,18 +610,109 @@
     } catch {}
   })();
 
-  const API = ""; // Production: Use same domain (admin service)
+  const API_BASE = window.location.origin;
+
+  function t(key, params) {
+    if (!window.i18n || typeof window.i18n.t !== 'function') return key;
+    return window.i18n.t(key, params || {});
+  }
+
+  function getAdminDateLocale() {
+    if (!window.i18n || typeof window.i18n.getLang !== "function") return "tr-TR";
+    const lang = window.i18n.getLang() || "tr";
+    const map = { tr: "tr-TR", en: "en-US", ru: "ru-RU", ka: "ka-GE" };
+    return map[lang] || "en-US";
+  }
+
+  function formatDiagLine(code, desc) {
+    const c = String(code || "").trim();
+    const d = String(desc || "").trim();
+    if (!c && !d) return "";
+    if (!c) return d;
+    if (!d) return c;
+    return `${c} ${d}`.replace(/\s+/g, " ").trim();
+  }
+
+  function applyTreatmentFormI18n() {
+    if (!window.i18n || typeof window.i18n.t !== 'function') return;
+    try {
+      document.title = t('treatment.pageTitle');
+      const ps = document.getElementById('procStatus');
+      if (ps) {
+        const cur = ps.value;
+        const vals = ['PLANNED', 'ACTIVE', 'COMPLETED', 'CANCELLED'];
+        ps.innerHTML = '';
+        vals.forEach((v) => {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = t(`treatment.status.${v}`);
+          ps.appendChild(opt);
+        });
+        if (vals.includes(cur)) ps.value = cur;
+      }
+      const pdp = document.getElementById('procDatePolicy');
+      if (pdp) {
+        const cur = String(pdp.value || 'MANUAL').toUpperCase() === 'AUTO' ? 'AUTO' : 'MANUAL';
+        pdp.innerHTML =
+          '<option value="MANUAL">' +
+          t('treatment.datePolicyManual') +
+          '</option><option value="AUTO">' +
+          t('treatment.datePolicyAuto') +
+          '</option>';
+        pdp.value = cur;
+      }
+      const te = document.getElementById('te_type');
+      if (te) {
+        const cur = te.value || 'TREATMENT';
+        const map = [
+          ['TREATMENT', 'teTypeTreatment'],
+          ['CONSULT', 'teTypeConsult'],
+          ['FOLLOWUP', 'teTypeFollowup'],
+          ['LAB', 'teTypeLab']
+        ];
+        te.innerHTML = '';
+        map.forEach(([v, key]) => {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = t(`treatment.${key}`);
+          te.appendChild(opt);
+        });
+        if (map.some(([v]) => v === cur)) te.value = cur;
+      }
+      const pd = document.getElementById('procDoctor');
+      if (pd && pd.options.length && pd.options[0].value === '') {
+        pd.options[0].textContent = t('treatment.doctorSelectOptional');
+      }
+    } catch (e) {
+      console.error('[applyTreatmentFormI18n]', e);
+    }
+  }
   const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
   let PROCEDURE_DEFS = []; // from /api/procedures
   let TYPE_TO_CATEGORY = {}; // { [type]: category }
   let EXTRACTION_TYPES = new Set(["EXTRACTION", "SURGICAL_EXTRACTION"]);
 
+  function getProcLabel(type) {
+    const t = String(type || "").toUpperCase();
+    const def = PROCEDURE_DEFS.find(d => String(d.type).toUpperCase() === t);
+    return (def && def.label) ? def.label : (type || "—");
+  }
+
+  function getStatusLabel(status) {
+    const s = String(status || "").toUpperCase();
+    if (window.i18n && window.i18n.t) {
+      const translated = window.i18n.t(`treatment.status.${s}`);
+      if (translated && translated !== `treatment.status.${s}`) return translated;
+    }
+    return status || "—";
+  }
+
   function getAdminToken(){
-    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+    try { return localStorage.getItem("adminToken") || ""; } catch { return ""; }
   }
   function logout() {
     try {
-      localStorage.removeItem("admin_token");
+      localStorage.removeItem("adminToken");
       console.log("[LOGOUT] Admin token cleared");
     } catch (e) {
       console.error("[LOGOUT] Error clearing token:", e);
@@ -567,16 +740,58 @@
   let TRAVEL_EVENTS = [];
   let EDITING_PROC = null; // { toothId, procedureId }
   let TREATMENT_PRICES = {}; // { procedureType: { default_price, currency, is_active } }
+  let DOCTORS = []; // [{ id, name }]
+  let ALL_DIAGNOSES = []; // Live list from encounter_diagnoses (Supabase)
+
+  async function loadDoctors() {
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/admin/doctors`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!res.ok) return;
+      const j = await res.json().catch(() => null);
+      const list = j?.doctors || j?.items || j?.data || (Array.isArray(j) ? j : []);
+      DOCTORS = Array.isArray(list) ? list.map(d => {
+        const id = String(d.id || d.doctor_id || "").trim();
+        const name = String(d.name || d.full_name || d.email || (d.doctor_id ? `Dr. ${d.doctor_id}` : "") || "").trim();
+        return { id, name: name || "Doctor" };
+      }).filter(d => d.id) : [];
+      // Populate doctor select in add form
+      const sel = document.getElementById("procDoctor");
+      if (sel) {
+        sel.innerHTML = "";
+        const o0 = document.createElement("option");
+        o0.value = "";
+        o0.textContent = t("treatment.doctorSelectOptional");
+        sel.appendChild(o0);
+        DOCTORS.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.id;
+          opt.textContent = d.name;
+          sel.appendChild(opt);
+        });
+      }
+    } catch (e) {
+      console.error("[loadDoctors] error:", e);
+    }
+  }
   async function loadTreatmentPrices() {
     try {
       const token = getAdminToken();
       if (!token) return;
       
-      const res = await fetch(`${API}/api/admin/treatment-prices`, {
+      const res = await fetch(`${API_BASE}/api/admin/treatment-prices`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
       if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const errorText = await res.text().catch(() => `HTTP ${res.status}`);
         console.error("[loadTreatmentPrices] HTTP error:", errorText);
         return;
@@ -663,12 +878,14 @@
   const elPatientName = document.getElementById("patientName");
   const elPatientId = document.getElementById("patientId");
   const elSelTooth = document.getElementById("selTooth");
+  const elSelToothDiagnosisList = document.getElementById("selToothDiagnosisList");
   const elProcList = document.getElementById("procList");
   
   console.log('[SCRIPT START] DOM elements:', {
     patientName: !!elPatientName,
     patientId: !!elPatientId,
     selTooth: !!elSelTooth,
+    selToothDiagnosisList: !!elSelToothDiagnosisList,
     procList: !!elProcList
   });
 
@@ -711,13 +928,18 @@
         return;
       }
       
-      const res = await fetch(`${API}/api/admin/patients`, {
+      const res = await fetch(`${API_BASE}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
       console.log('[loadPatientOptions] Response status:', res.status);
       
       if (!res.ok) {
+        if (res.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const errorText = await res.text().catch(() => `HTTP ${res.status}`);
         console.error('[loadPatientOptions] HTTP error:', errorText);
         elPatientSelect.innerHTML = `<option value="">⚠️ Hasta listesi yüklenemedi: ${res.status}</option>`;
@@ -747,13 +969,17 @@
           elPatientSelect.appendChild(opt);
         } else {
           patients.forEach(p => {
-            const pid = p.patientId || p.patient_id || p.id || "";
-            const name = p.fullName || p.name || pid;
+            const pid = p.id || p.patient_id || p.patientId || "";
+            const rawName = String(p.name || p.full_name || "").trim();
+            const badValues = ["unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--", ""];
+            const displayName = !badValues.includes(rawName.toLowerCase()) ? rawName : (p.patient_id || p.id || pid);
             if (pid) {
-            const opt = document.createElement("option");
-            opt.value = pid;
-            opt.textContent = `${name} (${pid})`;
-            elPatientSelect.appendChild(opt);
+              const opt = document.createElement("option");
+              opt.value = pid;
+              opt.dataset.uuid = p.id || "";
+              opt.dataset.patientId = p.patient_id || "";
+              opt.textContent = displayName;
+              elPatientSelect.appendChild(opt);
             }
           });
         }
@@ -807,17 +1033,20 @@
 
   async function loadProcedureDefs(){
     try {
-      const r = await fetch(`${API}/api/procedures`, { headers: { Accept: "application/json" } });
+      const lang = window.i18n?.getLang() || 'en';
+      const r = await fetch(`${API_BASE}/api/procedures?lang=${encodeURIComponent(lang)}`, { headers: { Accept: "application/json" } });
       const j = await r.json().catch(()=>null);
       if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       PROCEDURE_DEFS = Array.isArray(j.types) ? j.types : [];
       TYPE_TO_CATEGORY = {};
       PROCEDURE_DEFS.forEach((d) => { TYPE_TO_CATEGORY[String(d.type).toUpperCase()] = d.category; });
       EXTRACTION_TYPES = new Set(Array.isArray(j.extractionTypes) ? j.extractionTypes : ["EXTRACTION", "SURGICAL_EXTRACTION"]);
+      const categoryLabels = j.categoryLabels || {};
 
       // populate procType select
       const sel = document.getElementById("procType");
       if (sel) {
+        const prevValue = sel.value;
         sel.innerHTML = "";
         const byCat = {};
         PROCEDURE_DEFS.forEach((d) => {
@@ -827,7 +1056,7 @@
         });
         Object.keys(byCat).forEach((cat) => {
           const og = document.createElement("optgroup");
-          og.label = cat;
+          og.label = categoryLabels[cat] || cat;
           byCat[cat].forEach((d) => {
             const opt = document.createElement("option");
             opt.value = String(d.type).toUpperCase();
@@ -836,9 +1065,13 @@
           });
           sel.appendChild(og);
         });
-        
-        // Add change event listener to auto-fill price
-        sel.addEventListener("change", onProcedureTypeChange);
+        // Restore previously selected value if still valid
+        if (prevValue) sel.value = prevValue;
+        // Add change event listener to auto-fill price (only once)
+        if (!sel._listenerAttached) {
+          sel.addEventListener("change", onProcedureTypeChange);
+          sel._listenerAttached = true;
+        }
       }
     } catch (e) {
       console.error("[loadProcedureDefs] failed:", e);
@@ -853,6 +1086,16 @@
       };
     }
   }
+
+  // Reload procedure dropdown + form labels when admin changes language
+  window.onI18nUpdated = function () {
+    applyTreatmentFormI18n();
+    loadProcedureDefs().then(() => {
+      renderSelectedToothList();
+      renderDiagnoses();
+      renderToothDiagnosisSummary();
+    });
+  };
 
   function findTooth(toothId){
     toothId = toothKey(toothId);
@@ -889,18 +1132,32 @@
     console.log('[refreshBadgeAndColors] DATA.teeth:', DATA.teeth);
     all.forEach(el => {
       const id = toothKey(el.textContent);
-      const t = findTooth(id);
-      const count = (t?.procedures || []).length;
+      const toothRec = findTooth(id);
+      const count = (toothRec?.procedures || []).length;
+      const liveDiagForTooth = (Array.isArray(ALL_DIAGNOSES) ? ALL_DIAGNOSES : []).filter(
+        (d) => d && d.tooth_number != null && String(d.tooth_number).trim() !== "" && toothKey(d.tooth_number) === id
+      ).length;
+      const diagnosisCount =
+        liveDiagForTooth +
+        [
+          ...(Array.isArray(toothRec?.diagnosis) ? toothRec.diagnosis : []),
+          ...(Array.isArray(toothRec?.diagnoses) ? toothRec.diagnoses : []),
+        ].length;
       if (count > 0) {
         console.log(`[refreshBadgeAndColors] Tooth ${id} has ${count} procedures`);
       }
 
-      el.classList.remove("has","badge","active");
+      el.classList.remove("has","badge","active","has-diagnosis");
       el.removeAttribute("data-count");
+      el.removeAttribute("title");
 
       if (count > 0){
         el.classList.add("has","badge");
         el.setAttribute("data-count", String(count));
+      }
+      if (diagnosisCount > 0) {
+        el.classList.add("has-diagnosis");
+        el.setAttribute("title", t("treatment.toothDiagCountTitle", { count: diagnosisCount }));
       }
       if (SELECTED_TOOTH && id === SELECTED_TOOTH){
         el.classList.add("active");
@@ -911,23 +1168,197 @@
   function selectTooth(id){
     SELECTED_TOOTH = toothKey(id);
     elSelTooth.textContent = SELECTED_TOOTH;
-    const t = ensureTooth(SELECTED_TOOTH);
-    const locked = isToothLockedUI(t);
+    const toothRec = ensureTooth(SELECTED_TOOTH);
+    const locked = isToothLockedUI(toothRec);
     const hint = document.getElementById("selToothHint");
     if (hint) {
       hint.textContent = locked
-        ? "⛔ Bu diş çekilmiş (locked). Yeni işlem eklenemez. Sadece geçmiş görülebilir."
-        : "Dişe tıkla, işlem ekle.";
+        ? t("treatment.selToothHintLocked")
+        : t("treatment.selToothHintActive");
     }
     renderSelectedToothList();
     refreshBadgeAndColors();
+    // Update tooth field in diagnosis form
+    const diagTooth = document.getElementById("diagTooth");
+    if (diagTooth) diagTooth.value = SELECTED_TOOTH || "";
   }
 
   function clearSelection(){
     SELECTED_TOOTH = null;
     elSelTooth.textContent = "—";
     elProcList.innerHTML = "";
+    if (elSelToothDiagnosisList) {
+      elSelToothDiagnosisList.innerHTML = "";
+      const d = document.createElement("div");
+      d.className = "muted";
+      d.textContent = t("treatment.pickToothFromChart");
+      elSelToothDiagnosisList.appendChild(d);
+    }
     refreshBadgeAndColors();
+  }
+
+  function renderSelectedToothDiagnoses(){
+    if (!elSelToothDiagnosisList) return;
+    elSelToothDiagnosisList.innerHTML = "";
+
+    if (!SELECTED_TOOTH) {
+      elSelToothDiagnosisList.innerHTML = "";
+      const d0 = document.createElement("div");
+      d0.className = "muted";
+      d0.textContent = t("treatment.pickToothFromChart");
+      elSelToothDiagnosisList.appendChild(d0);
+      return;
+    }
+
+    const toothId = toothKey(SELECTED_TOOTH);
+
+    // Source 1: live Supabase data (ALL_DIAGNOSES)
+    const supabaseDiags = ALL_DIAGNOSES
+      .filter((d) => d.tooth_number && toothKey(d.tooth_number) === toothId)
+      .map((d) => ({
+        id: d.id,
+        code: d.icd10_code || "-",
+        description: d.icd10_description || d.notes || t("treatment.noDescription"),
+        source: "supabase",
+      }));
+
+    // Source 2: JSONB fallback (legacy teeth data)
+    const tooth = findTooth(toothId);
+    const jsonbDiags = [
+      ...(Array.isArray(tooth?.diagnosis) ? tooth.diagnosis : []),
+      ...(Array.isArray(tooth?.diagnoses) ? tooth.diagnoses : []),
+    ].map((d) => ({
+      id: null,
+      code: String(d?.code || d?.icd10_code || "-").trim(),
+      description: String(
+        d?.description || d?.icd10_description || d?.icdCode?.title_tr || d?.icdCode?.title_en || t("treatment.noDescription")
+      ).trim(),
+      source: "jsonb",
+    }));
+
+    // Merge & deduplicate
+    const seen = new Set(supabaseDiags.map((d) => `${d.code}__${d.description}`));
+    const all = [...supabaseDiags];
+    jsonbDiags.forEach((d) => {
+      const key = `${d.code}__${d.description}`;
+      if (!seen.has(key)) { seen.add(key); all.push(d); }
+    });
+
+    if (all.length === 0) {
+      elSelToothDiagnosisList.innerHTML = "";
+      const d1 = document.createElement("div");
+      d1.className = "muted";
+      d1.textContent = t("treatment.noDiagOnTooth");
+      elSelToothDiagnosisList.appendChild(d1);
+      return;
+    }
+
+    all.forEach((diagnosis) => {
+      const row = document.createElement("div");
+      row.className = "diagnosis-item";
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.alignItems = "center";
+      const line = formatDiagLine(diagnosis.code, diagnosis.description);
+      const deleteBtn = diagnosis.id
+        ? `<button onclick="deleteDiagnosis('${diagnosis.id}')" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:14px;padding:0 4px;" title="${t("treatment.deleteTitle")}">✕</button>`
+        : "";
+      row.innerHTML = `<span style="flex:1"><span class="diagnosis-code">${line}</span></span>${deleteBtn}`;
+      elSelToothDiagnosisList.appendChild(row);
+    });
+  }
+
+  // ─── Diagnosis form toggle ────────────────────────────────────────────────
+  function toggleDiagForm() {
+    const wrap = document.getElementById("diagFormWrap");
+    if (!wrap) return;
+    const isOpen = wrap.style.display !== "none";
+    wrap.style.display = isOpen ? "none" : "block";
+    if (!isOpen && SELECTED_TOOTH) {
+      const toothInput = document.getElementById("diagTooth");
+      if (toothInput) toothInput.value = SELECTED_TOOTH;
+    }
+  }
+
+  // ─── Load diagnoses from Supabase ────────────────────────────────────────
+  async function loadDiagnoses(patientId) {
+    if (!patientId) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(patientId)}/diagnoses`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      const j = await r.json().catch(() => ({}));
+      console.log("[loadDiagnoses] response:", j);
+      if (r.ok && Array.isArray(j.diagnoses)) {
+        ALL_DIAGNOSES = j.diagnoses;
+        // Merge into DATA.diagnoses for renderDiagnoses()
+        DATA.diagnoses = j.diagnoses;
+        renderDiagnoses();
+        renderToothDiagnosisSummary();
+        renderSelectedToothDiagnoses();
+        refreshBadgeAndColors();
+      }
+    } catch (e) {
+      console.error("[loadDiagnoses] error:", e.message);
+    }
+  }
+
+  // ─── Save diagnosis to Supabase ─────────────────────────────────────────
+  async function saveDiagnosis() {
+    const icd10_code = (document.getElementById("diagCode")?.value || "").trim();
+    const icd10_description = (document.getElementById("diagDesc")?.value || "").trim();
+    const tooth_number = (document.getElementById("diagTooth")?.value || SELECTED_TOOTH || "").trim();
+    const notes = (document.getElementById("diagNotes")?.value || "").trim();
+
+    if (!icd10_code && !icd10_description) {
+      alert(t("treatment.diagCodeOrDesc"));
+      return;
+    }
+
+    const patientId = CURRENT_PATIENT_ID;
+    if (!patientId) { alert(t("treatment.noPatientSelected")); return; }
+
+    try {
+      const r = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(patientId)}/diagnoses`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+        body: JSON.stringify({ icd10_code, icd10_description, tooth_number, notes }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        console.error("[saveDiagnosis] error:", j);
+        alert(t("treatment.saveFailedWithMsg", { error: j?.error || r.status }));
+        return;
+      }
+      console.log("[saveDiagnosis] saved:", j.diagnosis);
+      // Clear form & close
+      ["diagCode","diagDesc","diagNotes"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      document.getElementById("diagFormWrap").style.display = "none";
+      // Reload
+      await loadDiagnoses(patientId);
+    } catch (e) {
+      alert(t("treatment.errorWithMsg", { error: e.message }));
+    }
+  }
+
+  // ─── Delete diagnosis from Supabase ──────────────────────────────────────
+  async function deleteDiagnosis(diagnosisId) {
+    if (!confirm("Bu tanıyı silmek istiyor musunuz?")) return;
+    const patientId = CURRENT_PATIENT_ID;
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/admin/patients/${encodeURIComponent(patientId)}/diagnoses/${encodeURIComponent(diagnosisId)}`,
+        { method: "DELETE", headers: adminHeaders({ Accept: "application/json" }) }
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(t("treatment.deleteFailedWithMsg", { error: j?.error || r.status })); return; }
+      await loadDiagnoses(patientId);
+    } catch (e) {
+      alert(t("treatment.errorWithMsg", { error: e.message }));
+    }
   }
 
   function fmtDate(ts){
@@ -936,6 +1367,125 @@
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "—";
     return d.toISOString().slice(0,10);
+  }
+
+  function formatVisitHeader(visitId, visitData){
+    const visitDate = visitData?.visit_date || visitData?.created_at || null;
+    const dateText = visitDate ? fmtDate(visitDate) : "Tarihsiz Visit";
+    if (!visitId) return `Visit • ${dateText}`;
+    return `Visit ${String(visitId).slice(0, 8)} • ${dateText}`;
+  }
+
+  function renderDiagnoses(){
+    const container = document.getElementById("diagnosisList");
+    if (!container) return;
+    container.innerHTML = "";
+
+    // Use live Supabase data (ALL_DIAGNOSES) as primary source
+    const diagnoses = ALL_DIAGNOSES.length > 0 ? ALL_DIAGNOSES : (Array.isArray(DATA?.diagnoses) ? DATA.diagnoses : []);
+    console.log('[renderDiagnoses] count:', diagnoses.length, diagnoses.slice(0,2));
+
+    if (!diagnoses.length) {
+      container.innerHTML = '<div class="muted">Tanı eklenmemiş</div>';
+      return;
+    }
+
+    // Group by tooth_number
+    const byTooth = new Map();
+    diagnoses.forEach((d) => {
+      const key = d.tooth_number ? String(d.tooth_number).trim() : "—";
+      if (!byTooth.has(key)) byTooth.set(key, []);
+      byTooth.get(key).push(d);
+    });
+
+    const sortedTeeth = Array.from(byTooth.entries()).sort((a, b) => {
+      const na = Number(a[0]), nb = Number(b[0]);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return String(a[0]).localeCompare(String(b[0]));
+    });
+
+    sortedTeeth.forEach(([toothId, items]) => {
+      const groupEl = document.createElement("div");
+      groupEl.className = "diagnosis-visit";
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "diagnosis-visit-title";
+      titleEl.textContent =
+        toothId !== "—" ? t("treatment.diagGroupTooth", { tooth: toothId }) : t("treatment.diagGroupGeneral");
+      groupEl.appendChild(titleEl);
+
+      items.forEach((d) => {
+        const row = document.createElement("div");
+        row.className = "diagnosis-item";
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.alignItems = "center";
+        const code = d.icd10_code || "-";
+        const desc = d.icd10_description || d.notes || t("treatment.noDescription");
+        const line = formatDiagLine(code, desc);
+        const dateStr = d.created_at ? `<span style="font-size:10px;color:#9ca3af;margin-left:8px;">${fmtDate(d.created_at)}</span>` : "";
+        const deleteBtn = d.id
+          ? `<button onclick="deleteDiagnosis('${d.id}')" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:14px;padding:0 4px;margin-left:6px;" title="${t("treatment.deleteTitle")}">✕</button>`
+          : "";
+        row.innerHTML = `<span style="flex:1"><span class="diagnosis-code">${line}</span>${dateStr}</span>${deleteBtn}`;
+        groupEl.appendChild(row);
+      });
+
+      container.appendChild(groupEl);
+    });
+  }
+
+  function renderToothDiagnosisSummary(){
+    const container = document.getElementById("toothDiagnosisSummaryList");
+    if (!container) return;
+
+    const bucket = new Map();
+    const diagnoses = Array.isArray(DATA?.diagnoses) ? DATA.diagnoses : [];
+
+    diagnoses.forEach((diagnosis) => {
+      const rawTooth = diagnosis?.tooth_number ?? diagnosis?.toothNumber ?? diagnosis?.tooth_id ?? diagnosis?.toothId;
+      if (rawTooth === undefined || rawTooth === null || rawTooth === "") return;
+
+      const toothId = String(rawTooth).trim();
+      const description = String(
+        diagnosis?.icd10_description
+          || diagnosis?.icdCode?.title_tr
+          || diagnosis?.icdCode?.title_en
+          || diagnosis?.icdCode?.description_tr
+          || diagnosis?.icdCode?.description_en
+          || diagnosis?.notes
+          || diagnosis?.icd10_code
+          || ""
+      ).trim();
+
+      if (!description) return;
+
+      if (!bucket.has(toothId)) bucket.set(toothId, new Set());
+      bucket.get(toothId).add(description);
+    });
+
+    container.innerHTML = "";
+
+    const rows = Array.from(bucket.entries())
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .flatMap(([toothId, descriptions]) =>
+        Array.from(descriptions).map((description) => ({ toothId, description }))
+      );
+
+    if (rows.length === 0) {
+      container.innerHTML =
+        '<div class="muted" data-i18n="treatment.noDiagnosisSummary">' +
+        t("treatment.noDiagnosisSummary") +
+        "</div>";
+      return;
+    }
+
+    rows.forEach((rowData) => {
+      const row = document.createElement("div");
+      row.className = "diagnosis-item";
+      row.innerHTML = `<span class="diagnosis-code">${rowData.toothId}</span><span>${rowData.description}</span>`;
+      container.appendChild(row);
+    });
   }
 
   function normalizeEvents(ev){
@@ -960,7 +1510,7 @@
     const ev = Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [];
     if (ev.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="muted" colspan="4" style="padding:10px;">Event yok.</td>`;
+      tr.innerHTML = `<td class="muted" colspan="4" style="padding:10px;">${t("treatment.eventsEmpty")}</td>`;
       body.appendChild(tr);
       return;
     }
@@ -982,7 +1532,7 @@
           ${e.desc ? `<div class="muted" style="margin-top:4px;">${e.desc}</div>` : ``}
         </td>
         <td style="padding:10px; border-top:1px solid var(--b); width:120px;">
-          <button class="danger" style="width:100%;" onclick="removeTreatmentEvent('${e.id}')">Sil</button>
+          <button class="danger" style="width:100%;" onclick="removeTreatmentEvent('${e.id}')">${t("treatment.deleteBtn")}</button>
         </td>
       `;
       body.appendChild(tr);
@@ -991,13 +1541,13 @@
 
   async function loadTreatmentEvents(patientId){
     try {
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
         headers: adminHeaders({ Accept: "application/json" }),
       });
       const j = await r.json().catch(()=>null);
       if (!r.ok) {
         const err = j?.error || `${r.status}`;
-        setMsg(`Event'ler yüklenemedi: ${err}`, "err");
+        setMsg(t("treatment.loadFailed", { error: err }), "err");
         TRAVEL_EVENTS = [];
         renderTreatmentEvents();
         return;
@@ -1013,7 +1563,7 @@
 
   async function saveTreatmentEvents(patientId){
     const payload = { events: Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [] };
-    const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
+    const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
       method: "PUT",
       headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
@@ -1074,21 +1624,22 @@
   }
 
   function renderSelectedToothList(){
+    renderSelectedToothDiagnoses();
     elProcList.innerHTML = "";
     if (!SELECTED_TOOTH) {
       const div = document.createElement("div");
       div.className = "muted";
-      div.textContent = "Diş seçmek için yukarıdaki diş haritasından bir dişe tıklayın.";
+      div.textContent = t("treatment.pickToothFromChart");
       elProcList.appendChild(div);
       return;
     }
 
-    const t = ensureTooth(SELECTED_TOOTH);
-    const procs = t.procedures || [];
+    const toothRec = ensureTooth(SELECTED_TOOTH);
+    const procs = toothRec.procedures || [];
     if (procs.length === 0){
       const div = document.createElement("div");
       div.className = "muted";
-      div.textContent = "Bu dişte henüz işlem yok.";
+      div.textContent = t("treatment.noProcOnTooth");
       elProcList.appendChild(div);
       return;
     }
@@ -1109,7 +1660,7 @@
         const left = document.createElement("div");
         const st = normalizeStatusUI(p.status||"PLANNED");
         const stClass = st === "COMPLETED" ? "status ok" : (st === "ACTIVE" ? "status planned" : "status planned");
-        const toothDisplay = SELECTED_TOOTH ? `Diş ${SELECTED_TOOTH} • ` : '';
+        const toothDisplay = SELECTED_TOOTH ? t("treatment.procLineTooth", { tooth: SELECTED_TOOTH }) : "";
         const isEditing = !!(EDITING_PROC && EDITING_PROC.toothId === SELECTED_TOOTH && EDITING_PROC.procedureId === p.id);
         
         // Format price if available
@@ -1126,19 +1677,26 @@
           try {
             const scheduledDate = new Date(p.scheduledAt);
             if (!isNaN(scheduledDate.getTime())) {
-              const dateStr = scheduledDate.toLocaleDateString("tr-TR", { year: "numeric", month: "2-digit", day: "2-digit" });
-              const timeStr = scheduledDate.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-              scheduledText = `Tarih: ${dateStr} ${timeStr}`;
+              const loc = getAdminDateLocale();
+              const dateStr = scheduledDate.toLocaleDateString(loc, { year: "numeric", month: "2-digit", day: "2-digit" });
+              const timeStr = scheduledDate.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit" });
+              scheduledText = `${t("treatment.datePrefix")} ${dateStr} ${timeStr}`;
             } else {
-              scheduledText = `Tarih: ${fmtDate(p.scheduledAt)}`;
+              scheduledText = `${t("treatment.datePrefix")} ${fmtDate(p.scheduledAt)}`;
             }
           } catch {
-            scheduledText = `Tarih: ${fmtDate(p.scheduledAt)}`;
+            scheduledText = `${t("treatment.datePrefix")} ${fmtDate(p.scheduledAt)}`;
           }
         }
-        
-        left.innerHTML = `<b>${toothDisplay}${p.type || "PROC"}</b>
-          <small>${scheduledText}${priceText}</small>`;
+        const chairText = String(p.chairNo || p.chair || "").trim();
+        if (chairText) {
+          const chairPart = `${t("treatment.chairLabel")} ${chairText}`;
+          scheduledText = scheduledText ? `${scheduledText} • ${chairPart}` : chairPart;
+        }
+        const doctorText = String(p.assigned_doctor_name || "").trim();
+
+        left.innerHTML = `<b>${toothDisplay}${getProcLabel(p.type)}</b>
+          <small>${scheduledText}${priceText}${doctorText ? ` • 👨‍⚕️ ${doctorText}` : ""}</small>`;
 
         const right = document.createElement("div");
         right.style.display = "flex";
@@ -1148,11 +1706,11 @@
         
         const badge = document.createElement("span");
         badge.className = stClass;
-        badge.textContent = st;
+        badge.textContent = getStatusLabel(st);
         // Make badge clickable to toggle status
         badge.style.cursor = "pointer";
         badge.style.userSelect = "none";
-        badge.title = "Status'ü değiştirmek için tıklayın (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)";
+        badge.title = t("treatment.statusCycleTitle");
         badge.onclick = (e) => {
           e.stopPropagation();
           toggleProcedureStatus(p.id, SELECTED_TOOTH);
@@ -1170,13 +1728,13 @@
         statusSelect.style.background = "#0b1220";
         statusSelect.style.color = "#e6eaf2";
         statusSelect.style.border = "1px solid var(--b)";
-        statusSelect.title = "Status seç";
-        
+        statusSelect.title = t("treatment.statusSelectTitle");
+
         const statuses = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
         statuses.forEach(s => {
           const opt = document.createElement("option");
           opt.value = s;
-          opt.textContent = s;
+          opt.textContent = getStatusLabel(s);
           if (s === st) opt.selected = true;
           statusSelect.appendChild(opt);
         });
@@ -1198,7 +1756,7 @@
 
           const typeInput = document.createElement("input");
           typeInput.type = "text";
-          typeInput.placeholder = "İşlem tipi";
+          typeInput.placeholder = t("treatment.inlineProcTypePh");
           typeInput.value = String(p.type || "");
 
           const dateInput = document.createElement("input");
@@ -1216,8 +1774,7 @@
               dateInput.value = `${y}-${m}-${dd}`;
             } catch {}
           }
-          dateInput.onfocus = function(){ this.showPicker && this.showPicker(); };
-          dateInput.onclick = function(){ this.showPicker && this.showPicker(); };
+          dateInput.onclick = function(e){ try { this.showPicker && this.showPicker(); } catch {} };
 
           // Time input for scheduledAt
           const timeInput = document.createElement("input");
@@ -1233,15 +1790,14 @@
               }
             } catch {}
           }
-          timeInput.onfocus = function(){ this.showPicker && this.showPicker(); };
-          timeInput.onclick = function(){ this.showPicker && this.showPicker(); };
+          timeInput.onclick = function(e){ try { this.showPicker && this.showPicker(); } catch {} };
 
           // Price input
           const priceInput = document.createElement("input");
           priceInput.type = "number";
           priceInput.step = "0.01";
           priceInput.min = "0";
-          priceInput.placeholder = "Birim fiyat";
+          priceInput.placeholder = t("treatment.inlineUnitPricePh");
           priceInput.style.width = "100px";
           priceInput.value = p.unit_price ? String(p.unit_price) : "";
 
@@ -1261,12 +1817,33 @@
           const quantityInput = document.createElement("input");
           quantityInput.type = "number";
           quantityInput.min = "1";
-          quantityInput.placeholder = "Adet";
+          quantityInput.placeholder = t("treatment.inlineQtyPh");
           quantityInput.style.width = "70px";
           quantityInput.value = p.quantity ? String(p.quantity) : "1";
 
+          const chairInput = document.createElement("input");
+          chairInput.type = "text";
+          chairInput.placeholder = t("treatment.inlineChairPh");
+          chairInput.style.width = "90px";
+          chairInput.value = String(p.chairNo || p.chair || "").trim();
+
+          // Doctor select for inline edit
+          const doctorSelect = document.createElement("select");
+          doctorSelect.style.width = "150px";
+          const emptyOpt = document.createElement("option");
+          emptyOpt.value = "";
+          emptyOpt.textContent = t("treatment.inlineDoctorPick");
+          doctorSelect.appendChild(emptyOpt);
+          DOCTORS.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d.id;
+            opt.textContent = d.name;
+            if (d.id === String(p.assigned_doctor_id || "").trim()) opt.selected = true;
+            doctorSelect.appendChild(opt);
+          });
+
           const saveBtn = document.createElement("button");
-          saveBtn.textContent = "Kaydet";
+          saveBtn.textContent = t("common.save");
           saveBtn.className = "btn-save";
           saveBtn.style.width = "auto";
           saveBtn.style.padding = "6px 12px";
@@ -1277,19 +1854,21 @@
           saveBtn.onclick = async (e) => {
             e.stopPropagation();
             await saveProcedureInlineEdit(
-              p.id, 
-              SELECTED_TOOTH, 
-              typeInput.value, 
+              p.id,
+              SELECTED_TOOTH,
+              typeInput.value,
               dateInput.value,
               timeInput.value,
               priceInput.value,
               currencySelect.value,
-              quantityInput.value
+              quantityInput.value,
+              chairInput.value,
+              doctorSelect.value
             );
           };
 
           const cancelBtn = document.createElement("button");
-          cancelBtn.textContent = "İptal";
+          cancelBtn.textContent = t("common.cancel");
           cancelBtn.className = "ghost";
           cancelBtn.style.width = "auto";
           cancelBtn.style.padding = "6px 12px";
@@ -1309,12 +1888,14 @@
           fields.appendChild(priceInput);
           fields.appendChild(currencySelect);
           fields.appendChild(quantityInput);
+          fields.appendChild(chairInput);
+          fields.appendChild(doctorSelect);
           fields.appendChild(saveBtn);
           fields.appendChild(cancelBtn);
           right.appendChild(fields);
         } else {
           const editBtn = document.createElement("button");
-          editBtn.textContent = "Düzenle";
+          editBtn.textContent = t("common.edit");
           editBtn.className = "ghost";
           editBtn.style.width = "auto";
           editBtn.style.padding = "6px 12px";
@@ -1322,7 +1903,7 @@
           editBtn.style.minWidth = "auto";
           editBtn.style.flexShrink = "0";
           editBtn.style.whiteSpace = "nowrap";
-          editBtn.title = "Satır içinde düzenle";
+          editBtn.title = t("treatment.editInlineTitle");
           editBtn.onclick = (e) => {
             e.stopPropagation();
             EDITING_PROC = { toothId: SELECTED_TOOTH, procedureId: p.id };
@@ -1337,7 +1918,7 @@
       });
   }
 
-  async function saveProcedureInlineEdit(procedureId, toothId, newTypeRaw, newDateStr, newTimeStr, newPriceRaw, newCurrency, newQuantityRaw){
+  async function saveProcedureInlineEdit(procedureId, toothId, newTypeRaw, newDateStr, newTimeStr, newPriceRaw, newCurrency, newQuantityRaw, newChairNoRaw, newDoctorId){
     const pid = CURRENT_PATIENT_ID;
     if (!pid) return setMsg("Patient ID bulunamadı.", "err");
     if (!procedureId || !toothId) return setMsg("Procedure/Tooth ID bulunamadı.", "err");
@@ -1347,6 +1928,8 @@
     if (!proc) return setMsg("Procedure bulunamadı.", "err");
 
     const newType = String(newTypeRaw || "").trim().toUpperCase() || String(proc.type || "").toUpperCase() || "";
+    const policyEl = document.getElementById("procDatePolicy");
+    const missingDatePolicy = String(policyEl?.value || "MANUAL").toUpperCase() === "AUTO" ? "AUTO" : "MANUAL";
     
     // Combine date and time into timestamp
     let newScheduledAt = null;
@@ -1375,10 +1958,17 @@
     const quantity = newQuantityRaw && String(newQuantityRaw).trim() ? parseInt(newQuantityRaw) : 1;
     const currency = newCurrency || proc.currency || "EUR";
     const totalPrice = unitPrice !== null && unitPrice > 0 ? unitPrice * quantity : null;
+    const chairNo = String(newChairNoRaw || "").trim();
+    const assignedDoctorId = String(newDoctorId || "").trim();
+    const assignedDoctorName = assignedDoctorId ? (DOCTORS.find(d => d.id === assignedDoctorId)?.name || "") : "";
 
-    const prev = { type: proc.type, scheduledAt: proc.scheduledAt, unit_price: proc.unit_price, quantity: proc.quantity, currency: proc.currency, total_price: proc.total_price };
+    const prev = { type: proc.type, scheduledAt: proc.scheduledAt, unit_price: proc.unit_price, quantity: proc.quantity, currency: proc.currency, total_price: proc.total_price, chairNo: proc.chairNo, chair: proc.chair, assigned_doctor_id: proc.assigned_doctor_id, assigned_doctor_name: proc.assigned_doctor_name };
     proc.type = newType;
     proc.scheduledAt = newScheduledAt;
+    proc.chairNo = chairNo;
+    proc.chair = chairNo;
+    proc.assigned_doctor_id = assignedDoctorId || null;
+    proc.assigned_doctor_name = assignedDoctorName || null;
 
     try {
       setMsg("Procedure güncelleniyor...");
@@ -1392,9 +1982,17 @@
           status: normalizeStatusUI(proc.status || "PLANNED"),
           createdAt: proc.createdAt,
           date: proc.scheduledAt,
-          scheduledAt: proc.scheduledAt
+          scheduledAt: proc.scheduledAt,
+          missingDatePolicy
         }
       };
+
+      payload.procedure.chairNo = chairNo;
+      payload.procedure.chair = chairNo;
+      if (assignedDoctorId) {
+        payload.procedure.assigned_doctor_id = assignedDoctorId;
+        payload.procedure.assigned_doctor_name = assignedDoctorName;
+      }
 
       // Add pricing fields if provided
       if (unitPrice !== null && unitPrice > 0) {
@@ -1408,7 +2006,7 @@
         }
       }
 
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1416,13 +2014,17 @@
 
       const j = await r.json().catch(()=>null);
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = j?.message || j?.error || `${r.status}`;
         proc.type = prev.type;
         proc.scheduledAt = prev.scheduledAt;
         proc.unit_price = prev.unit_price;
         proc.quantity = prev.quantity;
         proc.currency = prev.currency;
         proc.total_price = prev.total_price;
+        proc.chairNo = prev.chairNo;
+        proc.chair = prev.chair;
+        proc.assigned_doctor_id = prev.assigned_doctor_id;
+        proc.assigned_doctor_name = prev.assigned_doctor_name;
         setMsg(`Procedure güncelleme başarısız: ${err}`, "err");
         return;
       }
@@ -1440,6 +2042,10 @@
       proc.quantity = prev.quantity;
       proc.currency = prev.currency;
       proc.total_price = prev.total_price;
+      proc.chairNo = prev.chairNo;
+      proc.chair = prev.chair;
+      proc.assigned_doctor_id = prev.assigned_doctor_id;
+      proc.assigned_doctor_name = prev.assigned_doctor_name;
       setMsg("Procedure güncelleme hatası: " + e.message, "err");
       renderSelectedToothList();
     }
@@ -1510,7 +2116,7 @@
       
       console.log('[changeProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1519,7 +2125,7 @@
       const j = await r.json().catch(()=>null);
 
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = j?.message || j?.error || `${r.status}`;
         setMsg(`Status güncelleme başarısız: ${err}`, "err");
         // Revert local change
         proc.status = currentStatus;
@@ -1604,7 +2210,7 @@
       
       console.log('[toggleProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1643,17 +2249,32 @@
 
   async function loadPatientInfo(patientId) {
     try {
-      const res = await fetch(`${API}/api/admin/patients`, {
+      const res = await fetch(`${API_BASE}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
+      // Fast path: read from already-loaded dropdown
+      const elPS = document.getElementById("patientSelect");
+      if (elPS) {
+        const opt = Array.from(elPS.options).find(o =>
+          o.value === patientId || o.dataset.uuid === patientId || o.dataset.patientId === patientId
+        );
+        if (opt && opt.textContent.trim()) {
+          elPatientName.textContent = opt.textContent.trim();
+          elPatientId.textContent = `ID: ${opt.dataset.patientId || patientId}`;
+          elPatientInfo.style.display = 'block';
+          return;
+        }
+      }
       if (res.ok) {
         const json = await res.json();
         if (json.ok && Array.isArray(json.patients)) {
-          const patient = json.patients.find(p => (p.patientId || p.patient_id) === patientId);
+          const patient = json.patients.find(p => p.id === patientId || p.patient_id === patientId || p.patientId === patientId);
           if (patient) {
-            elPatientName.textContent = patient.fullName || patient.name || patientId;
-            elPatientId.textContent = `ID: ${patientId}`;
+            const rawName = String(patient.name || patient.full_name || "").trim();
+            const badValues = ["unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--", ""];
+            elPatientName.textContent = !badValues.includes(rawName.toLowerCase()) ? rawName : patientId;
+            elPatientId.textContent = `ID: ${patient.patient_id || patientId}`;
             elPatientInfo.style.display = 'block';
             return;
           }
@@ -1662,7 +2283,6 @@
     } catch (e) {
       console.error('Load patient info error:', e);
     }
-    // Fallback
     elPatientName.textContent = patientId;
     elPatientId.textContent = `ID: ${patientId}`;
     elPatientInfo.style.display = 'block';
@@ -1670,7 +2290,7 @@
 
   async function loadTreatments(patientId){
     if (!patientId) {
-      setMsg("Patient ID bulunamadı. URL'de ?patientId= parametresi olmalı.", "err");
+      setMsg(t("treatment.selectPatientAbove"), "muted");
       elLoading.style.display = 'none';
       elContent.style.display = 'none';
       elEmptyState.style.display = 'block';
@@ -1678,20 +2298,27 @@
     }
 
     CURRENT_PATIENT_ID = patientId;
+    ALL_DIAGNOSES = [];
     elLoading.style.display = 'block';
     elContent.style.display = 'none';
     elEmptyState.style.display = 'none';
 
     try{
-      setMsg("Treatments yükleniyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatments`, {
-        headers: adminHeaders({ Accept: "application/json" }),
+      setMsg(t("treatment.loadingTreatmentsMsg"));
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/treatments?nocache=1`, {
+        headers: adminHeaders({ Accept: "application/json", "Cache-Control": "no-cache" }),
+        cache: "no-store",
       });
       const j = await r.json().catch(()=>null);
 
       if (!r.ok){
+        if (r.status === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+        }
         const err = j?.error || `${r.status}`;
-        setMsg(`Yüklenemedi: ${err}`, "err");
+        setMsg(t("treatment.loadFailed", { error: err }), "err");
         elLoading.style.display = 'none';
         elContent.style.display = 'none';
         elEmptyState.style.display = 'block';
@@ -1718,22 +2345,40 @@
       if (!Array.isArray(DATA.teeth)) {
         DATA.teeth = [];
       }
+      if (!Array.isArray(DATA.diagnoses)) {
+        DATA.diagnoses = [];
+      }
+      if (!Array.isArray(DATA.visits)) {
+        DATA.visits = [];
+      }
       console.log('[loadTreatments] Final DATA.teeth:', DATA.teeth);
+      console.log('[loadTreatments] Final DATA.diagnoses:', DATA.diagnoses);
       
       elLoading.style.display = 'none';
       
       if (DATA.teeth.length === 0 && (!DATA.teeth || DATA.teeth.length === 0)) {
         elContent.style.display = 'block';
-        setMsg("Henüz treatment kaydı yok. Diş seçip işlem ekleyebilirsiniz.", "muted");
+        setMsg(t("treatment.noRecordsYet"), "muted");
       } else {
         elContent.style.display = 'block';
-        setMsg(`${DATA.teeth.length} dişte toplam ${DATA.teeth.reduce((sum, t) => sum + (t.procedures?.length || 0), 0)} işlem yüklendi.`, "ok");
+        setMsg(
+          t("treatment.loadedSummary", {
+            teethCount: DATA.teeth.length,
+            procCount: DATA.teeth.reduce((sum, tooth) => sum + (tooth.procedures?.length || 0), 0)
+          }),
+          "ok"
+        );
       }
       
       clearSelection();
+      renderDiagnoses();
+      renderToothDiagnosisSummary();
+
+      // Load live diagnoses from Supabase (encounter_diagnoses table)
+      loadDiagnoses(patientId);
     }catch(e){
       console.error('Load treatments error:', e);
-      setMsg("Yükleme hatası: " + e.message, "err");
+      setMsg(t("treatment.loadError", { error: e.message }), "err");
       elLoading.style.display = 'none';
       elContent.style.display = 'none';
       elEmptyState.style.display = 'block';
@@ -1754,7 +2399,7 @@
     }
     
     if (!SELECTED_TOOTH) {
-      setMsg("⚠️ Önce diş seçin", "err");
+      setMsg(t("treatment.selectToothFirst"), "err");
       // Yanıp sönme animasyonu ekle
       if (elMsg) {
         elMsg.classList.add("blink");
@@ -1767,31 +2412,37 @@
     }
     const tooth = ensureTooth(SELECTED_TOOTH);
     if (isToothLockedUI(tooth)) {
-      return setMsg("Bu diş çekilmiş (locked). Yeni işlem eklenemez.", "err");
+      return setMsg(t("treatment.toothLocked"), "err");
     }
 
     const type = document.getElementById("procType").value;
     const status = document.getElementById("procStatus").value;
     const date = document.getElementById("procDate").value;
     const time = document.getElementById("procTime")?.value || "00:00";
+    const datePolicyEl = document.getElementById("procDatePolicy");
+    const missingDatePolicy = String(datePolicyEl?.value || "MANUAL").toUpperCase() === "AUTO" ? "AUTO" : "MANUAL";
     const priceValue = document.getElementById("procPrice").value;
     const currency = document.getElementById("procCurrency").value;
     const quantity = document.getElementById("procQuantity").value;
-    
-    if (!type) return setMsg("İşlem türü seç.", "err");
-    if (!date) return setMsg("Tarih seç.", "err");
+    const chairNo = String(document.getElementById("procChairNo")?.value || "").trim();
+    const assignedDoctorId = String(document.getElementById("procDoctor")?.value || "").trim();
+    const assignedDoctorName = assignedDoctorId ? (DOCTORS.find(d => d.id === assignedDoctorId)?.name || "") : "";
+
+    if (!type) return setMsg(t("treatment.selectProcedureType"), "err");
     
     // Combine date and time into timestamp
     let scheduledAtTimestamp = null;
-    try {
-      const dateTimeStr = `${date}T${time}:00`;
-      const dateObj = new Date(dateTimeStr);
-      if (!isNaN(dateObj.getTime())) {
-        scheduledAtTimestamp = dateObj.getTime(); // Store as timestamp
+    if (date && String(date).trim()) {
+      try {
+        const dateTimeStr = `${date}T${time}:00`;
+        const dateObj = new Date(dateTimeStr);
+        if (!isNaN(dateObj.getTime())) {
+          scheduledAtTimestamp = dateObj.getTime(); // Store as timestamp
+        }
+      } catch (e) {
+        console.error("[addProcedure] Error parsing date/time:", e);
+        return setMsg(t("treatment.invalidDateTime"), "err");
       }
-    } catch (e) {
-      console.error("[addProcedure] Error parsing date/time:", e);
-      return setMsg("Tarih/saat formatı geçersiz.", "err");
     }
     const normType = String(type).toUpperCase();
     const normStatus = normalizeStatusUI(status);
@@ -1828,10 +2479,14 @@
           status: normStatus,
           createdAt,
           date: scheduledAtTimestamp,
-          scheduledAt: scheduledAtTimestamp
+          scheduledAt: scheduledAtTimestamp,
+          chairNo,
+          chair: chairNo,
+          missingDatePolicy,
+          ...(assignedDoctorId ? { assigned_doctor_id: assignedDoctorId, assigned_doctor_name: assignedDoctorName } : {})
         }
       };
-      
+
       // Add pricing fields if provided
       if (unitPrice !== null && unitPrice > 0) {
         payload.procedure.unit_price = unitPrice;
@@ -1843,10 +2498,10 @@
           payload.procedure.currency = currency;
         }
       }
-      
+
       console.log('[addProcedure] Sending to server:', JSON.stringify(payload, null, 2));
       
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
         body: JSON.stringify(payload)
@@ -1855,7 +2510,7 @@
       const j = await r.json().catch(()=>null);
 
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = j?.message || j?.error || `${r.status}`;
         setMsg(`Kaydetme başarısız: ${err}`, "err");
         return;
       }
@@ -1874,9 +2529,11 @@
         document.getElementById("procPrice").value = "";
         document.getElementById("procQuantity").value = "1";
         document.getElementById("procCurrency").value = "EUR";
+        const procDoctorEl = document.getElementById("procDoctor");
+        if (procDoctorEl) procDoctorEl.value = "";
     } catch(e) {
       console.error('Add procedure error:', e);
-      setMsg("Kaydetme hatası: " + e.message, "err");
+      setMsg(t("treatment.saveAllError", { error: e.message }), "err");
     } finally {
       // Re-enable button after a short delay
       setTimeout(() => {
@@ -1998,7 +2655,7 @@
         }
         
         try {
-          const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+          const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
             method: "POST",
             headers: adminHeaders({ "Content-Type":"application/json" }),
             body: JSON.stringify(item)
@@ -2054,12 +2711,12 @@
         }
       }
       
-      setMsg("Tüm procedure'lar kaydedildi ✅", "ok");
+      setMsg(t("treatment.saveAllSuccess"), "ok");
       renderSelectedToothList();
       refreshBadgeAndColors();
     }catch(e){
       console.error('Save procedures error:', e);
-      setMsg("Kaydetme hatası: " + e.message, "err");
+      setMsg(t("treatment.saveAllError", { error: e.message }), "err");
     }finally{
       IS_ADDING_PROCEDURE = false;
       // Re-enable both buttons
@@ -2070,9 +2727,11 @@
 
   // Initialize
   async function init() {
+    applyTreatmentFormI18n();
     // Load procedure definitions and treatment prices
     await loadProcedureDefs();
     await loadTreatmentPrices();
+    await loadDoctors();
     
     // Load patient options first
     await loadPatientOptions();
@@ -2083,13 +2742,24 @@
     renderRow("lowerRow1", L1);
     renderRow("lowerRow2", L2);
     
-    // Get patient ID from URL or storage
-    const initialPid = getPatientIdFromUrlOrStorage();
-    
-    // Get toothId from URL if available
+    // Get patient ID from URL or storage, validate it belongs to this clinic
     const params = new URLSearchParams(window.location.search);
+    const urlPid = params.get('patientId') || '';
+    let storagePid = localStorage.getItem('selected_patient_id') || '';
+    // Validate stored patient exists in this clinic's patient list
+    if (storagePid && !urlPid) {
+      const elPatientSelect = document.getElementById("patientSelect");
+      const validIds = elPatientSelect ? Array.from(elPatientSelect.options).map(o => o.value).filter(Boolean) : [];
+      if (!validIds.includes(storagePid)) {
+        localStorage.removeItem('selected_patient_id');
+        storagePid = '';
+      }
+    }
+    const initialPid = urlPid || storagePid;
+
+    // Get toothId from URL if available
     const urlToothId = params.get('toothId');
-    
+
     if (initialPid) {
       setPatientIdAndUrl(initialPid);
       await loadProcedureDefs();
@@ -2132,7 +2802,7 @@
         }, 300);
       }
     } else {
-      setMsg("URL'de patientId parametresi bulunamadı. Örnek: /admin-treatment.html?patientId=p123", "err");
+      setMsg(t("treatment.selectPatientAbove"), "muted");
       elLoading.style.display = 'none';
       elContent.style.display = 'none';
       elEmptyState.style.display = 'block';
@@ -2168,34 +2838,29 @@
     const token = getAdminToken();
     if (!token) return;
     try {
-      const res = await fetch(`${API}/api/admin/clinic`, {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
         headers: adminHeaders({ 'Accept': 'application/json' })
       });
       if (res.ok) {
         const clinic = await res.json();
         const name = clinic.branding?.clinicName || clinic.name || 'Clinic';
-        
-        // Update navbar clinic name
         const navbarClinicName = document.getElementById('navbarClinicName');
-        if (navbarClinicName) {
-          navbarClinicName.textContent = name;
-        }
+        if (navbarClinicName) navbarClinicName.textContent = name;
       }
     } catch (error) {
       console.error('Failed to load clinic name:', error);
-      const navbarClinicName = document.getElementById('navbarClinicName');
-      if (navbarClinicName) {
-        navbarClinicName.textContent = 'Clinic';
-      }
     }
   }
 
-  // Run on page load
-  console.log('[PAGE LOAD] Admin treatment page loaded');
-  init();
-  loadClinicName();
-  console.log('[PAGE LOAD] Init function completed');
+  // ── Entry point ──────────────────────────────────────────────────────────────
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { init(); loadClinicName(); });
+  } else {
+    init(); loadClinicName();
+  }
 </script>
+
+<script src="/admin-layout.js?v=20260322"></script>
 </body>
 </html>
 

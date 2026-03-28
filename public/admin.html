@@ -6,7 +6,8 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <title>Clinifly Admin Dashboard [2025-02-10-01-38]</title>
+  <title>Dashboard - Clinifly Admin</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <script src="/admin-i18n.js?v=202502011445"></script>
   <style>
     :root { 
@@ -19,6 +20,13 @@
       --warn:#f59e0b;
       --muted:#a7b2c8;
       --link:#6aa6ff;
+      /* Override admin-layout.css light-theme variables */
+      --text:         #e6eaf2;
+      --text-2:       #a7b2c8;
+      --text-m:       #6b7280;
+      --page-bg:      #111827;
+      --border:       #374151;
+      --topbar-bg:    #1f2937;
     }
     body{ 
       font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
@@ -299,9 +307,46 @@
       padding:0 4px;
       border:2px solid var(--bg);
     }
+    /* Dark theme overrides for shared layout */
+    body.al-ready { background: var(--bg); color: #e6eaf2; }
+    body.al-ready .al-topbar {
+      background: #1f2937;
+      border-bottom-color: #374151;
+    }
+    body.al-ready .al-page-title { color: #e6eaf2; }
+    body.al-ready .al-lang {
+      background: #111827;
+      border-color: #374151;
+    }
+    body.al-ready .al-lang span { color: #94A3B8; }
+    body.al-ready .al-lang span.active { background: var(--p); color: #fff; }
   </style>
 </head>
 <body>
+<script>
+  function getStoredAdminToken() {
+    try {
+      return localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "";
+    } catch {
+      return "";
+    }
+  }
+
+  // ensure admin token present on every page load
+  (function() {
+    const token = getStoredAdminToken();
+    if (!token) {
+      console.log("[AUTH] Admin token missing, redirecting to login");
+      window.location.href = "/admin-login.html";
+      return;
+    }
+
+    try {
+      if (!localStorage.getItem("adminToken")) localStorage.setItem("adminToken", token);
+      if (!localStorage.getItem("admin_token")) localStorage.setItem("admin_token", token);
+    } catch {}
+  })();
+</script>
   <div class="wrap">
     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
       <!-- Inline SVG Logo - No External File -->
@@ -320,67 +365,6 @@
       <h1 id="pageHeading" data-i18n="dashboard.title" style="margin: 0;">Clinifly Admin – Dashboard</h1>
     </div>
     
-    <nav class="navbar">
-      <div class="navbar-left">
-        <div class="navbar-logo">
-          <!-- New Modern Clinifly Logo -->
-          <svg width="24" height="24" viewBox="0 0 120 40" xmlns="http://www.w3.org/2000/svg" style="opacity: 0.8;">
-            <defs>
-              <linearGradient id="newLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:#1E40AF;stop-opacity:1" />
-                <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
-                <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:1" />
-              </linearGradient>
-            </defs>
-            
-            <!-- Ana diş şekli -->
-            <path d="M20 25 C20 18, 25 13, 32 13 L38 13 C45 13, 50 18, 50 25 L50 30 C50 33, 48 35, 45 35 L25 35 C22 35, 20 33, 20 30 Z" 
-                  fill="url(#newLogoGradient)" />
-            
-            <!-- Diş iç detayı -->
-            <rect x="30" y="18" width="8" height="10" rx="2" fill="white" opacity="0.9" />
-            <circle cx="34" cy="23" r="1" fill="#1E40AF" />
-            
-            <!-- Alt dalga -->
-            <path d="M15 32 Q35 28, 55 32" stroke="url(#newLogoGradient)" stroke-width="2.5" fill="none" opacity="0.7" />
-            
-            <!-- CLINIFLOW text -->
-            <text x="60" y="28" font-family="Arial, sans-serif" font-size="9" fill="#1E40AF" font-weight="bold">CLINIFLOW</text>
-          </svg>
-          <span class="navbar-logo-text">Clinifly</span>
-        </div>
-        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
-    </div>
-      <div class="navbar-center">
-        <a href="/admin.html" class="nav-link active" data-i18n="dashboard.nav.dashboard">Dashboard</a>
-        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink" data-i18n="dashboard.nav.patients">
-          Patients
-          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-doctor-applications-v2.html" class="nav-link" id="doctorApplicationsNavLink">
-          Doctor Applications
-          <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
-        <a href="/admin-chat.html" class="nav-link" id="chatNavLink" data-i18n="dashboard.nav.chat">
-          Chat
-          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-referrals.html" class="nav-link" id="referralsNavLink" data-i18n="dashboard.nav.referrals">
-          Referrals
-          <span id="referralsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-      </div>
-      <div class="navbar-right">
-        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span class="active">TR</span>
-          <span>|</span>
-          <span>EN</span>
-        </div>
-        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
-      </div>
-    </nav>
     
     <!-- Suspended Clinic Notice -->
     <div id="suspendedNotice" style="display: none; margin: 20px 0; padding: 24px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(251, 191, 36, 0.05)); border: 1px solid rgba(245, 158, 11, 0.3); border-left: 4px solid var(--warn); border-radius: 16px; position: relative; overflow: hidden;">
@@ -456,8 +440,8 @@
       <!-- Monthly Active Patients - Compact -->
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h3 style="margin:0; font-size:14px; font-weight:600;">📊 <span id="activePatientsTitle"></span>Active Patients</span></h3>
-          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+          <h3 style="margin:0; font-size:14px; font-weight:600; color:#e6eaf2;">📊 <span id="activePatientsTitle"></span></h3>
+          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;">
             Loading...
           </div>
         </div>
@@ -468,7 +452,7 @@
         </div>
         
         <!-- Summary -->
-        <div style="text-align:center; color:var(--muted); font-size:10px;">
+        <div style="text-align:center; color:#a7b2c8; font-size:11px; margin-top:4px;">
           <div id="activePatientsSummary">Loading...</div>
         </div>
       </div>
@@ -476,8 +460,8 @@
       <!-- Monthly Procedures - Compact -->
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h3 style="margin:0; font-size:14px; font-weight:600;">🦷 <span id="proceduresTitle"></span>Procedures</span></h3>
-          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+          <h3 style="margin:0; font-size:14px; font-weight:600; color:#e6eaf2;">🦷 <span id="proceduresTitle"></span></h3>
+          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;">
             Loading...
           </div>
         </div>
@@ -488,7 +472,7 @@
         </div>
         
         <!-- Summary -->
-        <div style="text-align:center; color:var(--muted); font-size:10px;">
+        <div style="text-align:center; color:#a7b2c8; font-size:11px; margin-top:4px;">
           <div id="monthlyProceduresSummary">Loading...</div>
         </div>
       </div>
@@ -556,7 +540,7 @@
   // Global logout function - accessible from onclick handlers
   function logout() {
     try {
-      localStorage.removeItem("token");
+      localStorage.removeItem("adminToken");
       localStorage.removeItem("admin_token");
       localStorage.removeItem("user");
       localStorage.removeItem("clinic_code");
@@ -568,27 +552,24 @@
     window.location.href = window.location.origin + "/admin-login.html";
   }
 
-  const API = ""; // Production: Use same domain (admin service)
+  const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`;
   function applyTokenFromUrl() {
     try {
       const url = new URL(location.href);
       const token = (url.searchParams.get("token") || "").trim();
       if (!token) return;
+      localStorage.setItem("adminToken", token);
       localStorage.setItem("admin_token", token);
       url.searchParams.delete("token");
       history.replaceState({}, "", url.toString());
     } catch {}
   }
   function getAdminToken() {
-    try { 
-      return localStorage.getItem("token") || localStorage.getItem("admin_token") || ""; 
-    } catch { 
-      return ""; 
-    }
+    return getStoredAdminToken();
   }
   // Check token and role on page load - redirect to login if missing or invalid
   function checkAuth() {
-    const token = localStorage.getItem("token") || localStorage.getItem("admin_token");
+    const token = getStoredAdminToken();
     const userStr = localStorage.getItem("user");
     
     if (!token) {
@@ -628,7 +609,7 @@
 
   // Safari-compatible fetch wrapper
   async function safariFetch(url, options = {}) {
-    const token = localStorage.getItem("admin_token");
+    const token = getAdminToken();
     console.log("TOKEN BEING SENT:", token);
 
     return fetch(url, {
@@ -654,7 +635,7 @@
       const res = await safariFetch(`${API}/api/admin/clinic`, {
         headers: { Accept: "application/json" },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) { if (window.handle401 && window.handle401(res.status)) return; throw new Error(`HTTP ${res.status}`); }
       const data = await res.json();
       const code = (data.clinicCode || data.code || "-").toString();
       const name = (data.name || "-").toString();
@@ -687,11 +668,16 @@
 
   function formatDate(dateStr, timeStr) {
     if (!dateStr) return "—";
-    const date = new Date(dateStr + (timeStr ? `T${timeStr}:00` : "T00:00:00"));
+    const raw = String(dateStr);
+    const hasTimePart = raw.includes("T") || /\d{2}:\d{2}/.test(raw);
+    const date = hasTimePart
+      ? new Date(raw)
+      : new Date(raw + (timeStr ? `T${timeStr}:00` : "T00:00:00"));
     if (isNaN(date.getTime())) return dateStr;
     
     const lang = i18n.getLang();
-    const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const localeMap = { tr: 'tr-TR', en: 'en-US', ru: 'ru-RU', ka: 'ka-GE' };
+    const locale = localeMap[lang] || 'en-US';
     const options = { 
       year: 'numeric', 
       month: 'short', 
@@ -699,7 +685,8 @@
       weekday: 'short'
     };
     const dateFormatted = date.toLocaleDateString(locale, options);
-    return timeStr ? `${dateFormatted} ${timeStr}` : dateFormatted;
+    const resolvedTime = timeStr || (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
+    return resolvedTime ? `${dateFormatted} ${resolvedTime}` : dateFormatted;
   }
 
   function formatRelativeDate(dateStr) {
@@ -969,8 +956,25 @@
       const metaStyle = isOverdue ? 'style="color: #fca5a5 !important; opacity: 0.9;"' : '';
       
       const eventIcon = getEventIcon(evt.type, evt.eventType);
-      const patientName = evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '';
+      const tl = (window.i18n && window.i18n.t) ? window.i18n.t.bind(window.i18n) : (k) => k;
+      const procedureName = String(evt.procedureName || evt.procedure_name || evt.procedureCode || evt.procedure_code || evt.procedure || "").trim();
+      const toothNo = String(evt.toothId || evt.tooth_id || evt.toothNumber || evt.tooth_number || "").trim();
+      // Replace hardcoded English " - Tooth X" in backend titles with translated equivalent
+      const toothWord = tl("timeline.tooth");
+      let eventTitle = evt.title || getEventTypeLabel(evt.type);
+      const toothMatch = eventTitle.match(/^(.*?)\s*-\s*Tooth\s+(\d+)$/i);
+      if (toothMatch) {
+        eventTitle = `${toothMatch[1]} - ${toothWord} ${toothMatch[2]}`;
+      } else if (toothNo && !eventTitle) {
+        eventTitle = `${getEventTypeLabel(evt.type)} - ${toothWord} ${toothNo}`;
+      }
+      const rawPatientName = String(evt.patientName || evt.patient_name || (evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '') || '').trim();
+      const patientName = ["unknown", "unknown unknown", "unknown patient", "null", "undefined", "-", "--"].includes(rawPatientName.toLowerCase()) ? '' : rawPatientName;
       const priceText = evt.price ? `💰 ${Number(evt.price).toLocaleString()} ${evt.currency || ""}`.trim() : "";
+      const treatmentDetail = [
+        procedureName ? `${tl("timeline.procedure")}: ${procedureName}` : "",
+        toothNo ? `${tl("timeline.tooth")}: ${toothNo}` : ""
+      ].filter(Boolean).join(" • ");
       const descriptionText = [
         evt.description ? evt.description : "",
         priceText
@@ -985,8 +989,10 @@
             <div style="flex:1;">
               <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                 <span style="font-size:18px;">${eventIcon}</span>
-                <div class="item-title" ${titleStyle}>${getEventTypeLabel(evt.type) || evt.title}</div>
+                <div class="item-title" ${titleStyle}>${eventTitle}</div>
               </div>
+              <div class="item-date" style="margin-bottom:4px;">🗓️ ${fullDate}</div>
+              ${treatmentDetail ? `<div class="item-meta" style="margin-bottom:4px;">${treatmentDetail}</div>` : ""}
               <div class="item-meta" ${metaStyle}>
                 ${patientName || ''}
               ${descriptionText ? ` • ${descriptionText}` : ""}
@@ -1035,6 +1041,7 @@
       console.log("[loadEvents] Response status:", r.status, r.statusText);
       
       if (!r.ok) {
+        if (window.handle401 && window.handle401(r.status)) return;
         const errorText = await r.text().catch(() => `HTTP ${r.status}`);
         console.error("[loadEvents] HTTP error:", errorText);
         throw new Error(`HTTP ${r.status}: ${errorText.substring(0, 100)}`);
@@ -1049,6 +1056,7 @@
       
       const data = await r.json();
       console.log("[loadEvents] Response data:", data);
+      console.log("[loadEvents] Counts — overdue:", (data.overdue||[]).length, "today:", (data.today||[]).length, "upcoming:", (data.upcoming||[]).length, "total:", data.total);
     
       if (!data.ok) {
         throw new Error(data.error || data.message || "Unknown error");
@@ -1174,53 +1182,19 @@
       return;
     }
     
-    // Load clinic info and events
     loadClinicInfo();
-    // Load events after clinic info to ensure proper initialization
+    loadEvents();
+
     setTimeout(() => {
-      loadEvents();
-    }, 100);
+      loadAllBadges();
+    }, 150);
   }
   
-  // Check authentication after page loads (wait for DOM and localStorage to be ready)
-  // Use DOMContentLoaded to ensure localStorage is accessible
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeDashboard);
   } else {
-    // DOM already loaded, check immediately
     initializeDashboard();
   }
-  
-  // Wait for i18n to be ready and DOM to be fully loaded
-  function initializeDashboardBadges() {
-    // Wait a bit for i18n to finish updating DOM (badges might be removed during translation)
-    setTimeout(() => {
-      loadClinicInfo();
-      // Load badges after i18n update
-      loadAllBadges();
-      // Note: loadEvents() is already called in initializeDashboard()
-    }, 200);
-  }
-
-  // Single initialization entry point
-  function initializeApp() {
-    // First, initialize dashboard (auth + clinic info + events)
-    initializeDashboard();
-    
-    // Then initialize badges after i18n is ready
-    if (typeof i18n !== 'undefined') {
-      initializeDashboardBadges();
-    } else {
-      window.addEventListener('load', () => {
-        setTimeout(() => {
-          initializeDashboardBadges();
-        }, 100);
-      });
-    }
-  }
-
-  // Start initialization
-  initializeApp();
 
   // Load monthly active patients metrics
   async function loadMonthlyActivePatients() {
@@ -1232,7 +1206,7 @@
         headers: { Accept: "application/json" }
       });
       
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) { if (window.handle401 && window.handle401(res.status)) return; throw new Error(`HTTP ${res.status}`); }
       const data = await res.json();
       
       if (!data.ok || !Array.isArray(data.data)) {
@@ -1344,8 +1318,8 @@ function updateActivePatientsUI(data) {
   if (!data || data.data.length === 0) {
     if (growthEl) {
       growthEl.textContent = 'No data';
-      growthEl.style.background = '#f3f4f6';
-      growthEl.style.color = '#6b7280';
+      growthEl.style.background = 'rgba(255,255,255,0.07)';
+      growthEl.style.color = '#a7b2c8';
     }
     if (summaryEl) {
       summaryEl.textContent = 'Trend will improve as more data is collected';
@@ -1363,11 +1337,11 @@ function updateActivePatientsUI(data) {
     const sign = growth >= 0 ? '+' : '';
     growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
     growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
-    growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+    growthEl.style.color = growth >= 0 ? '#4ade80' : '#f87171';
   } else if (growthEl) {
     growthEl.textContent = 'No previous data';
-    growthEl.style.background = '#f3f4f6';
-    growthEl.style.color = '#6b7280';
+    growthEl.style.background = 'rgba(255,255,255,0.07)';
+    growthEl.style.color = '#a7b2c8';
   }
   
   // Update summary
@@ -1390,7 +1364,7 @@ function updateActivePatientsUI(data) {
         headers: { Accept: "application/json" }
       });
       
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) { if (window.handle401 && window.handle401(res.status)) return; throw new Error(`HTTP ${res.status}`); }
       const data = await res.json();
       
       if (!data.ok || !Array.isArray(data.data)) {
@@ -1416,8 +1390,8 @@ function updateActivePatientsUI(data) {
     if (!data || data.data.length === 0) {
       if (growthEl) {
         growthEl.textContent = 'No data';
-        growthEl.style.background = '#f3f4f6';
-        growthEl.style.color = '#6b7280';
+        growthEl.style.background = 'rgba(255,255,255,0.07)';
+        growthEl.style.color = '#a7b2c8';
       }
       if (summaryEl) {
         summaryEl.textContent = 'Trend will improve as more data is collected';
@@ -1434,11 +1408,11 @@ function updateActivePatientsUI(data) {
       const sign = growth >= 0 ? '+' : '';
       growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
       growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
-      growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+      growthEl.style.color = growth >= 0 ? '#4ade80' : '#f87171';
     } else if (growthEl) {
       growthEl.textContent = 'No previous data';
-      growthEl.style.background = '#f3f4f6';
-      growthEl.style.color = '#6b7280';
+      growthEl.style.background = 'rgba(255,255,255,0.07)';
+      growthEl.style.color = '#a7b2c8';
     }
     
     // Update summary
@@ -1551,6 +1525,49 @@ function updateActivePatientsUI(data) {
   let previousUnreadCount = 0;
   let previousPendingPatients = 0;
   let previousPendingReferrals = 0;
+  let badgePatientsCache = [];
+  let badgePatientsCacheAt = 0;
+  let badgePatientsPromise = null;
+
+  async function getPatientsForBadges(forceRefresh = false) {
+    const token = getAdminToken();
+    if (!token) return [];
+
+    const now = Date.now();
+    if (!forceRefresh && badgePatientsCache.length > 0 && (now - badgePatientsCacheAt) < 15000) {
+      return badgePatientsCache;
+    }
+    if (!forceRefresh && badgePatientsPromise) {
+      return badgePatientsPromise;
+    }
+
+    badgePatientsPromise = (async () => {
+      const patientsRes = await safariFetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!patientsRes.ok) return [];
+
+      const data = await patientsRes.json();
+      let patients = [];
+      if (Array.isArray(data)) {
+        patients = data;
+      } else if (Array.isArray(data.patients)) {
+        patients = data.patients;
+      } else if (Array.isArray(data.list)) {
+        patients = data.list;
+      }
+
+      badgePatientsCache = patients;
+      badgePatientsCacheAt = Date.now();
+      return patients;
+    })();
+
+    try {
+      return await badgePatientsPromise;
+    } finally {
+      badgePatientsPromise = null;
+    }
+  }
 
   // Play notification sound
   function playNotificationSound() {
@@ -1615,49 +1632,38 @@ function updateActivePatientsUI(data) {
       const saved = localStorage.getItem("adminLastSeenTimestamp");
       if (saved) lastSeenTimestamp = parseInt(saved, 10) || 0;
 
-      const patientsRes = await safariFetch(`${API}/api/admin/patients`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-      });
-      if (!patientsRes.ok) return;
-      const patientsData = await patientsRes.json();
-      if (!patientsData.ok) return;
-
-      const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+      const patients = await getPatientsForBadges();
       console.log("[DASHBOARD] Found", patients.length, "patients to check for unread messages");
-      let totalUnread = 0;
+      const patientIds = patients
+        .map((patient) => patient.patientId || patient.id)
+        .filter(Boolean);
 
-      // Check unread messages for each patient
-      for (const patient of patients) {
-        const patientId = patient.patientId || patient.id;
-        if (!patientId) continue;
-
-        try {
+      const unreadResults = await Promise.allSettled(
+        patientIds.map(async (patientId) => {
           const messagesRes = await safariFetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
             headers: adminHeaders({ Accept: "application/json" }),
           });
-          if (!messagesRes.ok) continue;
+          if (!messagesRes.ok) return 0;
+
           const messagesData = await messagesRes.json();
-          if (!messagesData.ok) continue;
+          if (!messagesData.ok) return 0;
 
           const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
-          // Count unread messages (from PATIENT) that were created AFTER last seen timestamp
-          const unread = messages.filter((m) => {
+          return messages.filter((m) => {
             if (!m || m.from !== "PATIENT") return false;
-            // If message has createdAt, check if it's after last seen time
             if (m.createdAt) {
               const msgTimestamp = new Date(m.createdAt).getTime();
-              if (isNaN(msgTimestamp)) return true; // If invalid date, count as unread
+              if (isNaN(msgTimestamp)) return true;
               return msgTimestamp > lastSeenTimestamp;
             }
-            // If no createdAt, count it as unread (backward compatibility)
             return true;
           }).length;
-          totalUnread += unread;
-        } catch (e) {
-          // Skip this patient if error
-          continue;
-        }
-      }
+        })
+      );
+
+      const totalUnread = unreadResults.reduce((sum, result) => {
+        return sum + (result.status === 'fulfilled' ? Number(result.value || 0) : 0);
+      }, 0);
 
       // Check if new messages arrived (count increased)
       if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
@@ -1688,14 +1694,7 @@ function updateActivePatientsUI(data) {
     if (!token) return;
 
     try {
-      const res = await fetch(`${API}/api/admin/patients`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data.ok) return;
-
-      const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+      const patients = await getPatientsForBadges();
       const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
 
       // Check if new pending patients arrived
@@ -1781,5 +1780,6 @@ function updateActivePatientsUI(data) {
   // Refresh badges every 30 seconds (independent of events)
   setInterval(loadAllBadges, 30000);
 </script>
+<script src="/admin-layout.js?v=20260322"></script>
 </body>
 </html>

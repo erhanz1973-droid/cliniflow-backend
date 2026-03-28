@@ -7,7 +7,7 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -305,11 +305,6 @@
       </div>
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span class="active">TR</span>
-          <span>|</span>
-          <span>EN</span>
-        </div>
         <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
       </div>
     </nav>
@@ -369,7 +364,7 @@
       }
     })();
 
-    const API_BASE = ""; // Production: Use same domain (admin service)
+    const API_BASE = window.location.hostname.includes("onrender.com") ? "https://cliniflow-backend-dg8a.onrender.com" : `http://${window.location.hostname}:10000`;
 
     // Get patientId from URL params
     const urlParams = new URLSearchParams(window.location.search);
@@ -382,11 +377,11 @@
     }
 
     function getAdminToken() {
-      return localStorage.getItem('admin_token') || '';
+      return localStorage.getItem('adminToken') || '';
     }
     function logout() {
       try {
-        localStorage.removeItem("admin_token");
+        localStorage.removeItem("adminToken");
         console.log("[LOGOUT] Admin token cleared");
       } catch (e) {
         console.error("[LOGOUT] Error clearing token:", e);
@@ -450,195 +445,100 @@
       return div.innerHTML;
     }
 
+    function yesNoLabel(field) {
+      if (!field || field.value === null || field.value === undefined) return '<span style="color:#6b7280">Yanıtlanmadı</span>';
+      return field.value
+        ? '<span style="color:#22c55e">✓ Evet</span>' + (field.detail ? ' — <em>' + escapeHtml(field.detail) + '</em>' : '')
+        : '<span style="color:#9ca3af">✗ Hayır</span>';
+    }
+
     function renderHealthForm(formData, isComplete) {
       const container = document.getElementById('health-data');
       const statusBadge = document.getElementById('status-badge');
-      
+
       if (!formData || Object.keys(formData).length === 0) {
-        container.innerHTML = '<p style="color: #9ca3af; text-align: center; padding: 40px;">Sağlık formu verisi bulunamadı. Hasta henüz formu doldurmamış.</p>';
-        statusBadge.textContent = 'TAMAMLANMADI';
+        container.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:40px;">Hasta henüz sağlık formunu doldurmamış.</p>';
+        statusBadge.textContent = 'DOLDURULMADI';
         statusBadge.className = 'badge badge-incomplete';
         return;
       }
 
-      statusBadge.textContent = isComplete ? 'TAMAMLANDI' : 'TAMAMLANMADI';
-      statusBadge.className = isComplete ? 'badge badge-complete' : 'badge badge-incomplete';
+      statusBadge.textContent = isComplete ? 'TAMAMLANDI' : 'KISMI';
+      statusBadge.className = isComplete ? 'badge badge-complete' : 'badge badge-risk';
+
+      const conditionLabels = {
+        diabetes: 'Diyabet',
+        heart_disease: 'Kalp Hastalığı',
+        high_blood_pressure: 'Yüksek Tansiyon',
+        asthma: 'Astım',
+        bleeding_disorders: 'Kanama Bozukluğu',
+        none: 'Yok'
+      };
 
       let html = '';
 
-      // Personal Info
-      if (formData.personalInfo) {
+      // ── Personal Health ─────────────────────────────────────
+      html += '<div class="health-section">';
+      html += '<h2>1️⃣ Kişisel Sağlık</h2>';
+      html += '<div class="health-item"><strong>Alerjisi var mı?</strong><br>' + yesNoLabel(formData.allergies) + '</div>';
+      html += '<div class="health-item"><strong>İlaç kullanıyor mu?</strong><br>' + yesNoLabel(formData.medications) + '</div>';
+      html += '<div class="health-item"><strong>Kronik hastalık var mı?</strong><br>' + yesNoLabel(formData.chronicDiseases) + '</div>';
+      html += '</div>';
+
+      // ── Medical Conditions ───────────────────────────────────
+      const conds = Array.isArray(formData.conditions) ? formData.conditions : [];
+      html += '<div class="health-section">';
+      html += '<h2>2️⃣ Tıbbi Durumlar</h2>';
+      if (conds.length === 0) {
+        html += '<p style="color:#9ca3af">Belirtilmemiş</p>';
+      } else if (conds.includes('none')) {
+        html += '<p style="color:#9ca3af">Hiçbiri (None)</p>';
+      } else {
+        html += '<ul class="checkbox-list">';
+        conds.forEach(c => { html += '<li>' + escapeHtml(conditionLabels[c] || c) + '</li>'; });
+        html += '</ul>';
+      }
+      html += '</div>';
+
+      // ── Medications List ─────────────────────────────────────
+      html += '<div class="health-section">';
+      html += '<h2>3️⃣ Kullanılan İlaçlar</h2>';
+      html += '<div class="health-item"><span>' + (formData.medicationsList ? escapeHtml(formData.medicationsList) : '<em style="color:#9ca3af">Belirtilmemiş</em>') + '</span></div>';
+      html += '</div>';
+
+      // ── Notes ────────────────────────────────────────────────
+      if (formData.notes) {
         html += '<div class="health-section">';
-        html += '<h2>1️⃣ Kişisel Bilgiler</h2>';
-        html += '<div class="health-item"><strong>Ad Soyad:</strong> <span>' + escapeHtml(formData.personalInfo.name || '—') + '</span></div>';
-        html += '<div class="health-item"><strong>Doğum Tarihi:</strong> <span>' + escapeHtml(formData.personalInfo.birthDate || '—') + '</span></div>';
-        html += '<div class="health-item"><strong>Cinsiyet:</strong> <span>' + escapeHtml(formData.personalInfo.gender || '—') + '</span></div>';
-        html += '<div class="health-item"><strong>Telefon:</strong> <span>' + escapeHtml(formData.personalInfo.phone || '—') + '</span></div>';
-        html += '<div class="health-item"><strong>E-posta:</strong> <span>' + escapeHtml(formData.personalInfo.email || '—') + '</span></div>';
-        html += '<div class="health-item"><strong>Ülke:</strong> <span>' + escapeHtml(formData.personalInfo.country || '—') + '</span></div>';
+        html += '<h2>4️⃣ Ek Notlar</h2>';
+        html += '<div class="health-item"><span>' + escapeHtml(formData.notes) + '</span></div>';
         html += '</div>';
       }
 
-      // General Health
-      if (formData.generalHealth) {
-        html += '<div class="health-section">';
-        html += '<h2>2️⃣ Genel Sağlık Durumu</h2>';
-        const conditions = formData.generalHealth.conditions || [];
-        if (conditions.length > 0) {
-          html += '<h3>Mevcut Durumlar:</h3>';
-          html += '<ul class="checkbox-list">';
-          conditions.forEach(cond => {
-            const labels = {
-              diabetes: 'Diyabet',
-              heart_disease: 'Kalp Hastalığı',
-              hypertension: 'Hipertansiyon (Yüksek Tansiyon)',
-              bleeding_disorder: 'Kanama / Pıhtılaşma Bozukluğu',
-              asthma: 'Astım / Solunum Hastalığı',
-              epilepsy: 'Epilepsi',
-              kidney_disease: 'Böbrek Hastalığı',
-              liver_disease: 'Karaciğer Hastalığı',
-              thyroid: 'Tiroid Hastalığı',
-              immune_system: 'Bağışıklık Sistemi Hastalığı',
-              cancer: 'Kanser (Geçmiş veya Aktif)',
-              pregnancy: 'Hamilelik',
-              none: 'Yok'
-            };
-            html += '<li>' + escapeHtml(labels[cond] || cond) + '</li>';
-          });
-          html += '</ul>';
-          
-          if (conditions.includes('pregnancy') && formData.generalHealth.pregnancyMonth) {
-            html += '<div class="health-item"><strong>Hamilelik Ayı:</strong> <span>' + escapeHtml(formData.generalHealth.pregnancyMonth) + '. Ay</span></div>';
-          }
-          
-          if (formData.generalHealth.conditionsNotes) {
-            html += '<div class="health-item"><strong>Notlar:</strong> <span>' + escapeHtml(formData.generalHealth.conditionsNotes) + '</span></div>';
-          }
-        } else {
-          html += '<p style="color: #9ca3af;">Bilgi verilmemiş</p>';
-        }
-        html += '</div>';
-      }
-
-      // Medications & Allergies
-      if (formData.medications || formData.allergies) {
-        html += '<div class="health-section">';
-        html += '<h2>3️⃣ İlaçlar ve Alerjiler</h2>';
-        
-        if (formData.medications) {
-          html += '<h3>İlaçlar:</h3>';
-          const meds = formData.medications;
-          if (meds.none) {
-            html += '<p style="color: #9ca3af;">İlaç kullanmıyor</p>';
-          } else {
-            html += '<ul class="checkbox-list">';
-            if (meds.regularMedication) html += '<li>Düzenli ilaç kullanımı</li>';
-            if (meds.bloodThinner) html += '<li>Kan inceltici (Aspirin, Coumadin, Eliquis, vb.)</li>';
-            if (meds.cortisone) html += '<li>Kortizon</li>';
-            if (meds.antibiotics) html += '<li>Antibiyotik (son 1 ay içinde)</li>';
-            html += '</ul>';
-            if (meds.medicationDetails) {
-              html += '<div class="health-item"><strong>İlaç Detayları:</strong> <span>' + escapeHtml(meds.medicationDetails) + '</span></div>';
-            }
-          }
-        }
-
-        if (formData.allergies) {
-          html += '<h3>Alerjiler:</h3>';
-          const allergies = formData.allergies;
-          if (allergies.none) {
-            html += '<p style="color: #9ca3af;">Alerji yok</p>';
-          } else {
-            html += '<ul class="checkbox-list">';
-            if (allergies.localAnesthesia) html += '<li>Lokal anestezi alerjisi</li>';
-            if (allergies.penicillin) html += '<li>Penisilin / antibiyotik alerjisi</li>';
-            if (allergies.latex) html += '<li>Lateks alerjisi</li>';
-            if (allergies.other) html += '<li>Diğer alerji</li>';
-            html += '</ul>';
-            if (allergies.allergyDetails) {
-              html += '<div class="health-item"><strong>Alerji Detayları:</strong> <span>' + escapeHtml(allergies.allergyDetails) + '</span></div>';
-            }
-          }
-        }
-        html += '</div>';
-      }
-
-      // Dental History, Complaint, Habits, Consent
-      if (formData.dentalHistory || formData.complaint || formData.habits || formData.consent) {
-        html += '<div class="health-section">';
-        html += '<h2>4️⃣ Diş Geçmişi ve Şikayet</h2>';
-        
-        if (formData.dentalHistory) {
-          html += '<h3>Diş Geçmişi:</h3>';
-          const dh = formData.dentalHistory;
-          html += '<div class="health-item"><strong>Önceki diş tedavisinde sorun yaşandı mı:</strong> <span>' + (dh.previousProblems ? 'Evet' : 'Hayır') + '</span></div>';
-          html += '<div class="health-item"><strong>Lokal anestezi ile kötü deneyim:</strong> <span>' + (dh.anesthesiaProblems ? 'Evet' : 'Hayır') + '</span></div>';
-          html += '<div class="health-item"><strong>Önceki implant / kanal tedavisi / cerrahi işlem:</strong> <span>' + (dh.previousProcedures ? 'Evet' : 'Hayır') + '</span></div>';
-        }
-
-        if (formData.complaint) {
-          html += '<h3>Şikayet:</h3>';
-          html += '<div class="health-item"><strong>Ana Şikayet:</strong> <span>' + escapeHtml(formData.complaint.mainComplaint || '—') + '</span></div>';
-          const painLabels = {
-            none: 'Yok',
-            mild: 'Hafif',
-            moderate: 'Orta',
-            severe: 'Şiddetli'
-          };
-          html += '<div class="health-item"><strong>Ağrı Seviyesi:</strong> <span>' + escapeHtml(painLabels[formData.complaint.painLevel] || '—') + '</span></div>';
-        }
-
-        if (formData.habits) {
-          html += '<h3>Alışkanlıklar:</h3>';
-          html += '<div class="health-item"><strong>Sigara:</strong> <span>' + (formData.habits.smoking ? 'Evet' + (formData.habits.cigarettesPerDay ? ' (' + formData.habits.cigarettesPerDay + ' adet/gün)' : '') : 'Hayır') + '</span></div>';
-          const alcoholLabels = {
-            none: 'Hayır',
-            occasional: 'Ara Sıra',
-            regular: 'Düzenli'
-          };
-          html += '<div class="health-item"><strong>Alkol:</strong> <span>' + escapeHtml(alcoholLabels[formData.habits.alcohol] || '—') + '</span></div>';
-        }
-
-        if (formData.consent) {
-          html += '<h3>Onay:</h3>';
-          const consent = formData.consent;
-          html += '<ul class="checkbox-list">';
-          if (consent.infoAccurate) html += '<li>Verdiğim bilgilerin doğru olduğunu beyan ederim</li>';
-          if (consent.planMayChange) html += '<li>Muayene sonrası tedavi planının değişebileceğini kabul ediyorum</li>';
-          if (consent.dataUsage) html += '<li>Verilerimin tedavi amaçlı kullanımına onay veriyorum</li>';
-          html += '</ul>';
-        }
-        html += '</div>';
-      }
-
-      // Risk indicators
+      // ── Risk Warnings ────────────────────────────────────────
       const risks = [];
-      if (formData.generalHealth?.conditions?.includes('diabetes')) {
-        risks.push('⚠️ Diabetes');
-      }
-      if (formData.medications?.bloodThinner) {
-        risks.push('⚠️ Blood Thinner');
-      }
-      if (formData.allergies && !formData.allergies.none) {
-        risks.push('⚠️ Allergy');
-      }
+      if (formData.allergies?.value === true) risks.push('⚠️ Alerji mevcut');
+      if (conds.includes('diabetes')) risks.push('⚠️ Diyabet');
+      if (conds.includes('heart_disease')) risks.push('⚠️ Kalp Hastalığı');
+      if (conds.includes('bleeding_disorders')) risks.push('⚠️ Kanama Bozukluğu');
+      if (conds.includes('high_blood_pressure')) risks.push('⚠️ Yüksek Tansiyon');
+      if (formData.medications?.value === true) risks.push('⚠️ İlaç kullanımı');
 
       if (risks.length > 0) {
-        html += '<div class="health-section" style="border-color: #92400e;">';
-        html += '<h2 style="color: #fef3c7;">⚠️ Risk Uyarıları</h2>';
-        risks.forEach(risk => {
-          html += '<div class="health-item" style="border-color: #92400e;"><strong>' + escapeHtml(risk) + '</strong></div>';
-        });
+        html += '<div class="health-section" style="border-color:#92400e;background:#1c1208;">';
+        html += '<h2 style="color:#fef3c7;">⚠️ Risk Uyarıları</h2>';
+        risks.forEach(r => { html += '<div class="health-item" style="border-color:#92400e;"><strong style="color:#fef3c7">' + escapeHtml(r) + '</strong></div>'; });
         html += '</div>';
+      }
+
+      // Submitted at
+      if (formData.submittedAt) {
+        const d = new Date(formData.submittedAt);
+        html += '<p style="color:#6b7280;font-size:12px;margin-top:16px;">Gönderim tarihi: ' + d.toLocaleString('tr-TR') + '</p>';
       }
 
       container.innerHTML = html;
-      
-      // Show WhatsApp button if form data exists
-      if (formData && Object.keys(formData).length > 0) {
-        document.getElementById('whatsapp-btn').style.display = 'block';
-        document.getElementById('whatsapp-number-group').style.display = 'block';
-      }
+      document.getElementById('whatsapp-btn').style.display = 'block';
+      document.getElementById('whatsapp-number-group').style.display = 'block';
     }
 
     function formatHealthFormForWhatsApp(formData, patientId) {
@@ -829,10 +729,11 @@
       healthContent.style.display = 'none';
 
       try {
+        // Use admin endpoint (requires admin token, not patient token)
         const res = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(patientId)}/health`, {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            'Accept': 'application/json',
           },
         });
 
@@ -848,11 +749,10 @@
 
         loading.style.display = 'none';
         healthContent.style.display = 'block';
-        
-        // Store form data globally for WhatsApp function
-        window.currentHealthFormData = data.formData;
-        
-        renderHealthForm(data.formData, data.isComplete || false);
+
+        window.currentHealthFormData = data.form;
+        const isComplete = !!(data.form && Object.keys(data.form).length > 0);
+        renderHealthForm(data.form, isComplete);
         showAlert('Health form loaded successfully', 'success');
       } catch (error) {
         loading.style.display = 'none';

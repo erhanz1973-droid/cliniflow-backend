@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Admin – Clinic Settings</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -56,99 +57,6 @@
       padding:24px; 
       box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
       margin-bottom:16px;
-    }
-    .navbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 24px;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--b);
-      flex-wrap: wrap;
-    }
-    .navbar-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .navbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .navbar-logo img {
-      height: 32px;
-      width: auto;
-    }
-    .navbar-logo-text {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--p);
-      display: none; /* Hide text, show logo only */
-    }
-    .navbar-clinic-name {
-      font-size: 14px;
-      color: var(--muted);
-      font-weight: 500;
-    }
-    .navbar-center {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex: 1;
-      justify-content: center;
-    }
-    .navbar-right {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .nav-link {
-      color: var(--muted);
-      text-decoration: none;
-      font-weight: 500;
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      position: relative;
-      transition: all 0.2s;
-    }
-    .nav-link:hover {
-      color: #e6eaf2;
-      background: rgba(55, 65, 81, 0.3);
-    }
-    .nav-link.active {
-      color: #fff;
-      background: var(--p);
-      font-weight: 600;
-    }
-    .nav-link.secondary {
-      color: var(--muted);
-      padding: 6px 10px;
-      font-size: 13px;
-    }
-    .nav-link.secondary:hover {
-      color: #e6eaf2;
-      background: rgba(55, 65, 81, 0.2);
-    }
-    .lang-toggle {
-      display: flex;
-      gap: 4px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .lang-toggle span {
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 4px;
-      transition: all 0.2s;
-    }
-    .lang-toggle span.active {
-      color: #fff;
-      background: rgba(37, 99, 235, 0.3);
     }
     label{ 
       display:block; 
@@ -263,36 +171,38 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
+
+  /* admin-layout.css: body.al-ready → color: var(--text) koyu zeminde siyah başlık veriyor */
+  body.al-ready .al-main {
+    background: var(--bg);
+  }
+  body.al-ready .al-main .wrap,
+  body.al-ready .al-main .wrap .card,
+  body.al-ready .al-main #priceListContainer {
+    color: #e6eaf2;
+  }
+  body.al-ready .al-main .wrap h1,
+  body.al-ready .al-main .wrap h2,
+  body.al-ready .al-main .wrap h3 {
+    color: #f1f5f9 !important;
+  }
+  body.al-ready .al-main .wrap label {
+    color: #e6eaf2 !important;
+  }
+  body.al-ready .al-main .wrap .muted {
+    color: var(--muted) !important;
+  }
+  body.al-ready .al-main .wrap table th,
+  body.al-ready .al-main .wrap table td {
+    color: #e6eaf2;
+  }
+  body.al-ready .al-main .wrap .loading {
+    color: var(--muted);
+  }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1 data-i18n="settings.pageTitle">⚙️ Clinifly Admin – Settings</h1>
-    
-    <nav class="navbar">
-      <div class="navbar-left">
-        <div class="navbar-logo">
-          <img src="/logo.svg" alt="Clinifly" />
-          <span class="navbar-logo-text">Clinifly</span>
-        </div>
-        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
-      </div>
-      <div class="navbar-center">
-        <a href="/admin.html" class="nav-link" data-i18n="dashboard.nav.dashboard">Dashboard</a>
-        <a href="/admin-patients.html" class="nav-link" data-i18n="dashboard.nav.patients">Patients</a>
-        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
-        <a href="/admin-chat.html" class="nav-link" data-i18n="dashboard.nav.chat">Chat</a>
-      </div>
-      <div class="navbar-right">
-        <a href="/admin-settings.html" class="nav-link secondary active" data-i18n="dashboard.nav.settings">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
-          <span>|</span>
-          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
-        </div>
-        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
-    </div>
-    </nav>
 
     <div class="card">
       <h2 data-i18n="settings.clinicInformation">Clinic Information</h2>
@@ -350,7 +260,7 @@
           
           <!-- Preview Section -->
           <div id="referralPreview" style="margin-top: 16px; padding: 16px; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 8px;">
-            <div style="font-size: 14px; font-weight: 600; color: #a78bfa; margin-bottom: 8px;">💡 Preview:</div>
+            <div id="referralPreviewLabel" style="font-size: 14px; font-weight: 600; color: #a78bfa; margin-bottom: 8px;" data-i18n="settings.referralPreviewLabel">💡 Preview:</div>
             <div id="referralPreviewText" style="font-size: 13px; color: #9ca3af; line-height: 1.5;">
               Set a discount to see how it works
             </div>
@@ -367,6 +277,10 @@
         <label data-i18n="settings.address">Clinic Address</label>
         <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
         <div class="muted" data-i18n="settings.addressHelp">Pro plan için hasta ekranında görüntülenir</div>
+
+        <label>Chair Count</label>
+        <input type="number" id="chairCount" min="1" max="50" step="1" placeholder="3" />
+        <div class="muted">Randevu ekranında gösterilecek chair sayısı (örn: 1, 2, 3).</div>
         
         <label data-i18n="settings.googleMapLink">Google Maps Link</label>
         <input type="url" id="googleMapLink" placeholder="https://maps.google.com/?q=..." />
@@ -415,6 +329,7 @@
   </div>
 
 <script src="/admin-i18n.js"></script>
+<script src="/admin-layout.js?v=20260322"></script>
 <script>
   // Nav: if a patient is selected, make top-nav Travel link carry patientId.
   (function bindNavTravelLink() {
@@ -426,7 +341,7 @@
     } catch {}
   })();
 
-  const API_BASE = ""; // Production: Use same domain (admin service)
+  const API_BASE = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain (admin service)
   const $ = (id) => document.getElementById(id);
 
   let clinicPlan = "";
@@ -453,12 +368,24 @@
   }
   function logout() {
     try {
+      localStorage.removeItem("adminToken");
       localStorage.removeItem("admin_token");
       console.log("[LOGOUT] Admin token cleared");
     } catch (e) {
       console.error("[LOGOUT] Error clearing token:", e);
     }
     window.location.href = "/admin-login.html";
+  }
+
+  function handle401(status) {
+    if (status === 401) {
+      console.warn("[AUTH] 401 — token geçersiz veya süresi dolmuş. Login sayfasına yönlendiriliyor.");
+      localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
+      window.location.href = "/admin-login.html?reason=session_expired";
+      return true;
+    }
+    return false;
   }
   function getStoredReferralDiscount() {
     try {
@@ -492,7 +419,7 @@
   async function loadClinicSettings() {
     try {
       // Get admin token from localStorage
-      const token = localStorage.getItem('admin_token') || '';
+      const token = localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
       
       if (!token) {
         const msg = 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
@@ -518,6 +445,7 @@
       });
       
       if (!res.ok) {
+        if (handle401(res.status)) return;
         const errorText = await res.text();
         throw new Error(`HTTP ${res.status}: ${errorText}`);
       }
@@ -578,6 +506,15 @@
       if ($("clinicName")) $("clinicName").value = branding.clinicName || clinic.name || "";
       if ($("clinicLogoUrl")) $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
       if ($("clinicAddress")) $("clinicAddress").value = branding.address || clinic.address || "";
+      if ($("chairCount")) {
+        const loadedChairCount =
+          clinic.settings?.chairCount ??
+          clinic.settings?.chair_count ??
+          clinic.chairCount ??
+          clinic.chair_count ??
+          "";
+        $("chairCount").value = loadedChairCount === null || loadedChairCount === undefined ? "" : String(loadedChairCount);
+      }
       if ($("googleMapLink")) $("googleMapLink").value = branding.googleMapLink || clinic.googleMapsUrl || "";
       if ($("primaryColor")) $("primaryColor").value = branding.primaryColor || "#2563EB";
       if ($("secondaryColor")) $("secondaryColor").value = branding.secondaryColor || "#10B981";
@@ -588,9 +525,11 @@
       console.log("Current stored discount from localStorage:", currentStoredDiscount);
       
       // If backend has updated values, prioritize backend over stale localStorage
-      const backendDiscount = 
+      const backendDiscount =
+        clinic.referralDiscountPercent ??
         clinic.referral_discount_percent ??
         clinic.settings?.referral_discount_percent ??
+        clinic.defaultInviterDiscountPercent ??
         clinic.inviter_discount_percent ??
         clinic.settings?.inviter_discount_percent ??
         clinic.discount_percent ??
@@ -646,7 +585,7 @@
     
     try {
       // Get admin token from localStorage
-      const token = localStorage.getItem('admin_token') || '';
+      const token = localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
       
       if (!token) {
         const msg = 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
@@ -659,6 +598,7 @@
         referral_discount_percent: $("referralDiscountPercent").value.trim(),
         // 🎯 Eski referral sistemi için settings
         settings: {
+          chairCount: Math.max(1, Math.min(50, parseInt($("chairCount")?.value || "3", 10) || 3)),
           referralLevels: {
             level1: parseInt($("referralDiscountPercent").value) || 10
           }
@@ -742,43 +682,101 @@
   loadClinicSettings();
 
   // ================== TREATMENT PRICE LIST ==================
-  
-  // All procedure types from shared/procedures.js
-  const PROCEDURE_TYPES = [
-    // EVENTS (Treatment Events)
-    { type: "TREATMENT", label: "Treatment Event", category: "EVENTS" },
-    { type: "CONSULT", label: "Consultation", category: "EVENTS" },
-    { type: "FOLLOWUP", label: "Follow-up", category: "EVENTS" },
-    { type: "LAB", label: "Lab / Scan", category: "EVENTS" },
-    // PROSTHETIC
-    { type: "CROWN", label: "Crown (Kuron)", category: "PROSTHETIC" },
-    { type: "TEMP_CROWN", label: "Temporary Crown (Geçici kuron)", category: "PROSTHETIC" },
-    { type: "BRIDGE_UNIT", label: "Bridge (Köprü) – tooth unit", category: "PROSTHETIC" },
-    { type: "TEMP_BRIDGE_UNIT", label: "Temporary Bridge (Geçici köprü) – tooth unit", category: "PROSTHETIC" },
-    { type: "CROWN_REPLACEMENT", label: "Crown Replacement / Renewal", category: "PROSTHETIC" },
+
+  // Procedure types loaded from API (localized)
+  const PROCEDURE_TYPES_FALLBACK = [
+    { type: "TREATMENT",   label: "Treatment Event",   category: "EVENTS" },
+    { type: "CONSULT",     label: "Consultation",      category: "EVENTS" },
+    { type: "FOLLOWUP",    label: "Follow-up",         category: "EVENTS" },
+    { type: "LAB",         label: "Lab / Scan",        category: "EVENTS" },
+    { type: "CROWN",                    label: "Crown",                    category: "PROSTHETIC" },
+    { type: "TEMP_CROWN",               label: "Temporary Crown",          category: "PROSTHETIC" },
+    { type: "BRIDGE_UNIT",              label: "Bridge – tooth unit",      category: "PROSTHETIC" },
+    { type: "TEMP_BRIDGE_UNIT",         label: "Temporary Bridge",         category: "PROSTHETIC" },
+    { type: "CROWN_REPLACEMENT",        label: "Crown Replacement",        category: "PROSTHETIC" },
     { type: "BRIDGE_REPLACEMENT_OR_REMOVAL", label: "Bridge Replacement / Removal", category: "PROSTHETIC" },
-    { type: "INLAY", label: "Inlay", category: "PROSTHETIC" },
-    { type: "ONLAY", label: "Onlay", category: "PROSTHETIC" },
+    { type: "INLAY",   label: "Inlay",   category: "PROSTHETIC" },
+    { type: "ONLAY",   label: "Onlay",   category: "PROSTHETIC" },
     { type: "OVERLAY", label: "Overlay", category: "PROSTHETIC" },
     { type: "POST_AND_CORE", label: "Post & Core", category: "PROSTHETIC" },
-    // RESTORATIVE
-    { type: "FILLING", label: "Filling (Dolgu)", category: "RESTORATIVE" },
-    { type: "TEMP_FILLING", label: "Temporary Filling (Geçici dolgu)", category: "RESTORATIVE" },
+    { type: "FILLING",                      label: "Filling",              category: "RESTORATIVE" },
+    { type: "TEMP_FILLING",                 label: "Temporary Filling",    category: "RESTORATIVE" },
     { type: "FILLING_REPLACEMENT_OR_REMOVAL", label: "Filling Replacement / Removal", category: "RESTORATIVE" },
-    // ENDODONTIC
-    { type: "ROOT_CANAL_TREATMENT", label: "Root Canal Treatment (Kanal)", category: "ENDODONTIC" },
+    { type: "ROOT_CANAL_TREATMENT",   label: "Root Canal Treatment",  category: "ENDODONTIC" },
     { type: "ROOT_CANAL_RETREATMENT", label: "Root Canal Retreatment", category: "ENDODONTIC" },
-    { type: "CANAL_OPENING", label: "Canal Opening", category: "ENDODONTIC" },
-    { type: "CANAL_FILLING", label: "Canal Filling", category: "ENDODONTIC" },
-    // SURGICAL
-    { type: "EXTRACTION", label: "Extraction (Çekim)", category: "SURGICAL" },
-    { type: "SURGICAL_EXTRACTION", label: "Surgical Extraction (Cerrahi çekim)", category: "SURGICAL" },
-    { type: "APICAL_RESECTION", label: "Apical Resection", category: "SURGICAL" },
-    // IMPLANT
-    { type: "IMPLANT", label: "Implant", category: "IMPLANT" },
+    { type: "CANAL_OPENING",          label: "Canal Opening",          category: "ENDODONTIC" },
+    { type: "CANAL_FILLING",          label: "Canal Filling",          category: "ENDODONTIC" },
+    { type: "EXTRACTION",          label: "Extraction",           category: "SURGICAL" },
+    { type: "SURGICAL_EXTRACTION", label: "Surgical Extraction",   category: "SURGICAL" },
+    { type: "APICAL_RESECTION",    label: "Apical Resection",      category: "SURGICAL" },
+    { type: "IMPLANT",          label: "Implant",         category: "IMPLANT" },
     { type: "HEALING_ABUTMENT", label: "Healing Abutment", category: "IMPLANT" },
-    { type: "IMPLANT_CROWN", label: "Implant Crown", category: "IMPLANT" },
+    { type: "IMPLANT_CROWN",    label: "Implant Crown",    category: "IMPLANT" },
   ];
+  let PROCEDURE_TYPES = [...PROCEDURE_TYPES_FALLBACK]; // Başlangıçta fallback, API gelince güncellenir
+  let CATEGORY_LABELS_LOCALIZED = {
+    "EVENTS": "Events",
+    "PROSTHETIC": "Prosthetic",
+    "RESTORATIVE": "Restorative",
+    "ENDODONTIC": "Endodontic",
+    "SURGICAL": "Surgical",
+    "IMPLANT": "Implant"
+  };
+
+  function fetchWithTimeout(url, options, ms = 6000) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(id));
+  }
+
+  async function loadProcedureDefs() {
+    try {
+      const lang = (window.i18n && window.i18n.getLang && window.i18n.getLang()) || 'en';
+      const res = await fetchWithTimeout(`${API_BASE}/api/procedures?lang=${lang}`, {}, 5000);
+      if (!res.ok) throw new Error('Procedure API error');
+      const data = await res.json();
+      const types = Array.isArray(data.types) ? data.types : [];
+      if (types.length > 0) {
+        PROCEDURE_TYPES = types.map(p => ({ type: p.type, label: p.label, category: p.category }));
+      }
+      if (data.categoryLabels && typeof data.categoryLabels === 'object') {
+        CATEGORY_LABELS_LOCALIZED = { ...CATEGORY_LABELS_LOCALIZED, ...data.categoryLabels };
+      }
+    } catch (e) {
+      console.warn('Could not load procedure defs from API, using fallback:', e.message);
+      // PROCEDURE_TYPES zaten PROCEDURE_TYPES_FALLBACK ile başlatıldı
+    }
+  }
+
+  const PROCEDURE_RECOMMENDED_MINUTES = {
+    TREATMENT: 30,
+    CONSULT: 30,
+    FOLLOWUP: 20,
+    LAB: 30,
+    CROWN: 60,
+    TEMP_CROWN: 45,
+    BRIDGE_UNIT: 75,
+    TEMP_BRIDGE_UNIT: 60,
+    CROWN_REPLACEMENT: 60,
+    BRIDGE_REPLACEMENT_OR_REMOVAL: 60,
+    INLAY: 60,
+    ONLAY: 60,
+    OVERLAY: 60,
+    POST_AND_CORE: 60,
+    FILLING: 30,
+    TEMP_FILLING: 20,
+    FILLING_REPLACEMENT_OR_REMOVAL: 30,
+    ROOT_CANAL_TREATMENT: 90,
+    ROOT_CANAL_RETREATMENT: 100,
+    CANAL_OPENING: 40,
+    CANAL_FILLING: 40,
+    EXTRACTION: 30,
+    SURGICAL_EXTRACTION: 60,
+    APICAL_RESECTION: 90,
+    IMPLANT: 90,
+    HEALING_ABUTMENT: 30,
+    IMPLANT_CROWN: 60,
+  };
 
   let prices = {};
   let defaultCurrency = "EUR";
@@ -786,7 +784,7 @@
   async function loadPrices() {
     console.log("🔄 loadPrices() started");
     try {
-      const token = localStorage.getItem('admin_token') || '';
+      const token = localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
       if (!token) {
         console.log("❌ No token found");
         const msg = 'Admin token bulunamadı.';
@@ -795,15 +793,23 @@
       }
 
       console.log("📡 Fetching treatment prices...");
-      const res = await fetch(`${API_BASE}/api/admin/treatment-prices`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json'
-        }
-      });
+      let res;
+      try {
+        res = await fetchWithTimeout(`${API_BASE}/api/admin/treatment-prices`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        }, 8000);
+      } catch (fetchErr) {
+        console.warn("⚠️ Treatment prices fetch error (timeout veya ağ hatası):", fetchErr.message);
+        renderPrices(); // Boş fiyatlarla tabloyu göster
+        return;
+      }
 
       console.log("📡 Response status:", res.status);
       if (!res.ok) {
+        if (handle401(res.status)) return;
         throw new Error(`HTTP ${res.status}`);
       }
 
@@ -850,31 +856,22 @@
     });
 
     const categories = ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"];
-    const categoryLabels = {
-      "EVENTS": "Events (Etkinlikler)",
-      "PROSTHETIC": "Prosthetic (Protez)",
-      "RESTORATIVE": "Restorative (Restoratif)",
-      "ENDODONTIC": "Endodontic (Endodonti)",
-      "SURGICAL": "Surgical (Cerrahi)",
-      "IMPLANT": "Implant (Implant)"
-    };
 
     let html = '';
     categories.forEach(category => {
       if (!byCategory[category] || byCategory[category].length === 0) return;
-      
+
       html += `<div style="margin-bottom: 24px;">`;
-      html += `<h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--p);">${categoryLabels[category]}</h3>`;
+      html += `<h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--p);">${escapeHtml(CATEGORY_LABELS_LOCALIZED[category] || category)}</h3>`;
       html += `<table style="width: 100%; border-collapse: collapse;">`;
-      const headers = {
-        treatment: "Treatment",
-        price: "Price",
-        active: "Active"
-      };
+      const _t = (k) => (window.i18n && window.i18n.t) ? window.i18n.t(k) : k.split('.').pop();
       html += `<thead><tr style="border-bottom: 1px solid var(--b);">`;
-      html += `<th style="text-align: left; padding: 12px; font-size: 14px; font-weight: 600;">${headers.treatment}</th>`;
-      html += `<th style="text-align: right; padding: 12px; font-size: 14px; font-weight: 600; width: 150px;">${headers.price}</th>`;
-      html += `<th style="text-align: center; padding: 12px; font-size: 14px; font-weight: 600; width: 100px;">${headers.active}</th>`;
+      html += `<th style="text-align: left; padding: 12px; font-size: 14px; font-weight: 600;">${_t('settings.tableHeaders.treatment')}</th>`;
+      html += `<th style="text-align: right; padding: 12px; font-size: 14px; font-weight: 600; width: 150px;">${_t('settings.tableHeaders.price')}</th>`;
+      html += `<th style="text-align: center; padding: 12px; font-size: 14px; font-weight: 600; width: 120px;">${_t('settings.tableHeaders.recommended')}</th>`;
+      html += `<th style="text-align: right; padding: 12px; font-size: 14px; font-weight: 600; width: 130px;">${_t('settings.tableHeaders.duration')}</th>`;
+      html += `<th style="text-align: right; padding: 12px; font-size: 14px; font-weight: 600; width: 120px;">${_t('settings.tableHeaders.breakMin')}</th>`;
+      html += `<th style="text-align: center; padding: 12px; font-size: 14px; font-weight: 600; width: 100px;">${_t('settings.tableHeaders.active')}</th>`;
       html += `</tr></thead><tbody>`;
       
       byCategory[category].forEach(proc => {
@@ -882,11 +879,23 @@
         const price = priceData.default_price || '';
         const isActive = priceData.is_active !== false;
         const currency = priceData.currency || defaultCurrency;
+        const recommendedDuration = Number(PROCEDURE_RECOMMENDED_MINUTES[proc.type] || 30);
+        const duration = Number.parseInt(priceData.duration_minutes, 10);
+        const breakMinutes = Number.parseInt(priceData.break_minutes, 10);
+        const finalDuration = Number.isFinite(duration) && duration > 0 ? duration : recommendedDuration;
+        const finalBreak = Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : 0;
         
         html += `<tr style="border-bottom: 1px solid rgba(55, 65, 81, 0.3);">`;
         html += `<td style="padding: 12px; font-size: 14px;">${escapeHtml(proc.label)}</td>`;
         html += `<td style="padding: 12px; text-align: right;">`;
         html += `<input type="number" id="price_${proc.type}" value="${price}" placeholder="0.00" step="0.01" min="0" style="width: 100%; padding: 6px 8px; text-align: right; background: #1f2937; border: 1px solid var(--b); border-radius: 4px; color: #e6eaf2; font-size: 14px;" />`;
+        html += `</td>`;
+        html += `<td style="padding: 12px; text-align: center; color: #94a3b8; font-weight: 600;">~${recommendedDuration} dk</td>`;
+        html += `<td style="padding: 12px; text-align: right;">`;
+        html += `<input type="number" id="duration_${proc.type}" value="${finalDuration}" placeholder="${recommendedDuration}" step="5" min="5" max="720" style="width: 100%; padding: 6px 8px; text-align: right; background: #1f2937; border: 1px solid var(--b); border-radius: 4px; color: #e6eaf2; font-size: 14px;" />`;
+        html += `</td>`;
+        html += `<td style="padding: 12px; text-align: right;">`;
+        html += `<input type="number" id="break_${proc.type}" value="${finalBreak}" placeholder="0" step="5" min="0" max="240" style="width: 100%; padding: 6px 8px; text-align: right; background: #1f2937; border: 1px solid var(--b); border-radius: 4px; color: #e6eaf2; font-size: 14px;" />`;
         html += `</td>`;
         html += `<td style="padding: 12px; text-align: center;">`;
         html += `<input type="checkbox" id="active_${proc.type}" ${isActive ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;" />`;
@@ -898,7 +907,11 @@
       html += `</div>`;
     });
 
-    container.innerHTML = html;
+    if (!html) {
+      container.innerHTML = '<div style="color:var(--muted,#888);padding:16px;">Fiyat listesi bulunamadı. Henüz kayıt edilmemiş olabilir.</div>';
+    } else {
+      container.innerHTML = html;
+    }
   }
 
   function escapeHtml(text) {
@@ -909,7 +922,7 @@
 
   async function saveAllPrices() {
     try {
-      const token = localStorage.getItem('admin_token') || '';
+      const token = localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
       if (!token) {
         alert('Admin token bulunamadı');
         return;
@@ -927,42 +940,33 @@
       const promises = [];
       PROCEDURE_TYPES.forEach(proc => {
         const priceInput = $(`price_${proc.type}`);
+        const durationInput = $(`duration_${proc.type}`);
+        const breakInput = $(`break_${proc.type}`);
         const activeInput = $(`active_${proc.type}`);
         
-        if (!priceInput || !activeInput) return;
+        if (!priceInput || !durationInput || !breakInput || !activeInput) return;
         
         const priceValue = parseFloat(priceInput.value);
+        const recommendedDuration = Number(PROCEDURE_RECOMMENDED_MINUTES[proc.type] || 30);
+        const durationRaw = Number.parseInt(durationInput.value, 10);
+        const breakRaw = Number.parseInt(breakInput.value, 10);
+        const durationValue = Number.isFinite(durationRaw) ? Math.max(5, Math.min(720, durationRaw)) : recommendedDuration;
+        const breakValue = Number.isFinite(breakRaw) ? Math.max(0, Math.min(240, breakRaw)) : 0;
         const isActive = activeInput.checked;
+        const existingRow = prices[proc.type];
+        const hasPrice = Number.isFinite(priceValue) && priceValue > 0;
+        const isTimingCustomized = durationValue !== recommendedDuration || breakValue > 0;
         
-        // Only save if price is set (or if we want to update active status)
-        if (priceValue && priceValue > 0) {
+        // Save row when there is an explicit price, existing row, timing customizations, or inactive toggle
+        if (hasPrice || existingRow || isTimingCustomized || !isActive) {
           const payload = {
             id: prices[proc.type]?.id, // Keep existing ID if updating
             treatment_name: proc.type,
-            default_price: priceValue,
+            default_price: hasPrice ? priceValue : (existingRow?.default_price || 0),
             currency: currency,
-            is_active: isActive
-          };
-
-          promises.push(
-            fetch(`${API_BASE}/api/admin/treatment-prices`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              },
-              body: JSON.stringify(payload)
-            }).then(res => res.json())
-          );
-        } else if (prices[proc.type] && !isActive) {
-          // Update active status even if price is 0
-          const payload = {
-            id: prices[proc.type].id,
-            treatment_name: proc.type,
-            default_price: prices[proc.type].default_price || 0,
-            currency: currency,
-            is_active: false
+            is_active: isActive,
+            duration_minutes: durationValue,
+            break_minutes: breakValue,
           };
 
           promises.push(
@@ -1019,31 +1023,20 @@
   // Save all prices button
   $("saveAllPricesBtn") && $("saveAllPricesBtn").addEventListener('click', saveAllPrices);
 
-  // Load prices on page load
-  loadPrices();
+  // Load prices on page load (fetch localized procedure defs first)
+  loadProcedureDefs().then(() => loadPrices());
 
-  // Update UI when language changes
-  window.onI18nUpdated = function(lang) {
-    // Update all dynamic text
-    if (false) { // Disabled for now
-      // Update status messages if they exist
-      const statusEl = $("status");
-      if (statusEl && statusEl.innerHTML) {
-        // Re-render status if it contains translatable content
-        // This is handled by i18n system automatically for data-i18n elements
-      }
-
-      // Update save button text
-      const saveBtn = $("saveAllPricesBtn");
-      if (saveBtn && !saveBtn.disabled) {
-        saveBtn.textContent = '💾 Save All Prices';
-      }
-      
-      // Re-render prices table with new language
-      renderPrices();
-      applyReferralDiscount(storedDiscount, { onlyEmpty: true });
-    }
-  };
+  // Update UI when language changes — chain previous handler (admin-layout.js sidebar labels)
+  (function() {
+    const _prev = window.onI18nUpdated;
+    window.onI18nUpdated = function(lang) {
+      if (typeof _prev === 'function') _prev(lang);
+      if (window.i18n) window.i18n.updatePage();
+      loadProcedureDefs().then(() => renderPrices());
+      const input = document.getElementById('referralDiscountPercent');
+      if (input) updateReferralPreview(input.value);
+    };
+  })();
 
   // Enhanced Referral Discount Functions
   function setReferralDiscount(value) {
@@ -1057,17 +1050,18 @@
   function updateReferralPreview(value) {
     const previewText = document.getElementById('referralPreviewText');
     if (!previewText) return;
-    
+
     const discount = parseInt(value) || 0;
-    
+    const t = (key) => (window.i18n && window.i18n.t) ? window.i18n.t(key, { discount }) : key;
+
     if (discount === 0) {
-      previewText.innerHTML = '<span style="color: #ef4444;">❌ No discount will be applied</span>';
+      previewText.innerHTML = '<span style="color:#ef4444;">' + t('settings.referralPreviewNone') + '</span>';
     } else if (discount <= 10) {
-      previewText.innerHTML = '✅ <strong>' + discount + '% discount</strong> will be applied to both referrer and referred patient.<br><span style="color: #10b981;">💡 Great starting point for attracting new patients!</span>';
+      previewText.innerHTML = t('settings.referralPreviewLow');
     } else if (discount <= 20) {
-      previewText.innerHTML = '🎉 <strong>' + discount + '% discount</strong> for both parties.<br><span style="color: #f59e0b;">⚠️ Higher discount but more attractive referrals!</span>';
+      previewText.innerHTML = t('settings.referralPreviewMid');
     } else {
-      previewText.innerHTML = '🚀 <strong>' + discount + '% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>';
+      previewText.innerHTML = t('settings.referralPreviewHigh');
     }
   }
 

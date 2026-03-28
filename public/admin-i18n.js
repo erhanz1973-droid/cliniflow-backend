@@ -53,13 +53,22 @@
           dashboard: "Dashboard",
           patients: "Hastalar",
           travel: "Seyahat",
-          treatment: "Tedavi",
-          chat: "Chat",
+          treatment: "Tedaviler",
+          schedule: "Takvim",
+          doctors: "Doktorlar",
+          chat: "Mesajlar",
+          files: "Dosyalar",
           referrals: "Referanslar",
           health: "Sağlık",
-          settings: "Klinik Ayarları",
+          settings: "Ayarlar",
           login: "Login",
           register: "Klinik Kaydı"
+        },
+        sidebar: {
+          mainMenu: "Ana Menü",
+          management: "Yönetim",
+          logout: "Çıkış Yap",
+          clinic: "Klinik"
         },
         clinicBadge: {
           noToken: "⚠️ Admin token yok. <a href=\"/admin-register.html\" style=\"color:var(--link);\">Klinik Kaydı</a> ile giriş yapın.",
@@ -186,7 +195,7 @@
         }
       },
       
-      // Treatment (admin-treatment.html)
+      // Treatment (admin-treatment.html) — tek `treatment` objesi (duplicate key yok)
       treatment: {
         patientName: "Hasta Adı (Seç)",
         selectPatient: "— Hasta seç —",
@@ -198,7 +207,104 @@
         saveTreatment: "Tedaviyi Kaydet",
         treatmentSaved: "✅ Tedavi başarıyla kaydedildi!",
         treatmentDeleted: "✅ Tedavi başarıyla silindi!",
-        confirmDelete: "Bu tedaviyi silmek istediğinizden emin misiniz?"
+        confirmDelete: "Bu tedaviyi silmek istediğinizden emin misiniz?",
+        pageTitle: "Tedaviler - Clinifly Admin",
+        upperJaw: "Üst Çene",
+        lowerJaw: "Alt Çene",
+        fdiUpper: "FDI 11–18 / 21–28",
+        fdiLower: "FDI 31–38 / 41–48",
+        selectedTooth: "Seçili Diş:",
+        selToothHint: "Dişe tıkla, işlem ekle.",
+        clearSelection: "Seçimi Temizle",
+        procedureType: "İşlem Türü",
+        loadingProcedures: "Yükleniyor...",
+        statusLabel: "Durum",
+        dateLabel: "Tarih",
+        timeLabel: "Saat",
+        datePolicy: "Tarih Politikası",
+        datePolicyManual: "MANUAL (alarm oluştur)",
+        datePolicyAuto: "AUTO (otomatik tarih ata)",
+        priceOptional: "Fiyat (ops.)",
+        currencyLabel: "Para Birimi",
+        quantityLabel: "Adet",
+        chairNo: "Chair No",
+        doctorLabel: "Doktor",
+        doctorSelectOptional: "-- Doktor Seç (ops.) --",
+        addProcedure: "+ Prosedur Ekle",
+        diagnosesOnTooth: "Bu dişteki tanılar",
+        addDiagnosisBtn: "+ Tanı Ekle",
+        newDiagnosisTitle: "Yeni Tanı Ekle",
+        icdCodeLabel: "ICD-10 Kodu",
+        descriptionLabel: "Açıklama",
+        toothNoLabel: "Diş No",
+        toothPlaceholderAuto: "otomatik",
+        notesOptionalLabel: "Not (ops.)",
+        notesPlaceholder: "Opsiyonel not...",
+        proceduresOnTooth: "Bu dişteki işlemler",
+        treatmentEventsTitle: "🦷 Treatment Events (Takvim)",
+        treatmentEventsHelp: "Not: Event'ler treatment_events tablosunda saklanır.",
+        eventTitlePlaceholder: "Implant Day 1",
+        eventDescPlaceholder: "CT scan + implant placement",
+        teTypeTreatment: "Treatment",
+        teTypeConsult: "Consultation",
+        teTypeFollowup: "Follow-up",
+        teTypeLab: "Lab / Scan",
+        addEvent: "➕ Event Ekle",
+        eventListTitle: "Event listesi",
+        thDateTime: "Tarih/Saat",
+        thType: "Tip",
+        thTitle: "Başlık",
+        patientToothDiagnoses: "Hastanın Diş Tanıları",
+        badgeToothDoctor: "Diş No + Doktor Tanısı",
+        noDiagnosisSummary: "Tanı kaydı bulunamadı.",
+        emptyStateTitle: "Henüz treatment kaydı yok",
+        emptyStateSub: "Treatment'lar yüklendiğinde burada görünecek.",
+        selectPatientAbove: "Yukarıdan bir hasta seçin.",
+        loadingTreatmentsMsg: "Treatments yükleniyor...",
+        loadFailed: "Yüklenemedi: {error}",
+        noRecordsYet: "Henüz treatment kaydı yok. Diş seçip işlem ekleyebilirsiniz.",
+        loadedSummary: "{teethCount} dişte toplam {procCount} işlem yüklendi.",
+        loadError: "Yükleme hatası: {error}",
+        selectToothFirst: "⚠️ Önce diş seçin",
+        toothLocked: "Bu diş çekilmiş (locked). Yeni işlem eklenemez.",
+        selectProcedureType: "İşlem türü seç.",
+        invalidDateTime: "Tarih/saat formatı geçersiz.",
+        diagCodeOrDesc: "ICD-10 kodu veya açıklama giriniz.",
+        saveFailedWithMsg: "Kaydedilemedi: {error}",
+        deleteFailedWithMsg: "Silinemedi: {error}",
+        errorWithMsg: "Hata: {error}",
+        saveAllSuccess: "Tüm procedure'lar kaydedildi ✅",
+        saveAllError: "Kaydetme hatası: {error}",
+        deleteBtn: "Sil",
+        eventsEmpty: "Event yok.",
+        procLineTooth: "Diş {tooth} • ",
+        selToothHintLocked: "⛔ Bu diş çekilmiş (locked). Yeni işlem eklenemez. Sadece geçmiş görülebilir.",
+        pickToothFromChart: "Diş seçmek için yukarıdaki diş haritasından bir dişe tıklayın.",
+        noProcOnTooth: "Bu dişte henüz işlem yok.",
+        noDiagOnTooth: "Bu dişte tanı kaydı yok.",
+        noDescription: "Açıklama yok",
+        diagGroupTooth: "🦷 Diş {tooth}",
+        diagGroupGeneral: "🦷 Genel Tanılar",
+        diagNotAdded: "Tanı eklenmemiş",
+        toothDiagCountTitle: "Bu dişte {count} tanı kaydı var",
+        datePrefix: "Tarih:",
+        chairLabel: "Chair",
+        editInlineTitle: "Satır içinde düzenle",
+        statusSelectTitle: "Status seç",
+        statusCycleTitle: "Status'ü değiştirmek için tıklayın (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)",
+        inlineProcTypePh: "İşlem tipi",
+        inlineUnitPricePh: "Birim fiyat",
+        inlineQtyPh: "Adet",
+        inlineChairPh: "Chair No",
+        inlineDoctorPick: "-- Doktor Seç --",
+        deleteTitle: "Sil",
+        selToothHintActive: "Dişe tıkla, işlem ekle.",
+        status: {
+          PLANNED: "Planlandı",
+          ACTIVE: "Devam Ediyor",
+          COMPLETED: "Tamamlandı",
+          CANCELLED: "İptal"
+        }
       },
       
       // Login (admin-login.html)
@@ -326,6 +432,11 @@
         saveTemporaryLimit: "Geçici Limiti Kaydet",
         removeTemporaryLimit: "Geçici Limiti Kaldır",
         temporaryLimitActive: "Mevcut geçici limit: +{count} hasta",
+        referralPreviewLabel: "💡 Önizleme:",
+        referralPreviewNone: "❌ İndirim uygulanmayacak",
+        referralPreviewLow: "✅ <strong>{discount}% indirim</strong> hem davet eden hem de davet edilen hastaya uygulanacak.<br><span style=\"color:#10b981\">💡 Yeni hasta çekmek için harika bir başlangıç!</span>",
+        referralPreviewMid: "🎉 <strong>{discount}% indirim</strong> her iki tarafa da uygulanacak.<br><span style=\"color:#f59e0b\">⚠️ Daha yüksek indirim ama daha çekici referanslar!</span>",
+        referralPreviewHigh: "🚀 <strong>{discount}% indirim</strong> - Maksimum seviye!<br><span style=\"color:#ef4444\">⚠️ Çok cömert - kârlılığı kontrol edin!</span>",
         save: "💾 Ayarları Kaydet",
         saveLoading: "Kaydediliyor...",
         treatmentPriceList: "💰 Tedavi Fiyat Listesi",
@@ -351,12 +462,15 @@
           IMPLANT: "Implant"
         },
         tableHeaders: {
-          treatment: "Treatment",
-          price: "Price",
-          active: "Active"
+          treatment: "İşlem",
+          price: "Fiyat",
+          recommended: "Önerilen",
+          duration: "Süre (dk)",
+          breakMin: "Mola (dk)",
+          active: "Aktif"
         }
       },
-      
+
       // Patients (admin-patients.html)
       patients: {
         title: "Clinifly Admin – Patients",
@@ -376,6 +490,7 @@
         treatment: "Tedavi",
         health: "Sağlık",
         chat: "Chat",
+        files: "📁 Dosyalar",
         approve: "Onayla",
         approveConfirm: "Hastayı onaylamak istediğinize emin misiniz? ({patientId})",
         approveSuccess: "✅ Hasta onaylandı",
@@ -438,9 +553,33 @@
           approveFailed: "Onaylama hatası: {error}",
           rejectFailed: "Reddetme hatası: {error}"
         }
+      },
+      timeline: {
+        tooth: "Diş",
+        procedure: "İşlem",
+        status: "Durum"
+      },
+      files: {
+        pageTitle: "Admin – Hasta Dosyaları",
+        title: "📁 Hasta Dosyaları",
+        selectPatient: "Hasta:",
+        selectPlaceholder: "Hasta seçin...",
+        filterAll: "Tümü",
+        filterPhoto: "📸 Fotoğraf",
+        filterXray: "🦷 Röntgen",
+        filterPdf: "📄 PDF",
+        filterChat: "💬 Chat",
+        upload: "Yükle",
+        empty: "Dosya bulunamadı.",
+        selectToView: "Dosyaları görmek için hasta seçin.",
+        badgeImage: "Fotoğraf",
+        badgeXray: "Röntgen",
+        badgePdf: "PDF",
+        badgeFile: "Dosya",
+        badgeChat: "Chat"
       }
     },
-    
+
     en: {
       // Common
       common: {
@@ -488,13 +627,22 @@
           dashboard: "Dashboard",
           patients: "Patients",
           travel: "Travel",
-          treatment: "Treatment",
-          chat: "Chat",
+          treatment: "Treatments",
+          schedule: "Calendar",
+          doctors: "Doctors",
+          chat: "Messages",
+          files: "Files",
           referrals: "Referrals",
           health: "Health",
-          settings: "Clinic Settings",
+          settings: "Settings",
           login: "Login",
           register: "Register Clinic"
+        },
+        sidebar: {
+          mainMenu: "Main Menu",
+          management: "Management",
+          logout: "Logout",
+          clinic: "Clinic"
         },
         clinicBadge: {
           noToken: "⚠️ No admin token. <a href=\"/admin-register.html\" style=\"color:var(--link);\">Register Clinic</a> to login.",
@@ -625,7 +773,7 @@
       treatment: {
         patientName: "Patient Name (Select)",
         selectPatient: "— Select patient —",
-        patientHelp: "Automatically selected when clicking Treatment from patient list. Automatically loads when changing patient here.",
+        patientHelp: "Automatically selected when opening Treatment from the patient list. Changing the patient here reloads data.",
         noPatientSelected: "No patient selected. Please select a patient.",
         loadingTreatments: "Loading treatments...",
         noTreatments: "No treatment plan found for this patient.",
@@ -633,7 +781,104 @@
         saveTreatment: "Save Treatment",
         treatmentSaved: "✅ Treatment saved successfully!",
         treatmentDeleted: "✅ Treatment deleted successfully!",
-        confirmDelete: "Are you sure you want to delete this treatment?"
+        confirmDelete: "Are you sure you want to delete this treatment?",
+        pageTitle: "Treatments - Clinifly Admin",
+        upperJaw: "Upper jaw",
+        lowerJaw: "Lower jaw",
+        fdiUpper: "FDI 11–18 / 21–28",
+        fdiLower: "FDI 31–38 / 41–48",
+        selectedTooth: "Selected tooth:",
+        selToothHint: "Tap a tooth to add a procedure.",
+        clearSelection: "Clear selection",
+        procedureType: "Procedure type",
+        loadingProcedures: "Loading...",
+        statusLabel: "Status",
+        dateLabel: "Date",
+        timeLabel: "Time",
+        datePolicy: "Date policy",
+        datePolicyManual: "MANUAL (create reminder)",
+        datePolicyAuto: "AUTO (assign date automatically)",
+        priceOptional: "Price (optional)",
+        currencyLabel: "Currency",
+        quantityLabel: "Quantity",
+        chairNo: "Chair No",
+        doctorLabel: "Doctor",
+        doctorSelectOptional: "-- Select doctor (optional) --",
+        addProcedure: "+ Add procedure",
+        diagnosesOnTooth: "Diagnoses on this tooth",
+        addDiagnosisBtn: "+ Add diagnosis",
+        newDiagnosisTitle: "New diagnosis",
+        icdCodeLabel: "ICD-10 code",
+        descriptionLabel: "Description",
+        toothNoLabel: "Tooth No",
+        toothPlaceholderAuto: "auto",
+        notesOptionalLabel: "Notes (optional)",
+        notesPlaceholder: "Optional note...",
+        proceduresOnTooth: "Procedures on this tooth",
+        treatmentEventsTitle: "🦷 Treatment events (calendar)",
+        treatmentEventsHelp: "Note: events are stored in the treatment_events table.",
+        eventTitlePlaceholder: "Implant Day 1",
+        eventDescPlaceholder: "CT scan + implant placement",
+        teTypeTreatment: "Treatment",
+        teTypeConsult: "Consultation",
+        teTypeFollowup: "Follow-up",
+        teTypeLab: "Lab / Scan",
+        addEvent: "➕ Add event",
+        eventListTitle: "Event list",
+        thDateTime: "Date/Time",
+        thType: "Type",
+        thTitle: "Title",
+        patientToothDiagnoses: "Patient tooth diagnoses",
+        badgeToothDoctor: "Tooth No + doctor diagnosis",
+        noDiagnosisSummary: "No diagnosis records.",
+        emptyStateTitle: "No treatment records yet",
+        emptyStateSub: "Treatments will appear here when loaded.",
+        selectPatientAbove: "Select a patient above.",
+        loadingTreatmentsMsg: "Loading treatments...",
+        loadFailed: "Failed to load: {error}",
+        noRecordsYet: "No treatment records yet. Select a tooth and add a procedure.",
+        loadedSummary: "{teethCount} teeth, {procCount} procedures loaded.",
+        loadError: "Load error: {error}",
+        selectToothFirst: "⚠️ Select a tooth first",
+        toothLocked: "This tooth is extracted (locked). New procedures cannot be added.",
+        selectProcedureType: "Select a procedure type.",
+        invalidDateTime: "Invalid date/time format.",
+        diagCodeOrDesc: "Enter ICD-10 code or description.",
+        saveFailedWithMsg: "Could not save: {error}",
+        deleteFailedWithMsg: "Could not delete: {error}",
+        errorWithMsg: "Error: {error}",
+        saveAllSuccess: "All procedures saved ✅",
+        saveAllError: "Save error: {error}",
+        deleteBtn: "Delete",
+        eventsEmpty: "No events.",
+        procLineTooth: "Tooth {tooth} • ",
+        selToothHintLocked: "⛔ This tooth is extracted (locked). New procedures cannot be added. History only.",
+        pickToothFromChart: "Click a tooth on the chart above to select it.",
+        noProcOnTooth: "No procedures on this tooth yet.",
+        noDiagOnTooth: "No diagnosis records for this tooth.",
+        noDescription: "No description",
+        diagGroupTooth: "🦷 Tooth {tooth}",
+        diagGroupGeneral: "🦷 General diagnoses",
+        diagNotAdded: "No diagnoses added",
+        toothDiagCountTitle: "{count} diagnosis record(s) on this tooth",
+        datePrefix: "Date:",
+        chairLabel: "Chair",
+        editInlineTitle: "Edit inline",
+        statusSelectTitle: "Select status",
+        statusCycleTitle: "Click to cycle status (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)",
+        inlineProcTypePh: "Procedure type",
+        inlineUnitPricePh: "Unit price",
+        inlineQtyPh: "Qty",
+        inlineChairPh: "Chair No",
+        inlineDoctorPick: "-- Select doctor --",
+        deleteTitle: "Delete",
+        selToothHintActive: "Click a tooth to add a procedure.",
+        status: {
+          PLANNED: "Planned",
+          ACTIVE: "In progress",
+          COMPLETED: "Completed",
+          CANCELLED: "Cancelled"
+        }
       },
       
       // Login (admin-login.html)
@@ -765,6 +1010,11 @@
         saveTemporaryLimit: "Save Temporary Limit",
         removeTemporaryLimit: "Remove Temporary Limit",
         temporaryLimitActive: "Current temporary limit: +{count} patients",
+        referralPreviewLabel: "💡 Preview:",
+        referralPreviewNone: "❌ No discount will be applied",
+        referralPreviewLow: "✅ <strong>{discount}% discount</strong> will be applied to both referrer and referred patient.<br><span style=\"color:#10b981\">💡 Great starting point for attracting new patients!</span>",
+        referralPreviewMid: "🎉 <strong>{discount}% discount</strong> for both parties.<br><span style=\"color:#f59e0b\">⚠️ Higher discount but more attractive referrals!</span>",
+        referralPreviewHigh: "🚀 <strong>{discount}% discount</strong> - Maximum level!<br><span style=\"color:#ef4444\">⚠️ Very generous - ensure profitability!</span>",
         save: "💾 Save Settings",
         saveLoading: "Saving...",
         treatmentPriceList: "💰 Treatment Price List",
@@ -792,10 +1042,13 @@
         tableHeaders: {
           treatment: "Treatment",
           price: "Price",
+          recommended: "Recommended",
+          duration: "Duration (min)",
+          breakMin: "Break (min)",
           active: "Active"
         }
       },
-      
+
       // Patients (admin-patients.html)
       patients: {
         title: "Clinifly Admin – Patients",
@@ -815,6 +1068,7 @@
         treatment: "Treatment",
         health: "Health",
         chat: "Chat",
+        files: "📁 Files",
         approve: "Approve",
         approveConfirm: "Are you sure you want to approve this patient? ({patientId})",
         approveSuccess: "✅ Patient approved",
@@ -877,6 +1131,554 @@
           approveFailed: "Approval error: {error}",
           rejectFailed: "Rejection error: {error}"
         }
+      },
+      timeline: {
+        tooth: "Tooth",
+        procedure: "Procedure",
+        status: "Status"
+      },
+      files: {
+        pageTitle: "Admin – Patient Files",
+        title: "📁 Patient Files",
+        selectPatient: "Patient:",
+        selectPlaceholder: "Select patient...",
+        filterAll: "All",
+        filterPhoto: "📸 Photos",
+        filterXray: "🦷 X-Rays",
+        filterPdf: "📄 PDF",
+        filterChat: "💬 Chat",
+        upload: "Upload",
+        empty: "No files found.",
+        selectToView: "Select a patient to view their files.",
+        badgeImage: "Photo",
+        badgeXray: "X-Ray",
+        badgePdf: "PDF",
+        badgeFile: "File",
+        badgeChat: "Chat"
+      }
+    },
+
+    ru: {
+      common: {
+        loading: "Загрузка...", save: "Сохранить", cancel: "Отмена", delete: "Удалить",
+        edit: "Редактировать", search: "Поиск", filter: "Фильтр", close: "Закрыть",
+        back: "Назад", next: "Далее", previous: "Предыдущий", submit: "Отправить",
+        yes: "Да", no: "Нет", ok: "ОК", error: "Ошибка", success: "Успешно", warning: "Предупреждение"
+      },
+      dashboard: {
+        title: "Clinifly Admin – Панель управления",
+        nav: { dashboard: "Панель", patients: "Пациенты", travel: "Путешествие", treatment: "Лечение", schedule: "Календарь", doctors: "Врачи", chat: "Сообщения", files: "Файлы", referrals: "Рефералы", health: "Здоровье", settings: "Настройки" },
+        sidebar: { mainMenu: "Главное меню", management: "Управление", logout: "Выйти", clinic: "Клиника" },
+        upcoming: {
+          title: "📅 Расписание клиники",
+          subtitle: "Все события (прошлые и будущие)",
+          empty: "Нет предстоящих событий",
+          today: "Сегодня",
+          tomorrow: "Завтра",
+          dayAfterTomorrow: "Послезавтра",
+          daysLater: "Через {count} дн.",
+          weeksLater: "Через {count} нед.",
+          overdue: "⚠️ Просрочено: {count}",
+          overdueDesc: "У вас {count} просроченных событий, требующих внимания.",
+          status: { planned: "Запланировано", done: "Выполнено" },
+          summary: { overdue: "Просрочено:", today: "Сегодня:", patients: "пациентов", events: "событий" },
+          eventTypes: {
+            TRAVEL_EVENT: "Туристическое мероприятие",
+            FLIGHT: "Рейс",
+            HOTEL: "Отель",
+            AIRPORT_PICKUP: "Трансфер из аэропорта",
+            TREATMENT: "Лечение",
+            CONSULT: "Консультация",
+            FOLLOWUP: "Контрольный осмотр",
+            LAB: "Лаборатория / Сканирование",
+            HEALTH: "Форма здоровья",
+            APPOINTMENT: "Запись",
+            PAYMENT: "Оплата",
+            SURGERY: "Хирургия",
+            CHECKUP: "Осмотр"
+          }
+        }
+      },
+      login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль." },
+      patients: {
+        title: "Пациенты", search: "Поиск пациентов...", filter: "Фильтр",
+        filterAll: "Все", approve: "Одобрить", treatment: "Лечение", chat: "Чат", travel: "Путешествие", health: "Здоровье", files: "📁 Файлы",
+        approveConfirm: "Вы хотите одобрить пациента? ({patientId})", approveSuccess: "✅ Пациент одобрен",
+        before: "До", after: "После", phone: "Телефон",
+        status: { PENDING: "Ожидание", APPROVED: "Одобрено" },
+        errors: { noToken: "⚠️ Токен не найден.", loadFailed: "❌ Ошибка загрузки: {error}", approveFailed: "❌ Ошибка одобрения: {error}" }
+      },
+      referrals: {
+        title: "🎁 Рефералы", referrals: "Рефералы", filterAll: "Все", refresh: "Обновить",
+        loading: "Загрузка...", noReferrals: "Рефералы не найдены.",
+        inviter: "Пригласивший", invited: "Приглашённый", createdAt: "Создано",
+        inviterDiscount: "Скидка пригласившего", invitedDiscount: "Скидка приглашённого", discount: "Скидка",
+        approve: "Одобрить", reject: "Отклонить",
+        approveConfirm: "Вы уверены, что хотите одобрить?", rejectConfirm: "Вы уверены, что хотите отклонить?",
+        approved: "Реферал одобрен ✅", rejected: "Реферал отклонён ✅",
+        status: { PENDING: "Ожидание", APPROVED: "Одобрено", REJECTED: "Отклонено" },
+        errors: { noToken: "⚠️ Токен не найден.", loadFailed: "Ошибка загрузки.", approveFailed: "Ошибка: {error}", rejectFailed: "Ошибка: {error}" }
+      },
+      settings: {
+        title: "⚙️ Настройки клиники",
+        pageTitle: "⚙️ Clinifly Admin – Настройки",
+        clinicInformation: "Информация о клинике",
+        brandingNotice: "Настройки брендинга доступны только для плана PRO.",
+        subscriptionPlan: "Тарифный план",
+        subscriptionPlanHelp: "Здесь вы можете изменить план FREE / BASIC / PRO.",
+        plan: "План",
+        branding: "Брендинг",
+        clinicName: "Название клиники",
+        clinicLogoUrl: "URL логотипа клиники",
+        clinicLogoUrlHelp: "Логотип отображается для плана Pro",
+        address: "Адрес клиники",
+        addressHelp: "Отображается на экране пациента для плана Pro",
+        googleMapLink: "Ссылка Google Maps",
+        googleMapLinkHelp: "Отображается на экране пациента для плана Pro",
+        primaryColor: "Основной цвет (Hex)",
+        secondaryColor: "Дополнительный цвет (Hex)",
+        welcomeMessage: "Приветственное сообщение",
+        referralDiscounts: "🎁 Реферальные скидки",
+        referralDiscountsHelp: "Настройте процентные скидки для успешных рефералов.",
+        referralDiscount: "Реферальная скидка (%)",
+        referralDiscountHelp: "Скидка для пригласившего и приглашённого",
+        referralLevel1: "Уровень 1 (%)",
+        referralLevel1Help: "Общая скидка после 1 успешного реферала",
+        referralLevel2: "Уровень 2 (%)",
+        referralLevel2Help: "Общая скидка после 2 успешных рефералов",
+        referralLevel3: "Уровень 3 (%)",
+        referralLevel3Help: "Максимальная скидка для 3+ рефералов",
+        referralSettings: "🎯 Настройки рефералов",
+        referralSettingsHelp: "Установите ставки заработка для реферальной системы.",
+        referralPerInvite: "Заработок за приглашение (%)",
+        referralPerInvitePlaceholder: "10",
+        referralPerInviteHelp: "Скидка за каждый успешный реферал",
+        referralMaxTotal: "Максимальная общая скидка (%)",
+        referralMaxTotalPlaceholder: "10",
+        referralMaxTotalHelp: "Максимальная скидка, которую может получить пригласивший.",
+        temporaryPatientLimit: "🔧 Временный лимит пациентов",
+        temporaryPatientLimitHelp: "Добавьте временный лимит для процессов продаж. Добавляется поверх обычного лимита плана.",
+        temporaryLimit: "Временный лимит",
+        temporaryLimitPlaceholder: "Доп. кол-во пациентов (напр.: 5)",
+        saveTemporaryLimit: "Сохранить временный лимит",
+        removeTemporaryLimit: "Удалить временный лимит",
+        temporaryLimitActive: "Текущий временный лимит: +{count} пациентов",
+        referralPreviewLabel: "💡 Предпросмотр:",
+        referralPreviewNone: "❌ Скидка применяться не будет",
+        referralPreviewLow: "✅ <strong>Скидка {discount}%</strong> будет применена как пригласившему, так и приглашённому.<br><span style=\"color:#10b981\">💡 Отличная отправная точка для привлечения новых пациентов!</span>",
+        referralPreviewMid: "🎉 <strong>Скидка {discount}%</strong> для обеих сторон.<br><span style=\"color:#f59e0b\">⚠️ Больше скидка — привлекательнее рефералы!</span>",
+        referralPreviewHigh: "🚀 <strong>Скидка {discount}%</strong> — Максимальный уровень!<br><span style=\"color:#ef4444\">⚠️ Очень щедро — проверьте прибыльность!</span>",
+        save: "💾 Сохранить настройки",
+        saveLoading: "Сохранение...",
+        treatmentPriceList: "💰 Список цен на лечение",
+        treatmentPriceListHelp: "Установите цены на лечение вашей клиники.",
+        currency: "Валюта",
+        loadingPrices: "Загрузка цен...",
+        saveAllPrices: "💾 Сохранить все цены",
+        tableHeaders: {
+          treatment: "Процедура",
+          price: "Цена",
+          recommended: "Рекомендуется",
+          duration: "Длительность (мин)",
+          breakMin: "Перерыв (мин)",
+          active: "Активно"
+        }
+      },
+      treatment: {
+        patientName: "Имя пациента (выбор)",
+        selectPatient: "— Выберите пациента —",
+        patientHelp: "Автоматически подставляется при открытии из списка пациентов. Смена пациента перезагружает данные.",
+        noPatientSelected: "Пациент не выбран.",
+        loadingTreatments: "Загрузка планов лечения...",
+        noTreatments: "План лечения для этого пациента не найден.",
+        addTreatment: "Добавить лечение",
+        saveTreatment: "Сохранить лечение",
+        treatmentSaved: "✅ Лечение сохранено!",
+        treatmentDeleted: "✅ Лечение удалено!",
+        confirmDelete: "Удалить это лечение?",
+        pageTitle: "Лечение - Clinifly Admin",
+        upperJaw: "Верхняя челюсть",
+        lowerJaw: "Нижняя челюсть",
+        fdiUpper: "FDI 11–18 / 21–28",
+        fdiLower: "FDI 31–38 / 41–48",
+        selectedTooth: "Выбранный зуб:",
+        selToothHint: "Нажмите на зуб, чтобы добавить процедуру.",
+        clearSelection: "Сбросить выбор",
+        procedureType: "Тип процедуры",
+        loadingProcedures: "Загрузка...",
+        statusLabel: "Статус",
+        dateLabel: "Дата",
+        timeLabel: "Время",
+        datePolicy: "Политика даты",
+        datePolicyManual: "MANUAL (создать напоминание)",
+        datePolicyAuto: "AUTO (дата автоматически)",
+        priceOptional: "Цена (опц.)",
+        currencyLabel: "Валюта",
+        quantityLabel: "Кол-во",
+        chairNo: "Кресло №",
+        doctorLabel: "Врач",
+        doctorSelectOptional: "-- Врач (опц.) --",
+        addProcedure: "+ Добавить процедуру",
+        diagnosesOnTooth: "Диагнозы по этому зубу",
+        addDiagnosisBtn: "+ Добавить диагноз",
+        newDiagnosisTitle: "Новый диагноз",
+        icdCodeLabel: "Код МКБ-10",
+        descriptionLabel: "Описание",
+        toothNoLabel: "Зуб №",
+        toothPlaceholderAuto: "авто",
+        notesOptionalLabel: "Заметка (опц.)",
+        notesPlaceholder: "Необязательная заметка...",
+        proceduresOnTooth: "Процедуры на этом зубе",
+        treatmentEventsTitle: "🦷 События лечения (календарь)",
+        treatmentEventsHelp: "События хранятся в таблице treatment_events.",
+        eventTitlePlaceholder: "Имплант, день 1",
+        eventDescPlaceholder: "КТ + установка импланта",
+        teTypeTreatment: "Лечение",
+        teTypeConsult: "Консультация",
+        teTypeFollowup: "Контроль",
+        teTypeLab: "Лаборатория / снимок",
+        addEvent: "➕ Добавить событие",
+        eventListTitle: "Список событий",
+        thDateTime: "Дата/время",
+        thType: "Тип",
+        thTitle: "Заголовок",
+        patientToothDiagnoses: "Диагнозы по зубам пациента",
+        badgeToothDoctor: "Зуб № + диагноз врача",
+        noDiagnosisSummary: "Записей диагнозов нет.",
+        emptyStateTitle: "Записей лечения пока нет",
+        emptyStateSub: "Данные появятся после загрузки.",
+        selectPatientAbove: "Выберите пациента выше.",
+        loadingTreatmentsMsg: "Загрузка лечения...",
+        loadFailed: "Не удалось загрузить: {error}",
+        noRecordsYet: "Записей нет. Выберите зуб и добавьте процедуру.",
+        loadedSummary: "{teethCount} зубов, процедур: {procCount}.",
+        loadError: "Ошибка загрузки: {error}",
+        selectToothFirst: "⚠️ Сначала выберите зуб",
+        toothLocked: "Зуб удалён (заблокирован). Новые процедуры недоступны.",
+        selectProcedureType: "Выберите тип процедуры.",
+        invalidDateTime: "Неверный формат даты/времени.",
+        diagCodeOrDesc: "Введите код или описание МКБ-10.",
+        saveFailedWithMsg: "Не сохранено: {error}",
+        deleteFailedWithMsg: "Не удалено: {error}",
+        errorWithMsg: "Ошибка: {error}",
+        saveAllSuccess: "Все процедуры сохранены ✅",
+        saveAllError: "Ошибка сохранения: {error}",
+        deleteBtn: "Удалить",
+        eventsEmpty: "Нет событий.",
+        procLineTooth: "Зуб {tooth} • ",
+        selToothHintLocked: "⛔ Зуб удалён (locked). Новые процедуры недоступны. Только история.",
+        pickToothFromChart: "Нажмите на зуб на схеме выше, чтобы выбрать его.",
+        noProcOnTooth: "На этом зубе пока нет процедур.",
+        noDiagOnTooth: "Нет записей диагноза по этому зубу.",
+        noDescription: "Нет описания",
+        diagGroupTooth: "🦷 Зуб {tooth}",
+        diagGroupGeneral: "🦷 Общие диагнозы",
+        diagNotAdded: "Диагнозы не добавлены",
+        toothDiagCountTitle: "На этом зубе {count} записей диагноза",
+        datePrefix: "Дата:",
+        chairLabel: "Кресло",
+        editInlineTitle: "Редактировать в строке",
+        statusSelectTitle: "Выберите статус",
+        statusCycleTitle: "Нажмите для смены статуса (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)",
+        inlineProcTypePh: "Тип процедуры",
+        inlineUnitPricePh: "Цена за ед.",
+        inlineQtyPh: "Кол-во",
+        inlineChairPh: "Кресло №",
+        inlineDoctorPick: "-- Выберите врача --",
+        deleteTitle: "Удалить",
+        selToothHintActive: "Нажмите на зуб, чтобы добавить процедуру.",
+        status: {
+          PLANNED: "Запланировано",
+          ACTIVE: "В процессе",
+          COMPLETED: "Завершено",
+          CANCELLED: "Отменено"
+        }
+      },
+      timeline: {
+        tooth: "Зуб",
+        procedure: "Процедура",
+        status: "Статус"
+      },
+      files: {
+        pageTitle: "Admin – Файлы пациента",
+        title: "📁 Файлы пациента",
+        selectPatient: "Пациент:",
+        selectPlaceholder: "Выберите пациента...",
+        filterAll: "Все",
+        filterPhoto: "📸 Фото",
+        filterXray: "🦷 Рентген",
+        filterPdf: "📄 PDF",
+        filterChat: "💬 Чат",
+        upload: "Загрузить",
+        empty: "Файлы не найдены.",
+        selectToView: "Выберите пациента для просмотра файлов.",
+        badgeImage: "Фото",
+        badgeXray: "Рентген",
+        badgePdf: "PDF",
+        badgeFile: "Файл",
+        badgeChat: "Чат"
+      }
+    },
+
+    ka: {
+      common: {
+        loading: "იტვირთება...", save: "შენახვა", cancel: "გაუქმება", delete: "წაშლა",
+        edit: "რედაქტირება", search: "ძებნა", filter: "ფილტრი", close: "დახურვა",
+        back: "უკან", next: "შემდეგ", previous: "წინა", submit: "გაგზავნა",
+        yes: "დიახ", no: "არა", ok: "OK", error: "შეცდომა", success: "წარმატება", warning: "გაფრთხილება"
+      },
+      dashboard: {
+        title: "Clinifly Admin – მართვის პანელი",
+        nav: { dashboard: "პანელი", patients: "პაციენტები", travel: "მოგზაურობა", treatment: "მკურნალება", schedule: "კალენდარი", doctors: "ექიმები", chat: "შეტყობინებები", files: "ფაილები", referrals: "მოწვევები", health: "ჯანმრთელობა", settings: "პარამეტრები" },
+        sidebar: { mainMenu: "მთავარი მენიუ", management: "მართვა", logout: "გასვლა", clinic: "კლინიკა" },
+        upcoming: {
+          title: "📅 კლინიკის განრიგი",
+          subtitle: "ყველა მოვლენა (წარსული და მომავალი)",
+          empty: "მომავალი მოვლენები არ არის",
+          today: "დღეს",
+          tomorrow: "ხვალ",
+          dayAfterTomorrow: "ზეგ",
+          daysLater: "{count} დღეში",
+          weeksLater: "{count} კვირაში",
+          overdue: "⚠️ ვადაგადაცილებული: {count}",
+          overdueDesc: "გაქვთ {count} ვადაგადაცილებული მოვლენა.",
+          status: { planned: "დაგეგმილია", done: "შესრულებულია" },
+          summary: { overdue: "ვადაგადაცილებული:", today: "დღეს:", patients: "პაციენტი", events: "მოვლენა" },
+          eventTypes: {
+            TRAVEL_EVENT: "მოგზაურობის მოვლენა",
+            FLIGHT: "რეისი",
+            HOTEL: "სასტუმრო",
+            AIRPORT_PICKUP: "აეროპორტის ტრანსფერი",
+            TREATMENT: "მკურნალება",
+            CONSULT: "კონსულტაცია",
+            FOLLOWUP: "კონტროლი",
+            LAB: "ლაბორატორია / სკანირება",
+            HEALTH: "ჯანმრთელობის ფორმა",
+            APPOINTMENT: "ჩაწერა",
+            PAYMENT: "გადახდა",
+            SURGERY: "ქირურგია",
+            CHECKUP: "გასინჯვა"
+          }
+        }
+      },
+      login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია." },
+      patients: {
+        title: "პაციენტები", search: "პაციენტის ძებნა...", filter: "ფილტრი",
+        filterAll: "ყველა", approve: "დადასტურება", treatment: "მკურნალება", chat: "ჩათი", travel: "მოგზაურობა", health: "ჯანმრთელობა", files: "📁 ფაილები",
+        approveConfirm: "გსურთ პაციენტის დადასტურება? ({patientId})", approveSuccess: "✅ პაციენტი დადასტურებულია",
+        before: "წინ", after: "შემდეგ", phone: "ტელეფონი",
+        status: { PENDING: "მოლოდინში", APPROVED: "დადასტურებულია" },
+        errors: { noToken: "⚠️ ტოკენი ვერ მოიძებნა.", loadFailed: "❌ ჩატვირთვის შეცდომა: {error}", approveFailed: "❌ დადასტურების შეცდომა: {error}" }
+      },
+      referrals: {
+        title: "🎁 მოწვევები", referrals: "მოწვევები", filterAll: "ყველა", refresh: "განახლება",
+        loading: "იტვირთება...", noReferrals: "მოწვევები ვერ მოიძებნა.",
+        inviter: "მოწვეული", invited: "მოპატიჟებული", createdAt: "შეიქმნა",
+        inviterDiscount: "მოწვეულის ფასდაკლება", invitedDiscount: "მოპატიჟებულის ფასდაკლება", discount: "ფასდაკლება",
+        approve: "დადასტურება", reject: "უარყოფა",
+        approveConfirm: "დარწმუნებული ხართ?", rejectConfirm: "დარწმუნებული ხართ?",
+        approved: "მოწვევა დადასტურებულია ✅", rejected: "მოწვევა უარყოფილია ✅",
+        status: { PENDING: "მოლოდინში", APPROVED: "დადასტურებულია", REJECTED: "უარყოფილია" },
+        errors: { noToken: "⚠️ ტოკენი ვერ მოიძებნა.", loadFailed: "ჩატვირთვის შეცდომა.", approveFailed: "შეცდომა: {error}", rejectFailed: "შეცდომა: {error}" }
+      },
+      settings: {
+        title: "⚙️ კლინიკის პარამეტრები",
+        pageTitle: "⚙️ Clinifly Admin – პარამეტრები",
+        clinicInformation: "კლინიკის ინფორმაცია",
+        brandingNotice: "ბრენდინგის პარამეტრები ხელმისაწვდომია მხოლოდ PRO გეგმისთვის.",
+        subscriptionPlan: "სააბონემენტო გეგმა",
+        subscriptionPlanHelp: "შეგიძლიათ შეცვალოთ FREE / BASIC / PRO პაკეტი.",
+        plan: "გეგმა",
+        branding: "ბრენდინგი",
+        clinicName: "კლინიკის სახელი",
+        clinicLogoUrl: "კლინიკის ლოგოს URL",
+        clinicLogoUrlHelp: "ლოგო ნაჩვენებია Pro გეგმისთვის",
+        address: "კლინიკის მისამართი",
+        addressHelp: "ნაჩვენებია პაციენტის ეკრანზე Pro გეგმისთვის",
+        googleMapLink: "Google Maps ბმული",
+        googleMapLinkHelp: "ნაჩვენებია პაციენტის ეკრანზე Pro გეგმისთვის",
+        primaryColor: "ძირითადი ფერი (Hex)",
+        secondaryColor: "მეორადი ფერი (Hex)",
+        welcomeMessage: "მისასალმებელი შეტყობინება",
+        referralDiscounts: "🎁 მოწვევის ფასდაკლებები",
+        referralDiscountsHelp: "დააყენეთ ფასდაკლების პროცენტები წარმატებული მოწვევებისთვის.",
+        referralDiscount: "მოწვევის ფასდაკლება (%)",
+        referralDiscountHelp: "ფასდაკლება მიეწოდება ორივეს: მოწვეულსა და მოპატიჟებულს",
+        referralLevel1: "დონე 1 (%)",
+        referralLevel1Help: "საერთო ფასდაკლება 1 წარმატებული მოწვევის შემდეგ",
+        referralLevel2: "დონე 2 (%)",
+        referralLevel2Help: "საერთო ფასდაკლება 2 წარმატებული მოწვევის შემდეგ",
+        referralLevel3: "დონე 3 (%)",
+        referralLevel3Help: "მაქსიმალური ფასდაკლება 3+ მოწვევისთვის",
+        referralSettings: "🎯 მოწვევის პარამეტრები",
+        referralSettingsHelp: "დააყენეთ მოწვევის სისტემის საპროცენტო განაკვეთები.",
+        referralPerInvite: "მოწვევაზე შემოსავალი (%)",
+        referralPerInvitePlaceholder: "10",
+        referralPerInviteHelp: "ფასდაკლება თითოეული წარმატებული მოწვევისთვის",
+        referralMaxTotal: "მაქსიმალური საერთო ფასდაკლება (%)",
+        referralMaxTotalPlaceholder: "10",
+        referralMaxTotalHelp: "მოწვეულის მიერ მიღებული მაქსიმალური ფასდაკლება.",
+        temporaryPatientLimit: "🔧 დროებითი პაციენტის ლიმიტი",
+        temporaryPatientLimitHelp: "დაამატეთ დროებითი ლიმიტი გაყიდვების პროცესისთვის.",
+        temporaryLimit: "დროებითი ლიმიტი",
+        temporaryLimitPlaceholder: "დამატებითი პაციენტები (მაგ.: 5)",
+        saveTemporaryLimit: "დროებითი ლიმიტის შენახვა",
+        removeTemporaryLimit: "დროებითი ლიმიტის წაშლა",
+        temporaryLimitActive: "მიმდინარე დროებითი ლიმიტი: +{count} პაციენტი",
+        referralPreviewLabel: "💡 გადახედვა:",
+        referralPreviewNone: "❌ ფასდაკლება არ გამოიყენება",
+        referralPreviewLow: "✅ <strong>{discount}% ფასდაკლება</strong> გამოიყენება როგორც მოწვეულისთვის, ასევე მოპატიჟებულისთვის.<br><span style=\"color:#10b981\">💡 შესანიშნავი დასაწყისი ახალი პაციენტების მოსაზიდად!</span>",
+        referralPreviewMid: "🎉 <strong>{discount}% ფასდაკლება</strong> ორივე მხარისთვის.<br><span style=\"color:#f59e0b\">⚠️ მეტი ფასდაკლება — უფრო მიმზიდველი მოწვევები!</span>",
+        referralPreviewHigh: "🚀 <strong>{discount}% ფასდაკლება</strong> — მაქსიმალური დონე!<br><span style=\"color:#ef4444\">⚠️ ძალიან სულგრძელი — შეამოწმეთ მომგებიანობა!</span>",
+        save: "💾 პარამეტრების შენახვა",
+        saveLoading: "შენახვა...",
+        treatmentPriceList: "💰 მკურნალობის ფასების სია",
+        treatmentPriceListHelp: "დააყენეთ თქვენი კლინიკის მკურნალობის ფასები.",
+        currency: "ვალუტა",
+        loadingPrices: "ფასების ჩატვირთვა...",
+        saveAllPrices: "💾 ყველა ფასის შენახვა",
+        tableHeaders: {
+          treatment: "პროცედურა",
+          price: "ფასი",
+          recommended: "რეკომენდებული",
+          duration: "ხანგრძლივობა (წთ)",
+          breakMin: "შესვენება (წთ)",
+          active: "აქტიური"
+        }
+      },
+      treatment: {
+        patientName: "პაციენტის სახელი (არჩევა)",
+        selectPatient: "— აირჩიეთ პაციენტი —",
+        patientHelp: "ავტომატურად ივსება პაციენტების სიიდან. პაციენტის შეცვლა ხელახლა ტვირთავს მონაცემებს.",
+        noPatientSelected: "პაციენტი არ არის არჩეული.",
+        loadingTreatments: "მკურნალობის გეგმის ჩატვირთვა...",
+        noTreatments: "ამ პაციენტისთვის გეგმა ვერ მოიძებნა.",
+        addTreatment: "მკურნალობის დამატება",
+        saveTreatment: "შენახვა",
+        treatmentSaved: "✅ შენახულია!",
+        treatmentDeleted: "✅ წაშლილია!",
+        confirmDelete: "წავშალოთ ეს ჩანაწერი?",
+        pageTitle: "მკურნალობა - Clinifly Admin",
+        upperJaw: "ზედა ყბა",
+        lowerJaw: "ქვედა ყბა",
+        fdiUpper: "FDI 11–18 / 21–28",
+        fdiLower: "FDI 31–38 / 41–48",
+        selectedTooth: "არჩეული კბილი:",
+        selToothHint: "დააჭირეთ კბილს პროცედურის დასამატებლად.",
+        clearSelection: "არჩევის გასუფთავება",
+        procedureType: "პროცედურის ტიპი",
+        loadingProcedures: "იტვირთება...",
+        statusLabel: "სტატუსი",
+        dateLabel: "თარიღი",
+        timeLabel: "დრო",
+        datePolicy: "თარიღის პოლიტიკა",
+        datePolicyManual: "MANUAL (შეხსენება)",
+        datePolicyAuto: "AUTO (ავტომატური თარიღი)",
+        priceOptional: "ფასი (არასავალდებულო)",
+        currencyLabel: "ვალუტა",
+        quantityLabel: "რაოდენობა",
+        chairNo: "სავარძლის №",
+        doctorLabel: "ექიმი",
+        doctorSelectOptional: "-- ექიმი (არასავალდებულო) --",
+        addProcedure: "+ პროცედურის დამატება",
+        diagnosesOnTooth: "დიაგნოზები ამ კბილზე",
+        addDiagnosisBtn: "+ დიაგნოზები",
+        newDiagnosisTitle: "ახალი დიაგნოზი",
+        icdCodeLabel: "ICD-10 კოდი",
+        descriptionLabel: "აღწერა",
+        toothNoLabel: "კბილი №",
+        toothPlaceholderAuto: "ავტო",
+        notesOptionalLabel: "შენიშვნა (არასავალდებულო)",
+        notesPlaceholder: "არასავალდებულო შენიშვნა...",
+        proceduresOnTooth: "პროცედურები ამ კბილზე",
+        treatmentEventsTitle: "🦷 მოვლენები (კალენდარი)",
+        treatmentEventsHelp: "მოვლენები ინახება treatment_events ცხრილში.",
+        eventTitlePlaceholder: "იმპლანტი, დღე 1",
+        eventDescPlaceholder: "კტ + იმპლანტი",
+        teTypeTreatment: "მკურნალობა",
+        teTypeConsult: "კონსულტაცია",
+        teTypeFollowup: "კონტროლი",
+        teTypeLab: "ლაბორატორია / სკანი",
+        addEvent: "➕ მოვლენის დამატება",
+        eventListTitle: "მოვლენების სია",
+        thDateTime: "თარიღი/დრო",
+        thType: "ტიპი",
+        thTitle: "სათაური",
+        patientToothDiagnoses: "პაციენტის კბილის დიაგნოზები",
+        badgeToothDoctor: "კბილი № + ექიმის დიაგნოზი",
+        noDiagnosisSummary: "დიაგნოზის ჩანაწერი არ არის.",
+        emptyStateTitle: "ჩანაწერი ჯერ არ არის",
+        emptyStateSub: "მონაცემები გამოჩნდება ჩატვირთვის შემდეგ.",
+        selectPatientAbove: "ზემოთ აირჩიეთ პაციენტი.",
+        loadingTreatmentsMsg: "იტვირთება...",
+        loadFailed: "ჩატვირთვა ვერ მოხერხდა: {error}",
+        noRecordsYet: "ჩანაწერი არ არის. აირჩიეთ კბილი და დაამატეთ პროცედურა.",
+        loadedSummary: "{teethCount} კბილი, პროცედურა: {procCount}.",
+        loadError: "შეცდომა: {error}",
+        selectToothFirst: "⚠️ ჯერ აირჩიეთ კბილი",
+        toothLocked: "კბილი ჩათვლილია (დაბლოკილი). ახალი პროცედურა შეუძლებელია.",
+        selectProcedureType: "აირჩიეთ პროცედურის ტიპი.",
+        invalidDateTime: "არასწორი თარიღი/დრო.",
+        diagCodeOrDesc: "შეიყვანეთ ICD-10 კოდი ან აღწერა.",
+        saveFailedWithMsg: "შენახვა ვერ მოხერხდა: {error}",
+        deleteFailedWithMsg: "წაშლა ვერ მოხერხდა: {error}",
+        errorWithMsg: "შეცდომა: {error}",
+        saveAllSuccess: "ყველა პროცედურა შენახულია ✅",
+        saveAllError: "შენახვის შეცდომა: {error}",
+        deleteBtn: "წაშლა",
+        eventsEmpty: "მოვლენები არ არის.",
+        procLineTooth: "კბილი {tooth} • ",
+        selToothHintLocked: "⛔ ეს კბილი ამოღებულია (locked). ახალი პროცედურები არ ემატება. მხოლოდ ისტორია.",
+        pickToothFromChart: "აირჩიეთ კბილი ზემოთ არსებული სქემიდან.",
+        noProcOnTooth: "ამ კბილზე ჯერ პროცედურები არ არის.",
+        noDiagOnTooth: "ამ კბილზე დიაგნოზის ჩანაწერი არ არის.",
+        noDescription: "აღწერა არ არის",
+        diagGroupTooth: "🦷 კბილი {tooth}",
+        diagGroupGeneral: "🦷 ზოგადი დიაგნოზები",
+        diagNotAdded: "დიაგნოზები არ არის დამატებული",
+        toothDiagCountTitle: "ამ კბილზე {count} დიაგნოზის ჩანაწერია",
+        datePrefix: "თარიღი:",
+        chairLabel: "სავარძელი",
+        editInlineTitle: "რედაქტირება ხაზში",
+        statusSelectTitle: "აირჩიეთ სტატუსი",
+        statusCycleTitle: "დააჭირეთ სტატუსის შესაცვლელად (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)",
+        inlineProcTypePh: "პროცედურის ტიპი",
+        inlineUnitPricePh: "ერთეულის ფასი",
+        inlineQtyPh: "რაოდ.",
+        inlineChairPh: "სავარძელი №",
+        inlineDoctorPick: "-- აირჩიეთ ექიმი --",
+        deleteTitle: "წაშლა",
+        selToothHintActive: "დააჭირეთ კბილს პროცედურის დასამატებლად.",
+        status: {
+          PLANNED: "დაგეგმილია",
+          ACTIVE: "მიმდინარე",
+          COMPLETED: "დასრულებულია",
+          CANCELLED: "გაუქმებულია"
+        }
+      },
+      timeline: {
+        tooth: "კბილი",
+        procedure: "პროცედურა",
+        status: "სტატუსი"
+      },
+      files: {
+        pageTitle: "Admin – პაციენტის ფაილები",
+        title: "📁 პაციენტის ფაილები",
+        selectPatient: "პაციენტი:",
+        selectPlaceholder: "პაციენტი აირჩიეთ...",
+        filterAll: "ყველა",
+        filterPhoto: "📸 ფოტო",
+        filterXray: "🦷 რენტგენი",
+        filterPdf: "📄 PDF",
+        filterChat: "💬 ჩათი",
+        upload: "ატვირთვა",
+        empty: "ფაილები ვერ მოიძებნა.",
+        selectToView: "ფაილების სანახავად პაციენტი აირჩიეთ.",
+        badgeImage: "ფოტო",
+        badgeXray: "რენტგენი",
+        badgePdf: "PDF",
+        badgeFile: "ფაილი",
+        badgeChat: "ჩათი"
       }
     }
   };
@@ -904,7 +1706,7 @@
     
     // State-only: do NOT call updatePage() here.
     setLanguage(lang) {
-      if (!translations[lang]) lang = 'tr';
+      if (!translations[lang]) lang = 'en';
       this.currentLang = lang;
       localStorage.setItem('admin_lang', lang);
       document.documentElement.lang = lang;
@@ -921,102 +1723,83 @@
     
     t(key, params = {}) {
       const keys = key.split('.');
-      let value = translations[this.currentLang];
-      
-      for (const k of keys) {
-        if (!value || typeof value !== 'object') return key;
-        value = value[k];
-      }
-      
-      if (typeof value !== 'string') return key;
-      
-      // Replace params
+      const resolve = (lang) => {
+        let value = translations[lang];
+        for (const k of keys) {
+          if (!value || typeof value !== 'object') return null;
+          value = value[k];
+        }
+        return typeof value === 'string' ? value : null;
+      };
+      const value = resolve(this.currentLang) || resolve('en') || key;
       return value.replace(/\{(\w+)\}/g, (match, p1) => {
         return params[p1] !== undefined ? params[p1] : match;
       });
     },
     
     createLangSwitcher() {
-      // Check if switcher already exists
-      if (document.getElementById('lang-switcher')) return;
-      
+      // Defer to DOMContentLoaded so admin-layout.js has a chance to inject alLang first
+      const tryCreate = () => {
+        if (document.getElementById('alLang') || document.getElementById('lang-switcher')) return;
+        this._doCreateLangSwitcher();
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryCreate);
+      } else {
+        // Already loaded — wait a tick for admin-layout.js to inject
+        setTimeout(tryCreate, 0);
+      }
+    },
+    _doCreateLangSwitcher() {
+      if (document.getElementById('alLang') || document.getElementById('lang-switcher')) return;
+
+      const LANGS = [
+        { code: 'tr', label: '🇹🇷 TR' },
+        { code: 'en', label: '🇬🇧 EN' },
+        { code: 'ru', label: '🇷🇺 RU' },
+        { code: 'ka', label: '🇬🇪 KA' },
+      ];
+
       const switcher = document.createElement('div');
       switcher.id = 'lang-switcher';
       switcher.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 1000;
-        display: flex;
-        gap: 8px;
-        background: var(--card, #1f2937);
-        border: 1px solid var(--b, #374151);
-        border-radius: 12px;
-        padding: 6px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        backdrop-filter: blur(10px);
+        position: fixed; top: 20px; right: 20px; z-index: 1000;
+        display: flex; gap: 6px;
+        background: var(--card, #1f2937); border: 1px solid var(--b, #374151);
+        border-radius: 12px; padding: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15); backdrop-filter: blur(10px);
       `;
-      
-      const trBtn = document.createElement('button');
-      trBtn.textContent = '🇹🇷 TR';
-      trBtn.style.cssText = `
-        padding: 8px 14px;
-        border: none;
-        border-radius: 8px;
-        background: ${this.currentLang === 'tr' ? 'var(--p, #2563eb)' : 'transparent'};
-        color: ${this.currentLang === 'tr' ? '#fff' : 'var(--muted, #a7b2c8)'};
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 13px;
-        transition: all 0.2s ease;
-        display: flex;
-        align-items: center;
-        gap: 4px;
+
+      const btnStyle = (active) => `
+        padding: 6px 12px; border: none; border-radius: 7px;
+        background: ${active ? 'var(--p, #2563eb)' : 'transparent'};
+        color: ${active ? '#fff' : 'var(--muted, #a7b2c8)'};
+        cursor: pointer; font-weight: 600; font-size: 12px; transition: all 0.2s ease;
       `;
-      trBtn.onclick = () => {
-        if (typeof window.onLanguageChange === 'function') window.onLanguageChange('tr');
-        else { this.setLanguage('tr'); this.updatePage(); }
-      };
-      
-      const enBtn = document.createElement('button');
-      enBtn.textContent = '🇬🇧 EN';
-      enBtn.style.cssText = `
-        padding: 8px 14px;
-        border: none;
-        border-radius: 8px;
-        background: ${this.currentLang === 'en' ? 'var(--p, #2563eb)' : 'transparent'};
-        color: ${this.currentLang === 'en' ? '#fff' : 'var(--muted, #a7b2c8)'};
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 13px;
-        transition: all 0.2s ease;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      `;
-      enBtn.onclick = () => {
-        if (typeof window.onLanguageChange === 'function') window.onLanguageChange('en');
-        else { this.setLanguage('en'); this.updatePage(); }
-      };
-      
-      switcher.appendChild(trBtn);
-      switcher.appendChild(enBtn);
+
+      const buttons = {};
+      LANGS.forEach(({ code, label }) => {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.style.cssText = btnStyle(this.currentLang === code);
+        btn.onclick = () => {
+          if (typeof window.onLanguageChange === 'function') window.onLanguageChange(code);
+          else { this.setLanguage(code); this.updatePage(); }
+        };
+        buttons[code] = btn;
+        switcher.appendChild(btn);
+      });
+
       document.body.appendChild(switcher);
-      
-      // Update button styles when language changes
+
       const updateButtons = () => {
-        trBtn.style.background = this.currentLang === 'tr' ? 'var(--p, #2563eb)' : 'transparent';
-        trBtn.style.color = this.currentLang === 'tr' ? '#fff' : 'var(--muted, #a7b2c8)';
-        enBtn.style.background = this.currentLang === 'en' ? 'var(--p, #2563eb)' : 'transparent';
-        enBtn.style.color = this.currentLang === 'en' ? '#fff' : 'var(--muted, #a7b2c8)';
+        LANGS.forEach(({ code }) => {
+          buttons[code].style.cssText = btnStyle(this.currentLang === code);
+        });
       };
-      
-      // Keep button styles in sync whenever the page is re-rendered
+
       const originalUpdatePage = this.updatePage.bind(this);
-      this.updatePage = () => {
-        originalUpdatePage();
-        updateButtons();
-      };
+      this.updatePage = () => { originalUpdatePage(); updateButtons(); };
       updateButtons();
     },
     

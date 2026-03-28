@@ -7,21 +7,13 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
     })();
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // Initialize Supabase directly with production credentials
-    const { createClient } = supabase;
-    const supabaseClient = createClient(
-      'https://swxinrwbylygoqdcbwbt.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3eGlucndieWx5Z29xZGNid2J0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzczMDQxNCwiZXhwIjoyMDgzMzA2NDE0fQ.hDrpZu7aaUKP0u3itxAP8SgqhH0ObqsHWn4Rjr3kxko'
-    );
-
     let allDoctors = [];
     let filteredDoctors = [];
 
@@ -29,7 +21,7 @@
       const loadingContainer = document.getElementById("loading-container");
       const errorContainer = document.getElementById("error-container");
       const doctorsContainer = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
+      const emptyContainer = document.getElementById('empty-container');
 
       // Show loading
       loadingContainer.style.display = "block";
@@ -37,46 +29,33 @@
       emptyContainer.style.display = 'none';
 
       try {
-        console.log("[SUPABASE] Loading doctors from Supabase...");
+        console.log("[ADMIN] Loading doctors from API...");
         
-        const { data, error } = await supabaseClient
-          .from('doctors')
-          .select(`
-            id,
-            doctor_id,
-            name,
-            email,
-            phone,
-            status,
-            clinic_code,
-            department,
-            title,
-            specialties,
-            license_number,
-            created_at,
-            updated_at
-          `)
-          .eq('clinic_code', 'SAVSAT')
-          .order('created_at', { ascending: false });
+        const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+        const response = await fetch("/api/admin/doctors", {
+          headers: {
+            "Authorization": "Bearer " + token
+          }
+        });
 
-        if (error) {
-          console.error('[SUPABASE] Failed to load doctors:', error);
-          throw new Error(error.message);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
 
-        console.log("[SUPABASE] Doctors loaded successfully:", data);
+        const data = await response.json();
+        console.log("[ADMIN] Doctors loaded successfully:", data);
         
-        allDoctors = data || [];
+        allDoctors = data.items || [];
         filteredDoctors = [...allDoctors];
         updateStats();
         renderDoctors();
             
-          } catch (error) {
-            console.error("Load doctors error:", error);
-            errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
-          } finally {
-            loadingContainer.style.display = "none";
-          }
+      } catch (error) {
+        console.error("Load doctors error:", error);
+        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
+      } finally {
+        loadingContainer.style.display = "none";
+      }
     }
 
     function updateStats() {
@@ -161,7 +140,7 @@
       }
 
       try {
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
         const response = await fetch("/api/admin/approve-doctor", {
           method: "POST",
           headers: {
@@ -194,7 +173,7 @@
       }
 
       try {
-        const token = localStorage.getItem("admin_token");
+        const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
         const response = await fetch("/api/admin/reject-doctor", {
           method: "POST",
           headers: {
@@ -523,18 +502,13 @@
         <div class="navbar-logo">
           🏥 Clinifly Admin
         </div>
-        <a href="/admin-dashboard.html" class="nav-link">Dashboard</a>
+        <a href="/admin.html" class="nav-link">Dashboard</a>
         <a href="/admin-patients.html" class="nav-link">Hastalar</a>
         <a href="/admin-doctor-applications.html" class="nav-link active">Doktorlar</a>
         <a href="/admin-treatment-groups.html" class="nav-link">Treatment Groups</a>
       </div>
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span id="lang-tr" class="active">TR</span>
-          <span>|</span>
-          <span id="lang-en">EN</span>
-        </div>
         <a href="#" onclick="logout(); return false;" class="nav-link secondary">Logout</a>
       </div>
     </nav>

@@ -1,17 +1,18 @@
-<!-- REAL ACTIVE FILE --><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Hasta Listesi - Clinifly Admin</title>
+  <title>Hastalar - Clinifly Admin</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <script>
     // Token and role check - redirect to login if not authenticated or not admin
     (function() {
-      const token = localStorage.getItem("token") || localStorage.getItem("admin_token");
-      const userStr = localStorage.getItem("user");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      const userStr = localStorage.getItem("user") || localStorage.getItem("adminUser");
       
       if (!token) {
-        console.log("[AUTH] No token found, redirecting to login");
+        console.log("[AUTH] No admin token found, redirecting to login");
         window.location.href = "/admin-login.html";
         return;
       }
@@ -51,6 +52,7 @@
       --link:#6aa6ff;
     }
     body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    body.al-ready { background: var(--bg); color: #e6eaf2; }
     .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
     header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
     h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
@@ -208,6 +210,26 @@
       background: #0b1220;
       border-color: #2563eb;
     }
+    .patient-avatar-img {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .patient-avatar-initials {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #1e3a5f;
+      color: #60a5fa;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
     .patient-card-header {
       display: flex;
       align-items: flex-start;
@@ -305,9 +327,11 @@
     /* Secondary: Chat (secondary importance) */
     .btn-chat{ background:transparent; border-color:#334155; color:#e6eaf2; }
     .btn-chat:hover{ background:#1f2937; border-color:#4b5563; }
-    /* Ghost: Travel / Health (tertiary, less visual weight) */
-    .btn-travel, .btn-health{ background:transparent; border-color:#334155; color:var(--muted); }
+    /* Ghost: Travel / Health / Files (tertiary, less visual weight) */
+    .btn-travel, .btn-health, .btn-files{ background:transparent; border-color:#334155; color:var(--muted); }
     .btn-travel:hover, .btn-health:hover{ background:#1f2937; border-color:#4b5563; color:#e6eaf2; }
+    .btn-files{ border-color:#4b5563; color:#a78bfa; }
+    .btn-files:hover{ background:#1e1b4b; border-color:#7c3aed; color:#c4b5fd; }
     .btn-ghost{ background:transparent; border-color:#334155; color:#e6eaf2; }
 
     .actions{ display:flex; gap:8px; flex-wrap:wrap; }
@@ -476,40 +500,6 @@
       <div id="usageBadge" style="display:none; padding:6px 10px; border:1px solid #334155; border-radius:999px; background:#0b1220; color:#e6eaf2; font-size:12px; font-weight:800; margin-top:12px;"></div>
     </header>
 
-    <nav class="navbar">
-      <div class="navbar-left">
-        <div class="navbar-logo">
-          <img src="/logo.svg" alt="Clinifly" />
-          <span class="navbar-logo-text">Clinifly</span>
-    </div>
-        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
-      </div>
-      <div class="navbar-center">
-        <a href="/admin.html" class="nav-link" data-i18n="dashboard.nav.dashboard">Dashboard</a>
-        <a href="/admin-patients.html" class="nav-link active" id="patientsNavLink">
-          <span data-i18n="dashboard.nav.patients">Patients</span>
-          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-doctor-applications.html" class="nav-link" id="doctorApplicationsNavLink">
-          <span>Doctor Applications</span>
-          <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
-        <a href="/admin-chat.html" class="nav-link" id="chatNavLink">
-          <span data-i18n="dashboard.nav.chat">Chat</span>
-          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-      </div>
-      <div class="navbar-right">
-        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
-          <span>|</span>
-          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
-        </div>
-        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
-    </div>
-    </nav>
 
     <div id="tokenInfo" class="token-info" style="display:none;" data-i18n="patients.errors.noToken"></div>
 
@@ -526,6 +516,7 @@
           <button class="btn-treatment" onclick="openTreatment(getSelectedPatientId())" data-i18n="patients.treatment"></button>
           <button class="btn-health" onclick="openHealth(getSelectedPatientId())" data-i18n="patients.health"></button>
           <button class="btn-chat" onclick="openChat(getSelectedPatientId())" data-i18n="patients.chat"></button>
+          <button class="btn-files" onclick="openFiles(getSelectedPatientId())" data-i18n="patients.files">📁 Dosyalar</button>
           <button class="btn-ghost" onclick="copySelectedPatientId()" data-i18n="patients.copyId"></button>
           <button class="btn-ghost" onclick="clearSelectedPatient()" data-i18n="patients.clear"></button>
         </div>
@@ -620,11 +611,12 @@
       } catch {}
     })();
 
-    const API_BASE = ""; // Production: Use same domain
+    const API_BASE = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
     let DOCTORS_CACHE = [];
+    let DOCTORS_BY_ID = {};
     
     // Clean protection for doctor select
     document.addEventListener('click', function(e) {
@@ -634,11 +626,11 @@
     }, true);
     
     function getAdminToken() {
-      return localStorage.getItem('admin_token') || '';
+      return localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
     }
     function logout() {
       try {
-        localStorage.removeItem("token");
+        localStorage.removeItem("adminToken");
         localStorage.removeItem("admin_token");
         localStorage.removeItem("user");
         localStorage.removeItem("clinic_code");
@@ -770,9 +762,13 @@
         badge.style.display = "inline-flex";
         }
         
-        // Update clinic plan and max patients if needed
-        if (clinic.plan) CLINIC_PLAN = clinic.plan;
-        if (clinic.subscriptionPlan) CLINIC_PLAN = clinic.subscriptionPlan;
+        // Effective plan: subscriptionPlan must NOT overwrite a correct `plan` with empty/legacy FREE
+        CLINIC_PLAN = normalizePlanValue(
+          clinic.subscriptionPlan ||
+            clinic.plan ||
+            clinic.settings?.subscriptionPlan ||
+            'FREE'
+        );
         if (clinic.max_patients !== undefined) CLINIC_MAX_PATIENTS = clinic.max_patients;
         if (clinic.maxPatients !== undefined) CLINIC_MAX_PATIENTS = clinic.maxPatients;
         
@@ -813,7 +809,11 @@
         const st = String(p.status || 'PENDING');
 
         const qok = !q || pid.includes(q) || name.includes(q) || phone.includes(q) || clinic.includes(q);
-        const sok = !status || st === status;
+        // DB stores "approved" as ACTIVE; filter option APPROVED matches ACTIVE + legacy APPROVED
+        let sok = !status || st === status;
+        if (status === "APPROVED") {
+          sok = st === "APPROVED" || st === "ACTIVE";
+        }
         return qok && sok;
       });
 
@@ -902,6 +902,9 @@ if (Array.isArray(json)) {
     }
 
     function renderPatients(patients) {
+      console.log("[RENDER] renderPatients called with", patients.length, "patients");
+      console.log("[RENDER] DOCTORS_CACHE length:", DOCTORS_CACHE.length);
+      
       const grid = document.getElementById('patientsGrid');
       if (patients.length === 0) {
         const noResultsText = t('patients.noResults');
@@ -926,10 +929,9 @@ if (Array.isArray(json)) {
         const status = p.status || 'PENDING';
         const patientId = (p.patientId || p.patient_id || '').toString();
         
-        // Enhanced name resolution with multiple fallbacks
-        let displayName = (p.fullName || p.name || '').toString();
+        // Canonical: Supabase patients.name — then full_name / legacy fields
+        let displayName = String(p.name || p.fullName || p.full_name || '').trim();
         if (!displayName || displayName === '-' || displayName === 'null' || displayName === 'undefined') {
-          // Try to construct from first_name + last_name
           if (p.first_name && p.last_name) {
             displayName = `${p.first_name} ${p.last_name}`;
           } else if (p.firstName && p.lastName) {
@@ -951,21 +953,32 @@ if (Array.isArray(json)) {
         const afterPercent = formatScore(afterScore);
         const clinicCode = p.clinicCode || p.clinic_code || '';
         
-        // 🎯 1️⃣ Find assigned doctor
-        const assignedDoctor = DOCTORS_CACHE.find(
-          d => d.id === p.primary_doctor_id
-        );
+        const assignedDoctor = DOCTORS_BY_ID[String(p.primary_doctor_id || "")] || null;
+        const primaryDoctorIdStr = p.primary_doctor_id ? String(p.primary_doctor_id) : "";
         
+        const initials = displayName.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+        const photoUrl = p.profilePhotoUrl || p.profile_photo_url || '';
+        const avatarHtml = photoUrl
+          ? `<img src="${escapeHtml(photoUrl)}" class="patient-avatar-img" alt="" />`
+          : `<div class="patient-avatar-initials">${initials}</div>`;
+
         return `
           <div class="patient-card ${isSelected ? 'selected' : ''}" onclick="setSelectedPatient('${escapeHtml(patientId)}', '${escapeHtml(displayName)}')">
             <div class="patient-card-header">
-              <h3 class="patient-name">${escapeHtml(displayName)}${clinicCode ? `<span class="clinic-code-badge">${escapeHtml(clinicCode)}</span>` : ''}</h3>
-              ${status === 'PENDING' ? `<span class="status ${status}">${window.i18n ? window.i18n.t('patients.status.PENDING') : 'PENDING'}</span>` : ''}
-              ${status === 'APPROVED' ? `<span class="status ${status}">${window.i18n ? window.i18n.t('patients.status.APPROVED') : 'APPROVED'}</span>` : ''}
+              <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+                ${avatarHtml}
+                <div style="min-width:0;">
+                  <h3 class="patient-name" style="margin:0;">${escapeHtml(displayName)}${clinicCode ? `<span class="clinic-code-badge">${escapeHtml(clinicCode)}</span>` : ''}</h3>
+                </div>
+              </div>
+              <div style="flex-shrink:0;">
+                ${status === 'PENDING' ? `<span class="status ${status}">${window.i18n ? window.i18n.t('patients.status.PENDING') : 'PENDING'}</span>` : ''}
+                ${(status === 'APPROVED' || status === 'ACTIVE') ? `<span class="status APPROVED">${window.i18n ? window.i18n.t('patients.status.APPROVED') : 'APPROVED'}</span>` : ''}
+              </div>
               </div>
             
             <div class="patient-meta">
-              ${p.phone ? `<div>📞 ${escapeHtml(p.phone)}</div>` : ''}
+              <div>📞 ${escapeHtml(p.phone || p.phone_number || '—')}</div>
               <div style="margin-top:4px; font-size:11px; color:#64748b;">
                 <code style="font-size:11px;">${escapeHtml(patientId)}</code> • ${dateStr}
               </div>
@@ -1001,6 +1014,7 @@ if (Array.isArray(json)) {
               <button class="btn-chat" onclick="openChat('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.chat') : t('patients.chat')}</button>
               <button class="btn-travel" onclick="openTravel('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.travel') : t('patients.travel')}</button>
               <button class="btn-health" onclick="openHealth('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.health') : t('patients.health')}</button>
+              <button class="btn-files" onclick="openFiles('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.files') : '📁 Dosyalar'}</button>
             </div>
             
             ${assignedDoctor ? `
@@ -1024,7 +1038,20 @@ if (Array.isArray(json)) {
                   "Doctor"
                 )}
               </div>
-            ` : ` 
+            ` : primaryDoctorIdStr ? `
+              <div class="doctor-badge" style="
+                margin-top:12px;
+                padding:8px 10px;
+                background:rgba(245,158,11,0.12);
+                border:1px solid rgba(245,158,11,0.35);
+                border-radius:8px;
+                font-size:12px;
+                font-weight:600;
+                color:#fbbf24;
+              ">
+                👨‍⚕️ Doktor atanmış (kayıtlı) — isim listesi eşleşmedi; sayfayı yenileyin veya doktor <code style="font-size:10px;">${escapeHtml(primaryDoctorIdStr.slice(0, 13))}…</code>
+              </div>
+            ` : `
               <div class="doctor-badge" style="
                 margin-top:12px;
                 padding:8px 10px;
@@ -1049,6 +1076,7 @@ if (Array.isArray(json)) {
                   onchange="assignDoctor('${escapeHtml(patientId)}', this.value)"
                   style="flex:1; padding:6px 8px; background:var(--b); border:1px solid #4b5563; border-radius:6px; color:#e6eaf2; font-size:12px;">
                   ${!p.primary_doctor_id ? `<option value="" selected disabled>Select Doctor</option>` : ''}
+                  ${primaryDoctorIdStr && !DOCTORS_CACHE.some(function (d) { return String(d.id) === primaryDoctorIdStr; }) ? `<option value="${escapeHtml(primaryDoctorIdStr)}" selected>— Atanmış doktor (yenile) —</option>` : ''}
                   ${DOCTORS_CACHE.map(doctor => {
                     const name = doctor.name || doctor.full_name || doctor.email || "Doctor";
                     const selected = String(p.primary_doctor_id) === String(doctor.id) ? "selected" : "";
@@ -1107,9 +1135,9 @@ if (Array.isArray(json)) {
           body: JSON.stringify({ patientId })
         });
 
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.ok) {
-          throw new Error(json.error || 'Onaylama başarısız');
+          throw new Error(json.message || json.error || 'Onaylama başarısız');
         }
 
         const successMessage = window.i18n ? window.i18n.t('patients.approveSuccess') : '✅ Hasta onaylandı';
@@ -1142,8 +1170,14 @@ if (Array.isArray(json)) {
         }
 
         const clinic = await clinicRes.json();
-        const plan = clinic.subscriptionPlan || 'FREE';
-        
+        // Must match GET /api/admin/clinic: plan lives in `plan` (Supabase) not only subscriptionPlan
+        const plan = normalizePlanValue(
+          clinic.subscriptionPlan ||
+            clinic.plan ||
+            clinic.settings?.subscriptionPlan ||
+            'FREE'
+        );
+
         // Get current approved patients count
         const patientsRes = await fetch(`${API_BASE}/api/admin/patients?status=APPROVED`, {
           headers: {
@@ -1156,17 +1190,23 @@ if (Array.isArray(json)) {
           return { canApprove: true }; // If we can't check, allow approval
         }
 
-        const patients = await patientsRes.json();
-        const currentApproved = Array.isArray(patients) ? patients.length : 0;
+        const payload = await patientsRes.json();
+        const list = Array.isArray(payload)
+          ? payload
+          : payload?.patients || payload?.list || [];
+        const currentApproved = list.filter((p) => {
+          const s = String(p.status || "").toUpperCase();
+          return s === "APPROVED" || s === "ACTIVE";
+        }).length;
         
-        // Define limits
+        // Align with server planToMaxPatients (index.cjs)
         const limits = {
-          'FREE': 5,
+          'FREE': 3,
           'BASIC': 15,
           'PRO': Infinity
         };
 
-        const limit = limits[plan] || 5;
+        const limit = limits[plan] ?? 3;
         const canApprove = currentApproved < limit;
 
         return {
@@ -1280,6 +1320,12 @@ if (Array.isArray(json)) {
       window.location.href = `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
     }
 
+    function openFiles(patientId) {
+      if (!patientId) return;
+      setSelectedPatient(patientId, getPatientNameById(patientId));
+      window.location.href = `/admin-files.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
     // Add Patient Modal Functions
     function showAddPatientModal() {
       document.getElementById('addPatientModal').style.display = 'flex';
@@ -1351,7 +1397,7 @@ if (Array.isArray(json)) {
     }
 
     // Badge loading functions
-    const API = "http://localhost:10000"; // Development: Force localhost backend
+    const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`;
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
@@ -1386,41 +1432,14 @@ if (Array.isArray(json)) {
       const token = getAdminToken();
       if (!token) return;
       try {
-        let lastSeenTimestamp = 0;
-        try {
-          const stored = localStorage.getItem('chat_last_seen_timestamp');
-          if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
-        } catch (e) {}
-        const patientsRes = await fetch(`${API}/api/admin/patients`, {
+        const res = await fetch(`${API}/api/admin/messages/unread-counts?totalOnly=1`, {
           headers: adminHeaders({ Accept: "application/json" }),
         });
-        if (!patientsRes.ok) return;
-        const patientsData = await patientsRes.json();
-        if (!patientsData.ok) return;
-        const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
-        let totalUnread = 0;
-        for (const patient of patients) {
-          const patientId = patient.patientId || patient.id;
-          if (!patientId) continue;
-          try {
-            const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
-              headers: adminHeaders({ Accept: "application/json" }),
-            });
-            if (!messagesRes.ok) continue;
-            const messagesData = await messagesRes.json();
-            if (!messagesData.ok) continue;
-            const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
-            const unread = messages.filter((m) => {
-              if (m.from !== "PATIENT") return false;
-              if (m.createdAt) {
-                const msgTimestamp = new Date(m.createdAt).getTime();
-                return msgTimestamp > lastSeenTimestamp;
-              }
-              return true;
-            }).length;
-            totalUnread += unread;
-          } catch (e) { continue; }
-        }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const totalUnread = Number(data.total || 0);
         if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
           playNotificationSound();
         }
@@ -1443,21 +1462,24 @@ if (Array.isArray(json)) {
       const token = getAdminToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API}/api/admin/patients`, {
-          headers: adminHeaders({ Accept: "application/json" }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
+        let patients = ALL_PATIENTS;
+        if (!Array.isArray(patients) || patients.length === 0) {
+          const res = await fetch(`${API}/api/admin/patients`, {
+            headers: adminHeaders({ Accept: "application/json" }),
+          });
+          if (!res.ok) return;
+          const data = await res.json();
 
-let patients = [];
-
-if (Array.isArray(data)) {
-  patients = data;
-} else if (data.ok && Array.isArray(data.patients)) {
-  patients = data.patients;
-} else {
-  return;
-}
+          if (Array.isArray(data)) {
+            patients = data;
+          } else if (data.ok && Array.isArray(data.patients)) {
+            patients = data.patients;
+          } else if (data.ok && Array.isArray(data.list)) {
+            patients = data.list;
+          } else {
+            return;
+          }
+        }
         const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
         if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
           playNotificationSound();
@@ -1584,10 +1606,11 @@ if (Array.isArray(data)) {
         updateNavbar();
       }
       
-      // ✅ STEP 3 — Ensure correct load order
       await loadDoctorsCache();
-      await loadPatients();
-      loadClinicBadge();
+      await Promise.all([
+        loadPatients(),
+        loadClinicBadge()
+      ]);
       renderSelectedBar();
       const s = document.getElementById('searchInput');
       const f = document.getElementById('statusFilter');
@@ -1628,14 +1651,18 @@ if (Array.isArray(data)) {
       }
     }
 
-    // ✅ STEP 2 — Fix loadDoctorsCache function
-    async function loadDoctorsCache() {
-      if (DOCTORS_CACHE.length > 0) {
+    async function loadDoctorsCache(force) {
+      if (!force && DOCTORS_CACHE.length > 0) {
         return DOCTORS_CACHE;
       }
 
       const doctors = await loadDoctors();
-      DOCTORS_CACHE = doctors;   // IMPORTANT: no let/const here
+      DOCTORS_CACHE = doctors;
+      DOCTORS_BY_ID = doctors.reduce((acc, doctor) => {
+        const id = doctor && doctor.id !== undefined && doctor.id !== null ? String(doctor.id) : "";
+        if (id) acc[id] = doctor;
+        return acc;
+      }, {});
       return doctors;
     }
 
@@ -1672,14 +1699,22 @@ if (Array.isArray(data)) {
         });
 
         if (!res.ok) {
-          const error = await res.json();
-          alert(`Failed to assign doctor: ${error.message || 'Unknown error'}`);
+          const responseText = await res.text();
+          let errorMessage = 'Unknown error';
+          try {
+            const errorJson = JSON.parse(responseText || '{}');
+            errorMessage = errorJson.message || errorJson.error || errorMessage;
+          } catch (_) {
+            errorMessage = `HTTP ${res.status}`;
+          }
+          alert(`Failed to assign doctor: ${errorMessage}`);
           return;
         }
 
         const result = await res.json();
         if (result.ok) {
-          // ✅ 2️⃣ Assign Sonrası Sessiz Güncelleme
+          // Doktor listesi cache’i eski kalıyordu; yeni doktor / clinic_code ile eşleşme için yenile
+          await loadDoctorsCache(true);
           await loadPatients();
         }
       } catch (error) {
@@ -1694,40 +1729,8 @@ if (Array.isArray(data)) {
       }
     }
 
-    // Initialize doctor dropdowns when patients are loaded
-    async function initializeDoctorDropdowns() {
-      const doctors = await loadDoctors();
-      const dropdowns = document.querySelectorAll('select[id^="doctor-"]');
-      
-      dropdowns.forEach(dropdown => {
-        // Clear existing options except the first one
-        dropdown.innerHTML = '<option value="">Select Doctor</option>';
-        
-        // Add doctor options
-        doctors.forEach(doctor => {
-          const option = document.createElement('option');
-          option.value = doctor.id;
-          const name = doctor.full_name || doctor.email || "Doctor";
-          option.textContent = name;
-          dropdown.appendChild(option);
-        });
-      });
-
-      // Fix dropdown styling for visibility
-      document.querySelectorAll("select[id^='doctor-']").forEach(s => {
-        s.style.background = "white";
-        s.style.color = "black";
-        s.style.zIndex = "9999";
-      });
-    }
-
-    // Modify loadPatients function to initialize dropdowns after loading
-    const originalLoadPatients = loadPatients;
-    loadPatients = async function() {
-      await originalLoadPatients();
-      await initializeDoctorDropdowns();
-    };
   </script>
+  <script src="/admin-layout.js?v=20260322"></script>
 </body>
 </html>
 

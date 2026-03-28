@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Doktor Başvuruları - Clinifly Admin [2025-02-10-00-25]</title>
+  <title>Doktorlar - Clinifly Admin</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <script src="/admin-i18n.js"></script>
   <style>
     :root {
@@ -18,84 +17,37 @@
       --r:#dc2626;
       --y:#f59e0b;
       --muted:#a7b2c8;
-      --link:#6aa6ff;
     }
-    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
-    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
-    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
-    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    body { font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    body.al-ready { background: var(--bg); color: #e6eaf2; }
+    body.al-ready .al-topbar { background: #1f2937; border-bottom-color: #374151; }
+    body.al-ready .al-topbar .al-page-title { color: #e5e7eb; }
+    body.al-ready .al-lang { background: #111827; border-color: #374151; }
+    body.al-ready .al-lang span { color: #94A3B8; }
 
-    .navbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 24px;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--b);
-      flex-wrap: wrap;
-    }
-    .navbar-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .navbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 700;
-      font-size: 20px;
-      color: #fff;
-    }
-    .navbar-links {
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .navbar-link {
-      color: var(--muted);
-      text-decoration: none;
-      padding: 8px 12px;
-      border-radius: 6px;
-      transition: all 0.2s;
-    }
-    .navbar-link:hover {
-      color: #fff;
-      background: var(--b);
-    }
-    .navbar-link.active {
-      color: #fff;
-      background: var(--p);
-    }
+    .wrap { padding: 24px; }
 
+    /* Stats */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
       margin-bottom: 24px;
     }
     .stat-card {
       background: var(--card);
       border: 1px solid var(--b);
       border-radius: 12px;
-      padding: 20px;
+      padding: 18px 20px;
       text-align: center;
     }
-    .stat-number {
-      font-size: 32px;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 4px;
-    }
-    .stat-label {
-      font-size: 14px;
-      color: var(--muted);
-    }
+    .stat-number { font-size: 30px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+    .stat-label { font-size: 13px; color: var(--muted); }
 
+    /* Search */
     .search-filter {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
@@ -104,419 +56,443 @@
       min-width: 200px;
       background: var(--card);
       border: 1px solid var(--b);
-      color: #fff;
-      padding: 12px 16px;
+      color: #e6eaf2;
+      padding: 10px 14px;
       border-radius: 8px;
       font-size: 14px;
+      outline: none;
     }
-    .filter-btn {
+    .search-input:focus { border-color: var(--p); }
+    .search-input::placeholder { color: var(--muted); }
+    .filter-select {
       background: var(--card);
       border: 1px solid var(--b);
-      color: #fff;
-      padding: 12px 16px;
+      color: #e6eaf2;
+      padding: 10px 14px;
       border-radius: 8px;
       font-size: 14px;
       cursor: pointer;
-      transition: all 0.2s;
+      outline: none;
     }
-    .filter-btn:hover {
-      background: var(--b);
+    .refresh-btn {
+      background: var(--p);
+      border: none;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
     }
+    .refresh-btn:hover { background: #1d4ed8; }
 
+    /* Doctor Grid */
     .doctor-grid {
       display: grid;
+      grid-template-columns: repeat(2, 1fr);
       gap: 16px;
     }
     .doctor-card {
       background: var(--card);
       border: 1px solid var(--b);
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 20px;
+      transition: border-color 0.2s;
     }
+    .doctor-card:hover { border-color: #4b5563; }
+
     .doctor-header {
       display: flex;
-      justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 16px;
+      gap: 14px;
+      margin-bottom: 14px;
     }
-    .doctor-info h3 {
-      margin: 0 0 8px;
-      font-size: 18px;
-      font-weight: 600;
+
+    /* Avatar / Photo */
+    .doctor-avatar {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--b);
+      flex-shrink: 0;
+      background: #374151;
+    }
+    .doctor-avatar-placeholder {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+      border: 2px solid var(--b);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: 700;
       color: #fff;
+      text-transform: uppercase;
+      letter-spacing: -1px;
     }
+
+    .doctor-info { flex: 1; min-width: 0; }
+    .doctor-info h3 {
+      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .doctor-title-dept {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .doctor-status {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .status-PENDING { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+    .status-APPROVED { background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid rgba(22,163,74,0.3); }
+    .status-ACTIVE   { background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid rgba(22,163,74,0.3); }
+    .status-REJECTED { background: rgba(220,38,38,0.15); color: #f87171; border: 1px solid rgba(220,38,38,0.3); }
+
     .doctor-meta {
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      font-size: 14px;
+      gap: 3px;
+      font-size: 13px;
       color: var(--muted);
+      margin-bottom: 14px;
     }
-    .doctor-status {
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-    .status-PENDING { background: var(--y); color: #000; }
-    .status-APPROVED { background: var(--g); color: #fff; }
-    .status-REJECTED { background: var(--r); color: #fff; }
+    .doctor-meta span { display: flex; align-items: center; gap: 6px; }
 
-    .doctor-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 16px;
+    .profile-sections {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
     }
+    .profile-section {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .profile-section-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 7px;
+    }
+    .profile-row {
+      font-size: 12px;
+      color: #e6eaf2;
+      margin-bottom: 3px;
+      display: flex;
+      gap: 6px;
+    }
+    .profile-row .lbl { color: var(--muted); min-width: 70px; flex-shrink: 0; }
+    .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+    .tag { background: #374151; border-radius: 5px; padding: 2px 8px; font-size: 11px; color: #e6eaf2; }
+    .tag-empty { font-size: 11px; color: var(--muted); font-style: italic; }
+    .doctor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .btn {
-      padding: 8px 16px;
+      padding: 7px 14px;
       border: none;
-      border-radius: 6px;
-      font-size: 14px;
+      border-radius: 7px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: opacity 0.2s;
     }
-    .btn-success { background: var(--g); color: #fff; }
-    .btn-danger { background: var(--r); color: #fff; }
-    .btn-secondary { background: var(--b); color: #fff; }
-    .btn:hover { opacity: 0.9; }
+    .btn:hover { opacity: 0.85; }
+    .btn-approve { background: var(--g); color: #fff; }
+    .btn-reject  { background: transparent; color: #9ca3af; border: 1px solid #374151; }
+    .btn-detail  { background: var(--b); color: #e6eaf2; }
 
-    .loading, .error, .empty {
+    .loading, .empty {
       text-align: center;
-      padding: 40px;
+      padding: 60px;
       color: var(--muted);
+      font-size: 15px;
     }
-    .error {
-      color: var(--r);
-      background: rgba(220, 38, 38, 0.1);
+    .error-box {
+      background: rgba(220,38,38,0.1);
       border: 1px solid var(--r);
       border-radius: 8px;
+      padding: 14px 18px;
+      color: #f87171;
+      margin-bottom: 16px;
+    }
+    .page-title {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 0 0 24px;
+      color: #fff;
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <div class="navbar">
-        <div class="navbar-left">
-          <div class="navbar-logo">
-            🏥 Clinifly Admin
-          </div>
-        </div>
-        <div class="navbar-links">
-          <a href="/admin.html" class="navbar-link">Dashboard</a>
-          <a href="/admin-patients.html" class="navbar-link">Patients</a>
-          <a href="/admin-doctor-applications.html" class="navbar-link active">Doctor Applications</a>
-          <a href="#" onclick="logout()" class="navbar-link">Logout</a>
-        </div>
-      </div>
-      <h1>👨‍⚕️ Doktor Başvuruları</h1>
-    </header>
+    <h2 class="page-title">👨‍⚕️ Doktorlar</h2>
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-number" id="pending-count">-</div>
-        <div class="stat-label">Bekleyen Başvuru</div>
+        <div class="stat-number" id="pending-count">—</div>
+        <div class="stat-label">Bekleyen</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="approved-count">-</div>
-        <div class="stat-label">Onaylanan Doktor</div>
+        <div class="stat-number" id="approved-count">—</div>
+        <div class="stat-label">Onaylı</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="rejected-count">-</div>
-        <div class="stat-label">Reddedilen Başvuru</div>
+        <div class="stat-number" id="rejected-count">—</div>
+        <div class="stat-label">Reddedilen</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number" id="total-count">-</div>
-        <div class="stat-label">Toplam Başvuru</div>
+        <div class="stat-number" id="total-count">—</div>
+        <div class="stat-label">Toplam</div>
       </div>
     </div>
 
     <div class="search-filter">
-      <input type="text" class="search-input" id="search-input" placeholder="Doktor adı, email veya telefon ile ara...">
-      <select class="filter-btn" id="status-filter">
+      <input type="text" class="search-input" id="search-input" placeholder="Ad, email veya telefon ara...">
+      <select class="filter-select" id="status-filter">
         <option value="">Tüm Durumlar</option>
         <option value="PENDING">Bekleyen</option>
         <option value="APPROVED">Onaylanan</option>
+        <option value="ACTIVE">Aktif</option>
         <option value="REJECTED">Reddedilen</option>
       </select>
-      <button class="filter-btn" onclick="loadDoctors()">🔄 Yenile</button>
+      <button class="refresh-btn" onclick="loadDoctors()">↺ Yenile</button>
     </div>
 
-    <div id="loading-container" class="loading" style="display:none;">
-      <div>🔄 Yükleniyor...</div>
-    </div>
     <div id="error-container"></div>
+    <div id="loading-container" class="loading" style="display:none;">Yükleniyor...</div>
     <div id="doctors-container" class="doctor-grid"></div>
-    <div id="empty-container" class="empty" style="display:none;">
-      <div>📋 Henüz doktor başvurusu bulunmuyor</div>
-    </div>
+    <div id="empty-container" class="empty" style="display:none;">Henüz doktor kaydı bulunmuyor.</div>
   </div>
 
   <script>
-    // Token check
     (function() {
-      const token = localStorage.getItem("admin_token");
-      if (!token) {
-        window.location.href = "/admin-login.html";
-      }
+      const token = localStorage.getItem("adminToken");
+      if (!token) window.location.href = "/admin-login.html";
     })();
 
-    // Use backend endpoints instead of direct Supabase
     let allDoctors = [];
     let filteredDoctors = [];
 
-    async function loadDoctors() {
-      const loadingContainer = document.getElementById("loading-container");
-      const errorContainer = document.getElementById("error-container");
-      const doctorsContainer = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
+    function getInitials(name) {
+      if (!name) return '?';
+      return name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    }
 
-      loadingContainer.style.display = "block";
-      errorContainer.innerHTML = "";
-      doctorsContainer.innerHTML = "";
-      emptyContainer.style.display = "none";
+    function avatarHtml(doctor) {
+      if (doctor.profile_photo_url) {
+        return `<img class="doctor-avatar" src="${doctor.profile_photo_url}" alt="${doctor.name || ''}" onerror="this.outerHTML=fallbackAvatar('${getInitials(doctor.name)}')">`;
+      }
+      return `<div class="doctor-avatar-placeholder">${getInitials(doctor.name)}</div>`;
+    }
+
+    function fallbackAvatar(initials) {
+      return `<div class="doctor-avatar-placeholder">${initials}</div>`;
+    }
+
+    async function loadDoctors() {
+      const loadingEl  = document.getElementById("loading-container");
+      const errorEl    = document.getElementById("error-container");
+      const doctorsEl  = document.getElementById("doctors-container");
+      const emptyEl    = document.getElementById("empty-container");
+
+      loadingEl.style.display = "block";
+      errorEl.innerHTML = "";
+      doctorsEl.innerHTML = "";
+      emptyEl.style.display = "none";
 
       try {
-        console.log("[BACKEND] Loading doctors from backend...");
-        
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch("/admin/doctor-list", {
-          headers: {
-            "Authorization": "Bearer " + token
-          }
+        const token = localStorage.getItem("adminToken");
+        const res = await fetch("/admin/doctor-list", {
+          headers: { "Authorization": "Bearer " + token }
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Yüklenemedi');
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        if (!data.ok) {
-          throw new Error(data.error || 'Failed to load doctors');
-        }
-
-        console.log("[BACKEND] Doctors loaded successfully:", data.doctors);
-        
         allDoctors = data.doctors || [];
         filteredDoctors = [...allDoctors];
         updateStats();
         renderDoctors();
-        
-      } catch (error) {
-        console.error("Load doctors error:", error);
-        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
+      } catch (err) {
+        errorEl.innerHTML = `<div class="error-box">❌ ${err.message}</div>`;
       } finally {
-        loadingContainer.style.display = "none";
+        loadingEl.style.display = "none";
       }
     }
 
     function updateStats() {
-      const pending = filteredDoctors.filter(d => d.status === 'PENDING').length;
-      const approved = filteredDoctors.filter(d => d.status === 'APPROVED').length;
-      const rejected = filteredDoctors.filter(d => d.status === 'REJECTED').length;
-      const total = filteredDoctors.length;
-
-      document.getElementById('pending-count').textContent = pending;
-      document.getElementById('approved-count').textContent = approved;
-      document.getElementById('rejected-count').textContent = rejected;
-      document.getElementById('total-count').textContent = total;
+      document.getElementById('pending-count').textContent  = filteredDoctors.filter(d => d.status === 'PENDING').length;
+      document.getElementById('approved-count').textContent = filteredDoctors.filter(d => d.status === 'APPROVED' || d.status === 'ACTIVE').length;
+      document.getElementById('rejected-count').textContent = filteredDoctors.filter(d => d.status === 'REJECTED').length;
+      document.getElementById('total-count').textContent    = filteredDoctors.length;
     }
 
     function renderDoctors() {
-      const doctorsContainer = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
+      const doctorsEl = document.getElementById("doctors-container");
+      const emptyEl   = document.getElementById("empty-container");
 
       if (filteredDoctors.length === 0) {
-        doctorsContainer.innerHTML = "";
-        emptyContainer.style.display = "block";
+        doctorsEl.innerHTML = "";
+        emptyEl.style.display = "block";
         return;
       }
+      emptyEl.style.display = "none";
 
-      doctorsContainer.innerHTML = filteredDoctors.map(doctor => `
+      doctorsEl.innerHTML = filteredDoctors.map(d => {
+        const statusLabel = { PENDING:'Bekleyen', APPROVED:'Onaylı', ACTIVE:'Aktif', REJECTED:'Reddedildi' }[d.status] || d.status;
+        const approveBtn = (d.status !== 'APPROVED' && d.status !== 'ACTIVE') ? `<button class="btn btn-approve" onclick="approveDoctor('${d.doctor_id}')">✅ Onayla</button>` : '';
+        const rejectBtn  = (d.status !== 'REJECTED') ? `<button class="btn btn-reject" onclick="rejectDoctor('${d.doctor_id}')">Disapprove</button>` : '';
+
+        const specs  = d.specialities_list || [];
+        const langs  = d.languages_list    || [];
+        const procs  = d.procedures_list   || [];
+
+        const tagsHtml = arr => arr.length
+          ? arr.map(t => `<span class="tag">${t}</span>`).join('')
+          : `<span class="tag-empty">Belirtilmedi</span>`;
+
+        return `
         <div class="doctor-card">
           <div class="doctor-header">
+            ${avatarHtml(d)}
             <div class="doctor-info">
-              <h3>${doctor.name || '-'}</h3>
-              <div class="doctor-meta">
-                <div>📧 ${doctor.email || '-'}</div>
-                <div>📱 ${doctor.phone || '-'}</div>
-                <div>🏥 ${doctor.clinic_code}</div>
-                ${doctor.department ? `<div>🩺 ${doctor.department}</div>` : ''}
-                ${doctor.title ? `<div>👔 ${doctor.title}</div>` : ''}
-                ${doctor.license_number ? `<div>📜 ${doctor.license_number}</div>` : ''}
-                <div>📅 ${new Date(doctor.created_at).toLocaleString("tr-TR")}</div>
-              </div>
-            </div>
-            <div class="doctor-status status-${doctor.status}">
-              ${getStatusText(doctor.status)}
+              <h3>${d.name || '—'}</h3>
+              <div class="doctor-title-dept">${[d.role || d.title, d.department].filter(Boolean).join(' · ') || ''}</div>
+              <span class="doctor-status status-${d.status}">${statusLabel}</span>
             </div>
           </div>
-          <div class="doctor-actions">
-            ${doctor.status === 'PENDING' ? `
-              <button class="btn btn-success" onclick="approveDoctor('${doctor.doctor_id}')">✅ Onayla</button>
-              <button class="btn btn-danger" onclick="rejectDoctor('${doctor.doctor_id}')">❌ Reddet</button>
-            ` : ""}
-            <button class="btn btn-secondary" onclick="viewDetails('${doctor.doctor_id}')">👁️ Detaylar</button>
-          </div>
-        </div>
-      `).join("");
-    }
 
-    function getStatusText(status) {
-      const statusMap = {
-        "PENDING": "Bekleyen",
-        "APPROVED": "Onaylı",
-        "REJECTED": "Reddedildi"
-      };
-      return statusMap[status] || status;
+          <div class="doctor-meta">
+            ${d.email  ? `<span>✉️ ${d.email}</span>` : ''}
+            ${d.phone  ? `<span>📱 ${d.phone}</span>` : ''}
+            ${d.clinic_code ? `<span>🏥 ${d.clinic_code}</span>` : ''}
+            ${d.license_number ? `<span>📜 ${d.license_number}</span>` : ''}
+            <span>📅 ${new Date(d.created_at).toLocaleDateString('tr-TR')}</span>
+          </div>
+
+          <div class="profile-sections">
+            <div class="profile-section">
+              <div class="profile-section-title">Mesleki</div>
+              <div class="profile-row"><span class="lbl">Deneyim</span>${d.years_of_experience ? d.years_of_experience + ' yıl' : '—'}</div>
+              <div class="profile-row"><span class="lbl">Üniversite</span>${d.university || '—'}</div>
+              <div class="profile-row"><span class="lbl">Mezuniyet</span>${d.graduation_year || '—'}</div>
+              <div class="profile-row"><span class="lbl">Profil</span>${d.public_profile ? '🌐 Açık' : '🔒 Gizli'}</div>
+              ${d.bio ? `<div class="profile-row" style="flex-direction:column;gap:2px"><span class="lbl">Bio</span><span style="color:var(--muted);font-size:11px">${d.bio}</span></div>` : ''}
+            </div>
+            <div class="profile-section">
+              <div class="profile-section-title">Uzmanlık</div>
+              <div class="tags">${tagsHtml(specs)}</div>
+            </div>
+            <div class="profile-section">
+              <div class="profile-section-title">Diller</div>
+              <div class="tags">${tagsHtml(langs)}</div>
+            </div>
+            <div class="profile-section" style="grid-column:1/-1">
+              <div class="profile-section-title">Prosedürler</div>
+              <div class="tags">${tagsHtml(procs)}</div>
+            </div>
+          </div>
+
+          <div class="doctor-actions">
+            ${approveBtn}${rejectBtn}
+          </div>
+        </div>`;
+      }).join('');
     }
 
     async function approveDoctor(doctorId) {
-      console.log("[BACKEND] Approving doctor with doctor_id:", doctorId);
-      
-      if (!doctorId) {
-        alert('doctor_id missing (this should never happen)');
-        return;
-      }
-
-      if (!confirm("Bu doktor başvurusunu onaylamak istediğinizden emin misiniz?")) {
-        return;
-      }
-
+      if (!confirm("Bu doktoru onaylamak istediğinizden emin misiniz?")) return;
       try {
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch("/admin/approve-doctor-v2", {
+        const token = localStorage.getItem("adminToken");
+        const res = await fetch("/admin/approve-doctor-v2", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + token
-          },
-          body: JSON.stringify({ doctorId: doctorId })
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify({ doctorId })
         });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.ok) {
-          throw new Error(data.error || 'Approve failed');
-        }
-
-        console.log('[BACKEND] Doctor approved successfully');
-        alert('✅ Doktor başarıyla onaylandı!');
-        loadDoctors(); // refresh list
-        
-      } catch (error) {
-        console.error('[BACKEND] Approve error:', error);
-        alert('❌ Onaylama hatası: ' + error.message);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Hata');
+        alert('✅ Doktor onaylandı!');
+        loadDoctors();
+      } catch (err) {
+        alert('❌ ' + err.message);
       }
     }
 
     async function rejectDoctor(doctorId) {
-      console.log("[BACKEND] Rejecting doctor with doctor_id:", doctorId);
-      
-      if (!doctorId) {
-        alert('doctor_id missing (this should never happen)');
-        return;
-      }
-
-      if (!confirm("Bu doktor başvurusunu reddetmek istediğinizden emin misiniz?")) {
-        return;
-      }
-
+      if (!confirm("Bu başvuruyu reddetmek istediğinizden emin misiniz?")) return;
       try {
-        const token = localStorage.getItem("admin_token");
-        const response = await fetch("/admin/reject-doctor-v2", {
+        const token = localStorage.getItem("adminToken");
+        const res = await fetch("/admin/reject-doctor-v2", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + token
-          },
-          body: JSON.stringify({ doctorId: doctorId })
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify({ doctorId })
         });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.ok) {
-          throw new Error(data.error || 'Reject failed');
-        }
-
-        console.log('[BACKEND] Doctor rejected successfully');
-        alert('❌ Doktor başvurusu reddedildi!');
-        loadDoctors(); // refresh list
-        
-      } catch (error) {
-        console.error('[BACKEND] Reject error:', error);
-        alert('❌ Reddetme hatası: ' + error.message);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Hata');
+        alert('Başvuru reddedildi.');
+        loadDoctors();
+      } catch (err) {
+        alert('❌ ' + err.message);
       }
     }
 
     function viewDetails(doctorId) {
-      const doctor = allDoctors.find(d => d.doctor_id === doctorId);
-      if (!doctor) return;
-
-      const details = `
-👨‍⚕️ DOKTOR DETAYLARI
-
-Ad: ${doctor.name || '-'}
-Email: ${doctor.email || '-'}
-Telefon: ${doctor.phone || '-'}
-Klinik: ${doctor.clinic_code}
-Departman: ${doctor.department || '-'}
-Ünvan: ${doctor.title || '-'}
-Lisans: ${doctor.license_number || '-'}
-Uzmanlık: ${doctor.specialties || '-'}
-Durum: ${getStatusText(doctor.status)}
-Kayıt: ${new Date(doctor.created_at).toLocaleString("tr-TR")}
-Doctor ID: ${doctor.doctor_id}
-      `.trim();
-
-      alert(details);
+      const d = allDoctors.find(x => x.doctor_id === doctorId);
+      if (!d) return;
+      alert([
+        `👨‍⚕️ ${d.name || '—'}`,
+        `Email: ${d.email || '—'}`,
+        `Telefon: ${d.phone || '—'}`,
+        `Klinik: ${d.clinic_code || '—'}`,
+        `Departman: ${d.department || '—'}`,
+        `Ünvan: ${d.title || '—'}`,
+        `Lisans: ${d.license_number || '—'}`,
+        `Uzmanlık: ${d.specialties || '—'}`,
+        `Durum: ${d.status}`,
+        `Fotoğraf: ${d.profile_photo_url ? 'Var ✅' : 'Yok ❌'}`,
+        `Kayıt: ${new Date(d.created_at).toLocaleString('tr-TR')}`,
+        `ID: ${d.doctor_id}`
+      ].join('\n'));
     }
 
-    function logout() {
-      localStorage.removeItem("admin_token");
-      window.location.href = "/admin-login.html";
-    }
-
-    // Search and filter
     document.getElementById('search-input').addEventListener('input', filterDoctors);
     document.getElementById('status-filter').addEventListener('change', filterDoctors);
 
     function filterDoctors() {
-      const searchTerm = document.getElementById('search-input').value.toLowerCase();
-      const statusFilter = document.getElementById('status-filter').value;
-
-      filteredDoctors = allDoctors.filter(doctor => {
-        const matchesSearch = !searchTerm || 
-          (doctor.name && doctor.name.toLowerCase().includes(searchTerm)) ||
-          (doctor.email && doctor.email.toLowerCase().includes(searchTerm)) ||
-          (doctor.phone && doctor.phone.includes(searchTerm));
-        
-        const matchesStatus = !statusFilter || doctor.status === statusFilter;
-        
-        return matchesSearch && matchesStatus;
+      const term = document.getElementById('search-input').value.toLowerCase();
+      const status = document.getElementById('status-filter').value;
+      filteredDoctors = allDoctors.filter(d => {
+        const matchSearch = !term ||
+          (d.name  && d.name.toLowerCase().includes(term)) ||
+          (d.email && d.email.toLowerCase().includes(term)) ||
+          (d.phone && d.phone.includes(term));
+        const matchStatus = !status || d.status === status;
+        return matchSearch && matchStatus;
       });
-
       updateStats();
       renderDoctors();
     }
 
-    // Load doctors on page load
-    document.addEventListener("DOMContentLoaded", function() {
-      console.log("[BACKEND] Page loaded at:", new Date().toISOString());
-      console.log("[BACKEND] Using backend endpoints for doctor management...");
-      loadDoctors();
-    });
+    document.addEventListener("DOMContentLoaded", loadDoctors);
   </script>
+  <script src="/admin-layout.js?v=20260322"></script>
 </body>
 </html>

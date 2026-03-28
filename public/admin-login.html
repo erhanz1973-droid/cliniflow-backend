@@ -244,15 +244,26 @@
   </div>
 
 <script>
-  const API = ""; // Production: Use same domain (admin service)
+  const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain (admin service)
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
     container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
     setTimeout(() => {
       container.innerHTML = "";
-    }, type === "error" ? 5000 : 3000);
+    }, type === "error" ? 6000 : 3000);
   }
+
+  // Show session-expired message if redirected from another page
+  (function checkSessionExpired() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reason") === "session_expired") {
+      // Remove param from URL without reload
+      history.replaceState(null, "", window.location.pathname);
+      // Show after slight delay so DOM is ready
+      setTimeout(() => showAlert("⏰ Oturum süreniz doldu veya token geçersiz. Lütfen tekrar giriş yapın.", "error"), 200);
+    }
+  })();
 
   function setMsg(message, type = "ok") {
     showAlert(message, type === "err" ? "error" : "success");
@@ -304,10 +315,15 @@
         return;
       }
 
-      // ✅ TOKEN SAVE
+      // ✅ TOKEN SAVE (backward compatible keys)
       localStorage.setItem("admin_token", json.token);
-      localStorage.setItem("clinic_code", json.clinicCode);
-      localStorage.setItem("clinic_name", json.clinicName || "");
+      localStorage.setItem("adminToken", json.token);
+      const savedClinicCode = json.clinicCode || json.admin?.clinicCode || clinicCode;
+      const savedClinicName = json.clinicName || json.admin?.clinicName || "";
+      localStorage.setItem("clinic_code", savedClinicCode);
+      localStorage.setItem("clinic_name", savedClinicName);
+      // Clear session-specific data from previous clinic sessions
+      localStorage.removeItem("selected_patient_id");
       
       // ✅ USER DATA SAVE - Use real user data from API response
       if (json.user) {
@@ -319,8 +335,8 @@
           id: json.clinicId || 'admin',
           email: json.email || "",
           role: "ADMIN",
-          clinicCode: json.clinicCode,
-          clinicName: json.clinicName || ""
+          clinicCode: savedClinicCode,
+          clinicName: savedClinicName
         };
         localStorage.setItem("user", JSON.stringify(userData));
         console.log("[LOGIN] Fallback user data saved:", userData);
@@ -343,6 +359,11 @@
   
   // Auto-focus on clinic code input
   document.getElementById("clinicCode").focus();
+  document.getElementById("clinicCode").addEventListener("input", (e) => {
+    const pos = e.target.selectionStart;
+    e.target.value = e.target.value.toUpperCase();
+    e.target.setSelectionRange(pos, pos);
+  });
   function showOTPForm(clinicCode, email) {
     const formContainer = document.querySelector('.form-container');
     
@@ -479,8 +500,13 @@
           if (json.ok && json.token) {
             // Save token and redirect
             localStorage.setItem("admin_token", json.token);
-            localStorage.setItem("clinic_code", json.clinicCode);
-            localStorage.setItem("clinic_name", json.clinicName || "");
+            localStorage.setItem("adminToken", json.token);
+            const savedClinicCode = json.clinicCode || clinicCode;
+            const savedClinicName = json.clinicName || "";
+            localStorage.setItem("clinic_code", savedClinicCode);
+            localStorage.setItem("clinic_name", savedClinicName);
+            // Clear session-specific data from previous clinic sessions
+            localStorage.removeItem("selected_patient_id");
             
             // ✅ USER DATA SAVE - Use real user data from API response
             if (json.user) {
@@ -492,8 +518,8 @@
                 id: json.clinicId || 'admin',
                 email: json.email || "",
                 role: "ADMIN",
-                clinicCode: json.clinicCode,
-                clinicName: json.clinicName || ""
+                clinicCode: savedClinicCode,
+                clinicName: savedClinicName
               };
               localStorage.setItem("user", JSON.stringify(userData));
               console.log("[OTP LOGIN] Fallback user data saved:", userData);
