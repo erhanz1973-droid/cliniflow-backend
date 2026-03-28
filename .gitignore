@@ -13,6 +13,9 @@ yarn-error.log*
 
 server_OLD/
 
+# Local / mirrored patient uploads (do not commit binaries)
+public/uploads/
+
 # Temporarily allow cliniflow-app for deployment
 # cliniflow-app/
 
