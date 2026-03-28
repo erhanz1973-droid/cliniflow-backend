@@ -62,7 +62,10 @@ const PORT =
     ? Number.parseInt(String(_portEnv), 10) || 10000
     : 10000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
-const JWT_SECRET = process.env.JWT_SECRET || "yJ2uB87EHHAEqMyrePIrYQR0+pC3t8fFh5IJJ/QH6lY";
+const JWT_SECRET =
+  typeof process.env.JWT_SECRET === "string" && process.env.JWT_SECRET.trim().length >= 8
+    ? process.env.JWT_SECRET.trim()
+    : "yJ2uB87EHHAEqMyrePIrYQR0+pC3t8fFh5IJJ/QH6lY";
 const JWT_EXPIRES_IN = "30d";
 const IS_PROD = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 const PERF_LOGS_ENABLED = !IS_PROD || String(process.env.PERF_LOGS || "").trim() === "1";
@@ -19803,97 +19806,43 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 // POST /api/admin/login
-// Admin authentication using admins table (email + clinic_code + password)
+// Same resolution strategy as main API: admins row first, then clinics row (legacy).
 app.post("/api/admin/login", async (req, res) => {
   try {
     const { email, clinicCode, password } = req.body || {};
-    
+
     console.log("[ADMIN LOGIN] Request received:", { email, clinicCode, hasPassword: !!password });
-    
-    // Validate inputs
+
     if (!email || !String(email).trim()) {
       return res.status(400).json({ ok: false, error: "email_required" });
     }
-    
+
     if (!clinicCode || !String(clinicCode).trim()) {
       return res.status(400).json({ ok: false, error: "clinic_code_required" });
     }
-    
+
     if (!password || !String(password).trim()) {
       return res.status(400).json({ ok: false, error: "password_required" });
     }
-    
-    // SUPABASE: Fetch admin from admins table
-    if (isSupabaseEnabled()) {
-      console.log("[ADMIN LOGIN] Supabase enabled, looking up admin:", { email, clinicCode });
-      
-      const admin = await getAdminByEmailAndClinicCode(email, clinicCode);
-      console.log("[ADMIN LOGIN] Admin lookup result:", { 
-        found: !!admin, 
-        adminId: admin?.id, 
-        status: admin?.status,
-        hasPasswordHash: !!admin?.password_hash 
-      });
-      
-      if (admin) {
-        if (!admin.password_hash || typeof admin.password_hash !== "string") {
-          console.error("[ADMIN LOGIN] Admin row missing password_hash:", admin?.id);
-          return res.status(500).json({
-            ok: false,
-            error: "admin_account_misconfigured",
-            message: "Admin has no password hash in database; reset password or fix admins row.",
-          });
-        }
-        // Verify password
-        let passwordMatch = false;
+
+    const trimmedEmail = String(email).trim().toLowerCase();
+    const trimmedPassword = String(password).trim();
+    const trimmedClinicCode = String(clinicCode).trim().toUpperCase();
+
+    const isBcryptHash = (value) => typeof value === "string" && /^\$2[aby]\$/.test(value);
+    const checkPassword = async (plain, stored) => {
+      if (!stored || typeof stored !== "string") return false;
+      if (isBcryptHash(stored)) {
         try {
-          passwordMatch = await bcrypt.compare(String(password).trim(), admin.password_hash);
-        } catch (bcryptErr) {
-          console.error("[ADMIN LOGIN] bcrypt.compare failed:", bcryptErr?.message);
-          return res.status(500).json({
-            ok: false,
-            error: "password_verify_failed",
-            message: "Stored password hash is invalid; reset admin password in database.",
-          });
+          return await bcrypt.compare(plain, stored);
+        } catch {
+          return false;
         }
-        console.log("[ADMIN LOGIN] Password match result:", passwordMatch);
-        
-        if (!passwordMatch) {
-          return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
-        }
-        
-        // ✅ Admin authentication successful
-        // Generate JWT token with admin info
-        const token = jwt.sign(
-          { 
-            type: "admin",
-            adminId: admin.id,
-            email: admin.email,
-            clinicCode: admin.clinic_code,
-            role: "ADMIN"
-          },
-          JWT_SECRET,
-          { expiresIn: JWT_EXPIRES_IN }
-        );
-        
-        console.log("[ADMIN LOGIN] Token generated successfully for admin:", admin.email);
-        
-        return res.json({
-          ok: true,
-          token,
-          admin: {
-            id: admin.id,
-            email: admin.email,
-            clinicCode: admin.clinic_code,
-            role: "ADMIN",
-            status: admin.status
-          }
-        });
-      } else {
-        console.log("[ADMIN LOGIN] Admin not found in admins table:", { email, clinicCode });
-        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
-    } else {
+      return stored === plain;
+    };
+
+    if (!isSupabaseEnabled()) {
       console.log("[ADMIN LOGIN] Supabase not enabled - cannot authenticate admins");
       return res.status(503).json({
         ok: false,
@@ -19902,6 +19851,101 @@ app.post("/api/admin/login", async (req, res) => {
           "Admin login requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on this server (e.g. set them on the Render cliniflow-admin service).",
       });
     }
+
+    console.log("[ADMIN LOGIN] Supabase enabled, resolving identity:", { email: trimmedEmail, clinicCode: trimmedClinicCode });
+
+    const admin = await getAdminByEmailAndClinicCode(trimmedEmail, trimmedClinicCode);
+    let identity = null;
+    let clinicForToken = null;
+
+    if (admin) {
+      const adminStatus = String(admin.status || "ACTIVE").toUpperCase();
+      if (adminStatus !== "ACTIVE") {
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+      }
+      const stored = admin.password_hash || admin.password;
+      const passwordMatch = await checkPassword(trimmedPassword, stored);
+      if (!passwordMatch) {
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+      }
+      clinicForToken = await getClinicByCode(admin.clinic_code || trimmedClinicCode);
+      identity = {
+        id: admin.id,
+        email: admin.email,
+        clinicCode: trimmedClinicCode,
+        status: admin.status,
+        clinicId: clinicForToken?.id || null,
+        clinicName: clinicForToken?.name || "",
+      };
+    } else {
+      const clinicRow = await getClinicByCode(trimmedClinicCode);
+      if (!clinicRow) {
+        console.log("[ADMIN LOGIN] No admin and no clinic for code:", trimmedClinicCode);
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+      }
+      if (String(clinicRow.email || "").trim().toLowerCase() !== trimmedEmail) {
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+      }
+      const clinicStatus = String(clinicRow.status || "ACTIVE").toUpperCase();
+      if (clinicStatus === "SUSPENDED") {
+        return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
+      }
+      const stored = clinicRow.password_hash || clinicRow.password;
+      const passwordMatch = await checkPassword(trimmedPassword, stored);
+      if (!passwordMatch) {
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+      }
+      clinicForToken = clinicRow;
+      identity = {
+        id: clinicRow.id,
+        email: clinicRow.email,
+        clinicCode: trimmedClinicCode,
+        status: clinicStatus,
+        clinicId: clinicRow.id,
+        clinicName: clinicRow.name || "",
+      };
+    }
+
+    if (!identity) {
+      return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+    }
+
+    const payload = {
+      type: "admin",
+      adminId: identity.id,
+      email: identity.email,
+      clinicCode: identity.clinicCode,
+      role: "ADMIN",
+    };
+    if (identity.clinicId) payload.clinicId = identity.clinicId;
+
+    let token;
+    try {
+      token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    } catch (signErr) {
+      console.error("[ADMIN LOGIN] jwt.sign failed:", signErr?.message);
+      return res.status(500).json({
+        ok: false,
+        error: "token_sign_failed",
+        message: "JWT oluşturulamadı; JWT_SECRET ortam değişkenini kontrol edin.",
+      });
+    }
+
+    console.log("[ADMIN LOGIN] Token generated successfully for:", identity.email);
+
+    return res.json({
+      ok: true,
+      token,
+      clinicId: identity.clinicId,
+      clinicName: identity.clinicName,
+      admin: {
+        id: identity.id,
+        email: identity.email,
+        clinicCode: identity.clinicCode,
+        role: "ADMIN",
+        status: identity.status,
+      },
+    });
   } catch (error) {
     console.error("[ADMIN LOGIN] Error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
