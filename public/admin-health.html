@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
+  <script src="/api-base.js"></script>
   <title>Admin - Health Form</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>
@@ -364,7 +365,7 @@
       }
     })();
 
-    const API_BASE = window.location.hostname.includes("onrender.com") ? "https://cliniflow-backend-dg8a.onrender.com" : `http://${window.location.hostname}:10000`;
+    const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
 
     // Get patientId from URL params
     const urlParams = new URLSearchParams(window.location.search);

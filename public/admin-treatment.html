@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"/>
   <title data-i18n="treatment.pageTitle">Tedaviler - Clinifly Admin</title>
   <link rel="stylesheet" href="/admin-layout.css"/>
+  <script src="/api-base.js"></script>
   <script src="/admin-i18n.js"></script>
   <style>
     body { font-family: system-ui; }
@@ -610,7 +611,7 @@
     } catch {}
   })();
 
-  const API_BASE = window.location.origin;
+  const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
 
   function t(key, params) {
     if (!window.i18n || typeof window.i18n.t !== 'function') return key;
@@ -2860,7 +2861,7 @@
   }
 </script>
 
-<script src="/admin-layout.js?v=20260322"></script>
+<script src="/admin-layout.js?v=20260329"></script>
 </body>
 </html>
 

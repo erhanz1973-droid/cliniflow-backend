@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Doktorlar - Clinifly Admin</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -320,7 +321,7 @@
 
       try {
         const token = localStorage.getItem("adminToken");
-        const res = await fetch("/admin/doctor-list", {
+        const res = await fetch((typeof apiUrl === 'function' ? apiUrl('/admin/doctor-list') : '/admin/doctor-list'), {
           headers: { "Authorization": "Bearer " + token }
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -422,7 +423,7 @@
       if (!confirm("Bu doktoru onaylamak istediğinizden emin misiniz?")) return;
       try {
         const token = localStorage.getItem("adminToken");
-        const res = await fetch("/admin/approve-doctor-v2", {
+        const res = await fetch((typeof apiUrl === 'function' ? apiUrl('/admin/approve-doctor-v2') : '/admin/approve-doctor-v2'), {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
           body: JSON.stringify({ doctorId })
@@ -440,7 +441,7 @@
       if (!confirm("Bu başvuruyu reddetmek istediğinizden emin misiniz?")) return;
       try {
         const token = localStorage.getItem("adminToken");
-        const res = await fetch("/admin/reject-doctor-v2", {
+        const res = await fetch((typeof apiUrl === 'function' ? apiUrl('/admin/reject-doctor-v2') : '/admin/reject-doctor-v2'), {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
           body: JSON.stringify({ doctorId })
@@ -493,6 +494,6 @@
 
     document.addEventListener("DOMContentLoaded", loadDoctors);
   </script>
-  <script src="/admin-layout.js?v=20260322"></script>
+  <script src="/admin-layout.js?v=20260329"></script>
 </body>
 </html>

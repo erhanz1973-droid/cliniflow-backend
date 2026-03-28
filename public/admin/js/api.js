@@ -1,5 +1,5 @@
-// API helpers for Admin Treatment
-const API_BASE = window.location.origin;
+// API helpers for Admin Treatment (load /api-base.js before this file)
+const API_BASE = typeof window.cliniflowApiBase === 'function' ? window.cliniflowApiBase() : '';
 const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
 let PROCEDURE_DEFS = [];
 let TYPE_TO_CATEGORY = {};
@@ -87,26 +87,3 @@ async function loadDoctorsDirectory() {
   // ...existing code from admin-treatment.html...
 }
 window.loadDoctorsDirectory = loadDoctorsDirectory;
-// API helpers for Admin Treatment
-const API_BASE = window.API_BASE || '';
-function adminHeaders(headers = {}) {
-  const token = localStorage.getItem('adminToken');
-  return { ...headers, Authorization: `Bearer ${token}` };
-}
-async function fetchJson(url, opts = {}) {
-  const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
-}
-async function loadPatientFullRecord(patientId) {
-  // ...existing code from admin-treatment.html...
-}
-async function loadProcedureDefs() {
-  // ...existing code from admin-treatment.html...
-}
-async function loadTreatmentPrices() {
-  // ...existing code from admin-treatment.html...
-}
-async function loadDoctorsDirectory() {
-  // ...existing code from admin-treatment.html...
-}

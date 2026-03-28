@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Chat - Clinifly Admin</title>
   <script>
@@ -267,10 +268,7 @@
       } catch {}
     })();
 
-    const API_BASE =
-      window.location.protocol === "http:" || window.location.protocol === "https:"
-        ? window.location.origin.replace(/\/$/, "")
-        : "";
+    const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
     let selectedPatientId = null;
     let selectedPatientName = null;
     let clinicName = null;

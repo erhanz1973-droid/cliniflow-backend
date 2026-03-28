@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Super Admin – Login</title>
   <style>
@@ -190,7 +191,7 @@
   </div>
 
 <script>
-  const API = window.location.origin;
+  const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
   
   function setMsg(msg, type = "ok") {
     const container = document.getElementById("alert-container");

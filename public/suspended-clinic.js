@@ -65,10 +65,11 @@
       
       // After the original function completes, check for suspended status
       try {
-        const API = "https://cliniflow-admin.onrender.com";
+        const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
         const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
         if (token) {
-          const res = await fetch(`${API}/api/admin/clinic`, {
+          const clinicUrl = (typeof apiUrl === 'function' ? apiUrl('/api/admin/clinic') : (API ? `${API}/api/admin/clinic` : '/api/admin/clinic'));
+          const res = await fetch(clinicUrl, {
             headers: {
               'Authorization': `Bearer ${token}`,
               'Accept': 'application/json'
