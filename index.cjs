@@ -22945,36 +22945,49 @@ app.get("/admin/doctor-list", requireAdminAuth, async (req, res) => {
   }
 });
 
+/** Match /api/admin/approve-doctor: UI may send UUID (id) or legacy doctor_id string. */
+async function updateDoctorRowByAdminId(doctorId, patch) {
+  const raw = String(doctorId || "").trim();
+  if (!raw) {
+    return { data: null, error: { message: "doctorId_required" } };
+  }
+  let r = await supabase.from("doctors").update(patch).eq("id", raw).select().maybeSingle();
+  if (r.error) return r;
+  if (r.data) return r;
+  r = await supabase.from("doctors").update(patch).eq("doctor_id", raw).select().maybeSingle();
+  return r;
+}
+
 app.post("/admin/approve-doctor-v2", requireAdminAuth, async (req, res) => {
   try {
     const { doctorId } = req.body;
-    
+
     if (!doctorId) {
-      return res.status(400).json({ ok: false, error: 'doctorId_required' });
+      return res.status(400).json({ ok: false, error: "doctorId_required" });
     }
 
-    console.log('[APPROVE V2] Approving doctor with doctor_id:', doctorId);
+    console.log("[APPROVE V2] Approving doctor:", doctorId);
 
-    const { data, error } = await supabase
-      .from('doctors')
-      .update({
-        status: 'APPROVED',
-        approved_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('doctor_id', doctorId)
-      .select()
-      .single();
+    const patch = {
+      status: "APPROVED",
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await updateDoctorRowByAdminId(doctorId, patch);
 
     if (error) {
-      console.error('[APPROVE V2] Supabase error:', error);
+      console.error("[APPROVE V2] Supabase error:", error);
       return res.status(500).json({ ok: false, error: error.message });
     }
+    if (!data) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
 
-    console.log('[APPROVE V2] Doctor approved successfully:', data);
+    console.log("[APPROVE V2] Doctor approved successfully:", data);
     res.json({ ok: true, doctor: data });
   } catch (error) {
-    console.error('[APPROVE V2] Error:', error);
+    console.error("[APPROVE V2] Error:", error);
     res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -22982,33 +22995,33 @@ app.post("/admin/approve-doctor-v2", requireAdminAuth, async (req, res) => {
 app.post("/admin/reject-doctor-v2", requireAdminAuth, async (req, res) => {
   try {
     const { doctorId } = req.body;
-    
+
     if (!doctorId) {
-      return res.status(400).json({ ok: false, error: 'doctorId_required' });
+      return res.status(400).json({ ok: false, error: "doctorId_required" });
     }
 
-    console.log('[REJECT V2] Rejecting doctor with doctor_id:', doctorId);
+    console.log("[REJECT V2] Rejecting doctor:", doctorId);
 
-    const { data, error } = await supabase
-      .from('doctors')
-      .update({
-        status: 'REJECTED',
-        rejected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('doctor_id', doctorId)
-      .select()
-      .single();
+    // Same as POST /api/admin/reject-doctor — many DBs have no rejected_at column.
+    const patch = {
+      status: "REJECTED",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await updateDoctorRowByAdminId(doctorId, patch);
 
     if (error) {
-      console.error('[REJECT V2] Supabase error:', error);
+      console.error("[REJECT V2] Supabase error:", error);
       return res.status(500).json({ ok: false, error: error.message });
     }
+    if (!data) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
 
-    console.log('[REJECT V2] Doctor rejected successfully:', data);
+    console.log("[REJECT V2] Doctor rejected successfully:", data);
     res.json({ ok: true, doctor: data });
   } catch (error) {
-    console.error('[REJECT V2] Error:', error);
+    console.error("[REJECT V2] Error:", error);
     res.status(500).json({ ok: false, error: error.message });
   }
 });

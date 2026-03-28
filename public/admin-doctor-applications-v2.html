@@ -359,8 +359,9 @@
 
       doctorsEl.innerHTML = filteredDoctors.map(d => {
         const statusLabel = { PENDING:'Bekleyen', APPROVED:'Onaylı', ACTIVE:'Aktif', REJECTED:'Reddedildi' }[d.status] || d.status;
-        const approveBtn = (d.status !== 'APPROVED' && d.status !== 'ACTIVE') ? `<button class="btn btn-approve" onclick="approveDoctor('${d.doctor_id}')">✅ Onayla</button>` : '';
-        const rejectBtn  = (d.status !== 'REJECTED') ? `<button class="btn btn-reject" onclick="rejectDoctor('${d.doctor_id}')">Disapprove</button>` : '';
+        const rowKey = (d.id || d.doctor_id || '').replace(/'/g, "\\'");
+        const approveBtn = (d.status !== 'APPROVED' && d.status !== 'ACTIVE') ? `<button class="btn btn-approve" onclick="approveDoctor('${rowKey}')">✅ Onayla</button>` : '';
+        const rejectBtn  = (d.status !== 'REJECTED') ? `<button class="btn btn-reject" onclick="rejectDoctor('${rowKey}')">❌ Reddet</button>` : '';
 
         const specs  = d.specialities_list || [];
         const langs  = d.languages_list    || [];
@@ -456,7 +457,9 @@
     }
 
     function viewDetails(doctorId) {
-      const d = allDoctors.find(x => x.doctor_id === doctorId);
+      const d = allDoctors.find(
+        (x) => String(x.id || "") === String(doctorId) || String(x.doctor_id || "") === String(doctorId)
+      );
       if (!d) return;
       alert([
         `👨‍⚕️ ${d.name || '—'}`,
@@ -470,7 +473,7 @@
         `Durum: ${d.status}`,
         `Fotoğraf: ${d.profile_photo_url ? 'Var ✅' : 'Yok ❌'}`,
         `Kayıt: ${new Date(d.created_at).toLocaleString('tr-TR')}`,
-        `ID: ${d.doctor_id}`
+        `ID: ${d.id || d.doctor_id}`
       ].join('\n'));
     }
 
