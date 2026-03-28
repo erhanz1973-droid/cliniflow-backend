@@ -3347,7 +3347,7 @@ app.post("/api/admin/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    console.log("[ADMIN LOGIN] Token generated successfully for admin:", admin.email);
+    console.log("[ADMIN LOGIN] Token generated successfully for admin:", identity.email);
 
     res.json({
       ok: true,
@@ -20253,8 +20253,8 @@ app.use((err, req, res, next) => {
 // Force deployment - Mon Feb  9 17:31:41 +04 2026
 // Fresh deployment - Mon Feb  9 21:21:31 +04 2026
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });

@@ -334,20 +334,19 @@
       });
       
       console.log("[LOGIN] Response status:", res.status);
-      const data = await res.json();
-      console.log("[LOGIN] Response JSON:", data);
-      
+      const json = await res.json();
+      console.log("[LOGIN] Response JSON:", json);
       console.log("LOGIN RESPONSE:", json);
-      
+
       if (!res.ok) {
         let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
         if (json.error === "invalid_admin_credentials") {
           errorMsg = i18n.t("login.errors.invalidCredentials");
-        } else if (data.error === "email_required") {
+        } else if (json.error === "email_required") {
           errorMsg = i18n.t("login.errors.emailRequired");
-        } else if (data.error === "clinic_code_required") {
+        } else if (json.error === "clinic_code_required") {
           errorMsg = i18n.t("login.errors.clinicCodeRequired");
-        } else if (data.error === "password_required") {
+        } else if (json.error === "password_required") {
           errorMsg = i18n.t("login.errors.passwordRequired");
         }
         setMsg(errorMsg, "err");
@@ -355,13 +354,13 @@
         submitBtn.textContent = i18n.t("login.submit");
         return;
       }
-      
-      if (data.ok && data.requiresOTP) {
+
+      if (json.ok && json.requiresOTP) {
         // OTP required - show OTP input form
-        showOTPForm(data.clinicCode, data.email);
+        showOTPForm(json.clinicCode, json.email);
         return;
       }
-      
+
       const normalizedToken = String(json?.token || json?.user?.token || '').trim();
       const normalizedAdmin = json?.admin || json?.user || {};
       const normalizedUser = {
