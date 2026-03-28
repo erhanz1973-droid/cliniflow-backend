@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js?v=202603301"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Super Admin – Dashboard</title>
   <style>
@@ -440,7 +441,7 @@
   </div>
 
 <script>
-  const API = location.origin;
+  const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
   let allClinics = [];
 
   function getSuperAdminToken() {

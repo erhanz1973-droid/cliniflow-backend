@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
+  <script src="/api-base.js?v=202603301"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:; media-src 'self' https: http: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; style-src 'self' 'unsafe-inline' https: http:;">
   <title>İntraoral Fotoğraf Çekimi - Clinifly</title>
@@ -1070,7 +1071,7 @@
           formData.append('isImage', 'true');
           formData.append('files', photo.blob, `intraoral_${index + 1}.jpg`);
           
-          const response = await fetch(`/api/chat/upload`, {
+          const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/chat/upload') : '/api/chat/upload'), {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${token}`,

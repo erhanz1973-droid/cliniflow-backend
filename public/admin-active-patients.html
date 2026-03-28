@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js?v=202603301"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Aktif Hastalar - Clinifly Admin</title>
   <script>
@@ -195,7 +196,7 @@
       emptyContainer.style.display = "none";
 
       try {
-        const response = await fetch("/api/admin/active-patients", {
+        const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/admin/active-patients') : '/api/admin/active-patients'), {
           headers: {
             "Authorization": "Bearer " + token
           }

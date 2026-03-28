@@ -227,6 +227,8 @@
         const name = d.branding?.clinicName || d.name || tn('dashboard.sidebar.clinic');
         const el = document.getElementById('alClinicName');
         if (el) el.textContent = name;
+      } else if (res.status === 401 && typeof window.handle401 === 'function') {
+        window.handle401(401);
       }
     } catch (_) {}
   }
@@ -293,7 +295,10 @@
       const res = await fetch(adminFetchUrl('/api/admin/messages/unread-counts?totalOnly=1'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401 && typeof window.handle401 === 'function') window.handle401(401);
+        return;
+      }
       const data = await res.json();
       if (!data.ok) return;
       const total = Number(data.total || 0);
@@ -309,7 +314,10 @@
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
         cache: 'no-store'
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401 && typeof window.handle401 === 'function') window.handle401(401);
+        return;
+      }
       const data = await res.json();
       const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.referrals) ? data.referrals : []);
       updateReferralsBadge(items.length);
@@ -324,7 +332,10 @@
       const res = await fetch(adminFetchUrl('/admin/doctor-list'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 401 && typeof window.handle401 === 'function') window.handle401(401);
+        return;
+      }
       const data = await res.json();
       if (!data.ok) return;
       const doctors = Array.isArray(data.doctors) ? data.doctors : [];

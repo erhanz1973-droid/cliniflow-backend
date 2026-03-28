@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js?v=202603301"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Network Info - Clinifly</title>
   <style>
@@ -180,7 +181,7 @@
       testResult.style.background = '#fef3c7';
       testResult.style.color = '#92400e';
 
-      const baseUrl = window.location.origin;
+      const baseUrl = typeof cliniflowApiBase === 'function' && cliniflowApiBase() ? cliniflowApiBase() : window.location.origin;
       try {
         const response = await fetch(`${baseUrl}/health`);
         const data = await response.json();

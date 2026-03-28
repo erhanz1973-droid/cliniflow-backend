@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
+  <script src="/api-base.js?v=202603301"></script>
   <title>Admin Travel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>
@@ -415,8 +416,6 @@
     } catch {}
   })();
 
-  const DEFAULT_API_BASE = ""; // Production: Use same domain (admin service)
-
   let state = { hotel: null, flights: [], notes: "", airportPickup: null, editPolicy: { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" } };
   const $ = (id) => document.getElementById(id);
 
@@ -503,7 +502,7 @@
   function setStatus(msg, ok=true){
     $("status").innerHTML = ok ? `<span class="ok">✅ ${msg}</span>` : `<span class="err">❌ ${msg}</span>`;
   }
-  function apiBase(){ return DEFAULT_API_BASE; }
+  function apiBase(){ return typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : ''; }
   function endpoint(pid){ return `${apiBase()}/api/patient/${encodeURIComponent(pid)}/travel`; }
 
   function toSortableTs(dateStr, timeStr){

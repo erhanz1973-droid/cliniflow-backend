@@ -1,14 +1,22 @@
 // Push Notification Utility
 // This file handles push notification registration and subscription
+// Load /api-base.js before this script when the API is on another origin.
 
-const API_BASE = window.location.origin || 'https://cliniflow-admin.onrender.com';
+function pushNotificationApiBase() {
+  if (typeof window !== 'undefined' && typeof window.cliniflowApiBase === 'function') {
+    var b = window.cliniflowApiBase();
+    if (b) return b;
+  }
+  return typeof window !== 'undefined' && window.location ? window.location.origin : '';
+}
 
 /**
  * Get VAPID public key from server
  */
 async function getVAPIDPublicKey() {
   try {
-    const response = await fetch(`${API_BASE}/api/push/public-key`);
+    var base = pushNotificationApiBase();
+    const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/push/public-key') : `${base}/api/push/public-key`));
     const data = await response.json();
     if (data.ok && data.publicKey) {
       return data.publicKey;
@@ -108,7 +116,9 @@ async function subscribeToPush(patientId, registration) {
     
     // Send subscription to server
     const token = localStorage.getItem('patient_token') || '';
-    const response = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/push-subscription`, {
+    var base = pushNotificationApiBase();
+    const subPath = `/api/patient/${encodeURIComponent(patientId)}/push-subscription`;
+    const response = await fetch((typeof apiUrl === 'function' ? apiUrl(subPath) : `${base}${subPath}`), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
