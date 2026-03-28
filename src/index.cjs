@@ -15,6 +15,8 @@ console.log("[INIT] Working directory:", __dirname);
 
 const express = require('express');
 const path = require('path');
+// Next to src/ so `node src/index.cjs` on Render does not need repo-root `lib/`
+const { procedureIdForEncounterTreatmentColumn } = require("./lib/procedureIdForEncounterTreatment");
 
 const app = express();
 // Prevent 304 Not Modified responses for dynamic APIs (Render/CF caching + ETag).
@@ -7262,12 +7264,6 @@ app.post("/auth/verify-otp", async (req, res) => {
 });
 
 // DEV login route removed; development use should call real /api/doctor/login endpoint
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-
-  res.json({ ok: true, token, doctor });
-});
 
 /* ================= TEST CLINIC CREATE ================= */
 // Test için basit clinic oluşturma endpoint'i
