@@ -368,7 +368,9 @@ const TRAVEL_DIR = path.join(DATA_DIR, "travel");
 const TREATMENT_ITEM_OVERRIDES_DIR = path.join(DATA_DIR, "treatment-item-overrides");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
+const ADMIN_PUBLIC_PATH = path.join(__dirname, "cliniflow-admin", "public");
 
+app.use(express.static(ADMIN_PUBLIC_PATH));
 app.use(express.static(PUBLIC_DIR));
 
 /* ================= HELPER FUNCTIONS ================= */
@@ -18742,10 +18744,13 @@ app.use('/api/treatment', treatmentRoutes);
 const doctorTreatmentRoutes = require('./routes/doctor/treatments');
 app.use('/api/doctor', doctorTreatmentRoutes);
 
-// Root route - serve admin-login.html
+// Root route - serve admin-login.html (prefer cliniflow-admin/public)
 app.get('/', (req, res) => {
-  const loginPath = path.join(PUBLIC_DIR, 'admin-login.html');
-  if (fs.existsSync(loginPath)) {
+  const loginPath = [
+    path.join(ADMIN_PUBLIC_PATH, "admin-login.html"),
+    path.join(PUBLIC_DIR, "admin-login.html"),
+  ].find((p) => fs.existsSync(p));
+  if (loginPath) {
     res.sendFile(loginPath);
   } else {
     res.status(404).send(`
@@ -18754,7 +18759,7 @@ app.get('/', (req, res) => {
         <body>
           <h1>404 - Login Page Not Found</h1>
           <p>admin-login.html not found</p>
-          <p>Looking for: ${loginPath}</p>
+          <p>Tried: cliniflow-admin/public and public/</p>
         </body>
       </html>
     `);

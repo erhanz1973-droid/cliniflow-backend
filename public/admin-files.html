@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Admin - Hasta Dosyaları</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    (function() {
+      const token = localStorage.getItem("adminToken");
+      if (!token) window.location.href = "/admin-login.html";
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <link rel="stylesheet" href="/admin-layout.css?v=2" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Arial;
+      background: #0f172a;
+      color: #e6eaf2;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+
+    /* ── Navbar ── */
+    .navbar {
+      display: flex; align-items: center; gap: 16px;
+      margin-bottom: 28px; padding-bottom: 18px;
+      border-bottom: 1px solid #1f2937; flex-wrap: wrap;
+    }
+    .navbar a {
+      color: #60a5fa; text-decoration: none; font-size: 13px; font-weight: 600;
+    }
+    .navbar a:hover { text-decoration: underline; }
+    .page-title { font-size: 20px; font-weight: 700; color: #e6eaf2; flex: 1; }
+    .patient-name-badge {
+      background: rgba(37,99,235,0.15); border: 1px solid rgba(37,99,235,0.3);
+      border-radius: 8px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: #93c5fd;
+    }
+
+    /* ── Filter tabs ── */
+    .filter-row {
+      display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 7px 16px; border-radius: 20px; border: 1px solid #334155;
+      background: transparent; color: #a7b2c8; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .filter-btn:hover { border-color: #4b5563; color: #e6eaf2; }
+    .filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+    .filter-count {
+      display: inline-block; margin-left: 5px; font-size: 11px;
+      background: rgba(255,255,255,0.12); border-radius: 999px;
+      padding: 1px 7px; font-weight: 700;
+    }
+
+    /* ── Grid (photos/xray) ── */
+    .img-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px; margin-bottom: 24px;
+    }
+    .img-cell {
+      position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden;
+      background: #1f2937; cursor: pointer; border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .img-cell:hover { border-color: #2563eb; transform: translateY(-2px); }
+    .img-cell img { width: 100%; height: 100%; object-fit: cover; }
+    .img-cell .xray-badge {
+      position: absolute; bottom: 5px; right: 5px;
+      background: rgba(0,0,0,0.6); border-radius: 6px;
+      padding: 2px 6px; font-size: 13px;
+    }
+
+    /* ── Section header ── */
+    .section-hdr {
+      font-size: 12px; font-weight: 700; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+
+    /* ── File cards (docs) ── */
+    .file-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+    .file-card {
+      display: flex; align-items: center; gap: 12px;
+      background: #1f2937; border: 1px solid #334155; border-radius: 12px;
+      padding: 12px 16px; cursor: pointer; transition: border-color 0.15s;
+      text-decoration: none; color: inherit;
+    }
+    .file-card:hover { border-color: #2563eb; }
+    .file-icon {
+      width: 46px; height: 46px; border-radius: 10px; background: #111827;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; flex-shrink: 0;
+    }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name { font-size: 14px; font-weight: 600; color: #e6eaf2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+    .file-meta { font-size: 11px; color: #6b7280; }
+    .file-from {
+      font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+      background: rgba(37,99,235,0.12); color: #93c5fd; flex-shrink: 0;
+    }
+    .file-from.from-patient { background: rgba(16,185,129,0.12); color: #6ee7b7; }
+    .file-arrow { font-size: 20px; color: #4b5563; flex-shrink: 0; }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center; padding: 64px 24px; color: #4b5563;
+    }
+    .empty-icon { font-size: 52px; margin-bottom: 14px; opacity: 0.5; }
+    .empty-title { font-size: 16px; font-weight: 700; color: #6b7280; margin-bottom: 6px; }
+    .empty-sub { font-size: 13px; color: #4b5563; }
+
+    /* ── Loading ── */
+    .loading { text-align: center; padding: 60px; color: #4b5563; font-size: 14px; }
+
+    /* ── Preview modal ── */
+    .preview-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+      display: none; align-items: center; justify-content: center;
+      z-index: 1000; flex-direction: column; gap: 16px;
+    }
+    .preview-overlay.open { display: flex; }
+    .preview-close {
+      position: absolute; top: 20px; right: 24px;
+      background: rgba(255,255,255,0.1); border: none; color: #fff;
+      font-size: 22px; width: 40px; height: 40px; border-radius: 50%;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .preview-img {
+      max-width: 90vw; max-height: 75vh; object-fit: contain; border-radius: 8px;
+    }
+    .preview-footer {
+      text-align: center; color: #a7b2c8; max-width: 600px;
+    }
+    .preview-filename { font-size: 15px; font-weight: 700; color: #e6eaf2; margin-bottom: 4px; }
+    .preview-meta { font-size: 12px; margin-bottom: 14px; }
+    .preview-download {
+      display: inline-block; background: #2563eb; color: #fff;
+      padding: 10px 24px; border-radius: 8px; text-decoration: none;
+      font-size: 13px; font-weight: 700;
+    }
+    .preview-download:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <nav class="navbar">
+    <a href="/admin-patients.html">← Hastalar</a>
+    <span class="page-title">📁 Dosyalar</span>
+    <span class="patient-name-badge" id="patientNameBadge">—</span>
+  </nav>
+
+  <!-- Filter tabs -->
+  <div class="filter-row" id="filterRow">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">
+      Tümü <span class="filter-count" id="cntAll">0</span>
+    </button>
+    <button class="filter-btn" data-filter="xray" onclick="setFilter('xray')">
+      🩻 Röntgenler <span class="filter-count" id="cntXray">0</span>
+    </button>
+    <button class="filter-btn" data-filter="image" onclick="setFilter('image')">
+      🖼️ Fotoğraflar <span class="filter-count" id="cntImage">0</span>
+    </button>
+    <button class="filter-btn" data-filter="pdf" onclick="setFilter('pdf')">
+      📄 Belgeler <span class="filter-count" id="cntPdf">0</span>
+    </button>
+  </div>
+
+  <!-- Content -->
+  <div id="content">
+    <div class="loading">⏳ Yükleniyor...</div>
+  </div>
+
+</div>
+
+<!-- Image preview modal -->
+<div class="preview-overlay" id="previewOverlay">
+  <button class="preview-close" onclick="closePreview()">✕</button>
+  <img class="preview-img" id="previewImg" src="" alt="" />
+  <div class="preview-footer">
+    <div class="preview-filename" id="previewName"></div>
+    <div class="preview-meta" id="previewMeta"></div>
+    <a class="preview-download" id="previewDownload" href="#" target="_blank">⬇ İndir</a>
+  </div>
+</div>
+
+<script>
+  const params     = new URLSearchParams(window.location.search);
+  const patientId  = params.get("patientId") || "";
+  const patientName = params.get("name") || params.get("patientName") || "";
+  const token      = localStorage.getItem("adminToken");
+  const API        = "";
+
+  let ALL_FILES = [];
+  let currentFilter = "all";
+
+  document.getElementById("patientNameBadge").textContent = patientName || patientId || "—";
+
+  if (!patientId) {
+    document.getElementById("content").innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Hasta seçilmedi</div></div>`;
+  } else {
+    loadFiles();
+  }
+
+  async function loadFiles() {
+    try {
+      const res = await fetch(`${API}/api/admin/patients/${encodeURIComponent(patientId)}/files`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) throw new Error(json.error || res.status);
+      ALL_FILES = Array.isArray(json.files) ? json.files : [];
+      updateCounts();
+      render();
+    } catch (err) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Dosyalar yüklenemedi</div><div class="empty-sub">${err.message}</div></div>`;
+    }
+  }
+
+  function updateCounts() {
+    document.getElementById("cntAll").textContent   = ALL_FILES.length;
+    document.getElementById("cntXray").textContent  = ALL_FILES.filter(f => f.fileType === "xray").length;
+    document.getElementById("cntImage").textContent = ALL_FILES.filter(f => f.fileType === "image").length;
+    document.getElementById("cntPdf").textContent   = ALL_FILES.filter(f => f.fileType === "pdf" || (f.mimeType||"").includes("pdf")).length;
+  }
+
+  function setFilter(filter) {
+    currentFilter = filter;
+    document.querySelectorAll(".filter-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.filter === filter);
+    });
+    render();
+  }
+
+  function filtered() {
+    if (currentFilter === "all")   return ALL_FILES;
+    if (currentFilter === "xray")  return ALL_FILES.filter(f => f.fileType === "xray");
+    if (currentFilter === "image") return ALL_FILES.filter(f => f.fileType === "image");
+    if (currentFilter === "pdf")   return ALL_FILES.filter(f => f.fileType === "pdf" || (f.mimeType||"").includes("pdf"));
+    return ALL_FILES;
+  }
+
+  function isImageType(f) {
+    return f.fileType === "image" || f.fileType === "xray" || (f.mimeType||"").startsWith("image/");
+  }
+
+  function fmtSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024*1024) return `${(bytes/1024).toFixed(0)} KB`;
+    return `${(bytes/1024/1024).toFixed(1)} MB`;
+  }
+
+  function fmtDate(ts) {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+  }
+
+  function fileIcon(f) {
+    if (f.fileType === "xray")  return "🩻";
+    if (f.fileType === "image") return "🖼️";
+    if (f.fileType === "pdf" || (f.mimeType||"").includes("pdf")) return "📄";
+    return "📁";
+  }
+
+  function render() {
+    const files = filtered();
+    if (files.length === 0) {
+      document.getElementById("content").innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">📁</div>
+          <div class="empty-title">Dosya bulunamadı</div>
+          <div class="empty-sub">Bu kategoride henüz dosya yüklenmemiş.</div>
+        </div>`;
+      return;
+    }
+
+    const imgFiles = files.filter(f => isImageType(f));
+    const docFiles = files.filter(f => !isImageType(f));
+    let html = "";
+
+    if (imgFiles.length > 0) {
+      html += `<div class="section-hdr">${currentFilter === "xray" ? "🩻 Röntgenler" : currentFilter === "image" ? "🖼️ Fotoğraflar" : "🖼️ Görüntüler"} — ${imgFiles.length}</div>`;
+      html += `<div class="img-grid">`;
+      imgFiles.forEach((f, i) => {
+        html += `
+          <div class="img-cell" onclick="openPreview(${i})" data-idx="${i}">
+            <img src="${escH(f.url)}" alt="${escH(f.name)}" loading="lazy" />
+            ${f.fileType === "xray" ? `<span class="xray-badge">🩻</span>` : ""}
+          </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (docFiles.length > 0) {
+      html += `<div class="section-hdr">📄 Belgeler — ${docFiles.length}</div>`;
+      html += `<div class="file-list">`;
+      docFiles.forEach(f => {
+        const from = f.from === "CLINIC" ? "Klinik" : "Hasta";
+        const fromClass = f.from === "CLINIC" ? "" : "from-patient";
+        html += `
+          <a class="file-card" href="${escH(f.url)}" target="_blank" rel="noopener">
+            <div class="file-icon">${fileIcon(f)}</div>
+            <div class="file-info">
+              <div class="file-name">${escH(f.name)}</div>
+              <div class="file-meta">${fmtDate(f.createdAt)}${f.size ? " · " + fmtSize(f.size) : ""}</div>
+            </div>
+            <span class="file-from ${fromClass}">${from}</span>
+            <span class="file-arrow">›</span>
+          </a>`;
+      });
+      html += `</div>`;
+    }
+
+    document.getElementById("content").innerHTML = html;
+
+    // Store imgFiles for preview lookup
+    window._imgFiles = imgFiles;
+  }
+
+  function openPreview(idx) {
+    const files = window._imgFiles || [];
+    const f = files[idx];
+    if (!f) return;
+    document.getElementById("previewImg").src = f.url;
+    document.getElementById("previewName").textContent = f.name;
+    document.getElementById("previewMeta").textContent =
+      fmtDate(f.createdAt) + (f.size ? " · " + fmtSize(f.size) : "") +
+      " · " + (f.from === "CLINIC" ? "Klinik tarafından" : "Hasta tarafından");
+    document.getElementById("previewDownload").href = f.url;
+    document.getElementById("previewOverlay").classList.add("open");
+  }
+
+  function closePreview() {
+    document.getElementById("previewOverlay").classList.remove("open");
+    document.getElementById("previewImg").src = "";
+  }
+
+  document.getElementById("previewOverlay").addEventListener("click", function(e) {
+    if (e.target === this) closePreview();
+  });
+
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closePreview(); });
+
+  function escH(str) {
+    return String(str || "").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+</script>
+<script src="/admin-layout.js?v=2" defer></script>
+</body>
+</html>
