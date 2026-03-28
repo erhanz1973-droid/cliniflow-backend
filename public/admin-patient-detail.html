@@ -661,6 +661,7 @@
       <!-- Tab Navigation -->
       <div class="tabs">
         <button class="tab-btn active" onclick="showTab('overview', this)">Overview</button>
+        <button class="tab-btn" onclick="showTab('visits', this)">Visits</button>
         <button class="tab-btn" onclick="showTab('plan', this)">Treatment Plan</button>
       </div>
 
@@ -740,6 +741,24 @@
             <div class="empty-state">
               <h3>Treatment Plan</h3>
               <p>Hasta tedavi planı yükleniyor...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="visits" class="tab-content" style="display:none;">
+        <div class="treatment-plan-section">
+          <div class="section-header">
+            <h3 class="section-title">Visits</h3>
+            <div class="plan-actions" style="display:flex; gap:8px; align-items:center;">
+              <input type="date" id="newVisitDate" style="width:180px;" />
+              <button class="btn btn-primary" onclick="createVisit()">+ Visit Ekle</button>
+            </div>
+          </div>
+          <div id="visitsContent">
+            <div class="empty-state">
+              <h3>Visits</h3>
+              <p>Visitler yükleniyor...</p>
             </div>
           </div>
         </div>
@@ -1232,7 +1251,12 @@
 
     function openTreatment() {
       if (currentPatient) {
-        window.open(`/treatment.html?patientId=${currentPatient.id}`, '_blank');
+        if (!selectedVisitId) {
+          alert('Önce bir visit seçmelisiniz');
+          showTab('visits');
+          return;
+        }
+        window.open(`/admin-treatment.html?patientId=${currentPatient.id}&visitId=${selectedVisitId}`, '_blank');
       }
     }
 
@@ -1279,6 +1303,105 @@
       if (tabId === "plan" && currentPatient) {
         initializeVisitContext();
         loadTreatmentPlan();
+      }
+      if (tabId === "visits" && currentPatient) {
+        loadVisits();
+      }
+    }
+
+    async function loadVisits() {
+      if (!currentPatient?.id) return;
+      const visitsContainer = document.getElementById('visitsContent');
+      try {
+        const res = await fetch(`/api/admin/patients/${currentPatient.id}/visits`, {
+          headers: {
+            'Authorization': `Bearer ${getAdminToken()}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'visits_fetch_failed');
+        }
+        patientVisits = Array.isArray(data.visits) ? data.visits : [];
+        if (!selectedVisitId && patientVisits.length > 0) {
+          selectedVisitId = patientVisits[0].id;
+        }
+        renderVisits();
+      } catch (error) {
+        console.error('Load visits error:', error);
+        visitsContainer.innerHTML = `
+          <div class="empty-state">
+            <h3>Visits yüklenemedi</h3>
+            <p>${error.message || 'Bilinmeyen hata'}</p>
+          </div>
+        `;
+      }
+    }
+
+    function renderVisits() {
+      const visitsContainer = document.getElementById('visitsContent');
+      if (!patientVisits.length) {
+        visitsContainer.innerHTML = `
+          <div class="empty-state">
+            <h3>Visit yok</h3>
+            <p>Bu hasta için henüz visit oluşturulmamış.</p>
+          </div>
+        `;
+        return;
+      }
+
+      visitsContainer.innerHTML = patientVisits.map(v => {
+        const isActive = selectedVisitId === v.id;
+        return `
+          <div class="tooth-item" style="margin-bottom:10px; border:${isActive ? '1px solid #60a5fa' : '1px solid var(--b)'}; background:${isActive ? 'rgba(59,130,246,0.15)' : 'var(--card)'};">
+            <div class="tooth-header" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+              <strong>Visit: ${formatDate(v.visit_date || v.created_at)}</strong>
+              <button class="btn btn-secondary" style="padding:6px 12px; width:auto;" onclick="selectVisit('${v.id}')">${isActive ? 'Seçili' : 'Seç'}</button>
+            </div>
+            <div class="treatment-date">ID: ${v.id}</div>
+            <div class="treatment-name" style="margin-top:6px;">${escapeHtml(v.notes || '-')}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectVisit(visitId) {
+      selectedVisitId = visitId;
+      renderVisits();
+    }
+
+    async function createVisit() {
+      if (!currentPatient?.id) return;
+      const visitDateInput = document.getElementById('newVisitDate');
+      const selectedDate = visitDateInput.value;
+      if (!selectedDate) {
+        alert('Visit tarihi seçin');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/admin/patients/${currentPatient.id}/visits`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${getAdminToken()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            visit_date: new Date(selectedDate).toISOString(),
+            notes: null
+          })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || 'visit_create_failed');
+        }
+        selectedVisitId = data.visit?.id || selectedVisitId;
+        visitDateInput.value = '';
+        await loadVisits();
+      } catch (error) {
+        console.error('Create visit error:', error);
+        alert('Visit oluşturulamadı: ' + (error.message || 'Bilinmeyen hata'));
       }
     }
 
@@ -1380,7 +1503,7 @@
       const tabParam = urlParams.get('tab');
       console.log("DEBUG - URL tab parameter:", tabParam);
       
-      if (tabParam && ['overview', 'groups', 'plan'].includes(tabParam)) {
+      if (tabParam && ['overview', 'visits', 'plan'].includes(tabParam)) {
         // Wait a bit for patient data to load, then switch tab
         setTimeout(() => {
           console.log("DEBUG - Attempting to switch to tab:", tabParam);

@@ -645,10 +645,18 @@
   let SELECTED_TOOTH = null;
   let DATA = { patientId:"", teeth:[] };
   let CURRENT_PATIENT_ID = null;
+  let CURRENT_PLAN_ID = null;
+  let PLAN_CHAT_MESSAGES = [];
   let IS_ADDING_PROCEDURE = false;
   let TRAVEL_EVENTS = [];
   let EDITING_PROC = null; // { toothId, procedureId }
   let TREATMENT_PRICES = {}; // { procedureType: { default_price, currency, is_active } }
+  let DOCTOR_NAME_BY_ID = Object.create(null);
+  const DEBUG_LEVEL = String(new URLSearchParams(window.location.search).get("debug") || "").trim();
+  const DEBUG_UI = DEBUG_LEVEL === "1" || DEBUG_LEVEL === "2";
+  const VERBOSE_DEBUG_UI = DEBUG_LEVEL === "2";
+  const PATIENTS_CACHE = { data: null, fetchedAt: 0, ttlMs: 30000, pending: null };
+  const PLANS_CACHE = new Map();
   async function loadTreatmentPrices() {
     try {
       const token = getAdminToken();
@@ -687,16 +695,20 @@
               currency: price.currency,
               is_active: price.is_active
             };
-            console.log("[loadTreatmentPrices] Added price:", key, "->", price.default_price, price.currency);
+            if (DEBUG_UI) {
+              console.log("[loadTreatmentPrices] Added price:", key, "->", price.default_price, price.currency);
+            }
           }
         });
-        console.log("[loadTreatmentPrices] Loaded", Object.keys(TREATMENT_PRICES).length, "prices");
-        console.log("[loadTreatmentPrices] All price keys:", Object.keys(TREATMENT_PRICES));
+        if (DEBUG_UI) {
+          console.log("[loadTreatmentPrices] Loaded", Object.keys(TREATMENT_PRICES).length, "prices");
+          console.log("[loadTreatmentPrices] All price keys:", Object.keys(TREATMENT_PRICES));
+        }
         
         // If a procedure type is already selected, update the price fields
         const procTypeSelect = document.getElementById("procType");
         if (procTypeSelect && procTypeSelect.value) {
-          console.log("[loadTreatmentPrices] Procedure type already selected, updating price...");
+          if (DEBUG_UI) console.log("[loadTreatmentPrices] Procedure type already selected, updating price...");
           onProcedureTypeChange();
         }
       }
@@ -712,31 +724,33 @@
     const procCurrencySelect = document.getElementById("procCurrency");
     
     if (!procTypeSelect || !procPriceInput || !procCurrencySelect) {
-      console.log("[onProcedureTypeChange] Missing elements");
+      if (DEBUG_UI) console.log("[onProcedureTypeChange] Missing elements");
       return;
     }
     
     const selectedType = procTypeSelect.value.toUpperCase();
     if (!selectedType) {
-      console.log("[onProcedureTypeChange] No procedure type selected");
+      if (DEBUG_UI) console.log("[onProcedureTypeChange] No procedure type selected");
       return;
     }
-    
-    console.log("[onProcedureTypeChange] Selected type:", selectedType);
-    console.log("[onProcedureTypeChange] Available prices:", Object.keys(TREATMENT_PRICES));
+
+    if (VERBOSE_DEBUG_UI) {
+      console.log("[onProcedureTypeChange] Selected type:", selectedType);
+      console.log("[onProcedureTypeChange] Available prices:", Object.keys(TREATMENT_PRICES));
+    }
     
     const priceData = TREATMENT_PRICES[selectedType];
-    console.log("[onProcedureTypeChange] Price data for", selectedType, ":", priceData);
+    if (VERBOSE_DEBUG_UI) console.log("[onProcedureTypeChange] Price data for", selectedType, ":", priceData);
     
     if (priceData && priceData.is_active) {
       procPriceInput.value = priceData.default_price || "";
       procCurrencySelect.value = priceData.currency || "EUR";
-      console.log("[onProcedureTypeChange] Price set:", priceData.default_price, priceData.currency);
+      if (VERBOSE_DEBUG_UI) console.log("[onProcedureTypeChange] Price set:", priceData.default_price, priceData.currency);
     } else {
       // Clear price if no matching price found
       procPriceInput.value = "";
       procCurrencySelect.value = "EUR";
-      console.log("[onProcedureTypeChange] No price found, cleared fields");
+      if (VERBOSE_DEBUG_UI) console.log("[onProcedureTypeChange] No price found, cleared fields");
     }
   }
 
@@ -752,6 +766,10 @@
   const elSelTooth = document.getElementById("selTooth");
   const elSelToothDiagnosisList = document.getElementById("selToothDiagnosisList");
   const elProcList = document.getElementById("procList");
+  const elPlanChatMeta = document.getElementById("planChatMeta");
+  const elPlanChatList = document.getElementById("planChatList");
+  const elPlanChatInput = document.getElementById("planChatInput");
+  const elBtnSendPlanChat = document.getElementById("btnSendPlanChat");
   
   console.log('[SCRIPT START] DOM elements:', {
     patientName: !!elPatientName,
@@ -784,6 +802,74 @@
     window.history.replaceState({}, '', url);
   }
 
+  async function getPatientsCached(force = false) {
+    const nowTs = Date.now();
+    if (!force && PATIENTS_CACHE.data && (nowTs - PATIENTS_CACHE.fetchedAt) < PATIENTS_CACHE.ttlMs) {
+      return PATIENTS_CACHE.data;
+    }
+    if (!force && PATIENTS_CACHE.pending) return PATIENTS_CACHE.pending;
+
+    PATIENTS_CACHE.pending = (async () => {
+      const res = await fetch(`${API_BASE}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      const json = await res.json().catch(() => null);
+      const patients = Array.isArray(json?.patients)
+        ? json.patients
+        : Array.isArray(json?.list)
+          ? json.list
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.items)
+              ? json.items
+              : [];
+      PATIENTS_CACHE.data = patients;
+      PATIENTS_CACHE.fetchedAt = Date.now();
+      return patients;
+    })();
+
+    try {
+      return await PATIENTS_CACHE.pending;
+    } finally {
+      PATIENTS_CACHE.pending = null;
+    }
+  }
+
+  async function getAdminPlansForPatientCached(patientKey, force = false) {
+    const key = String(patientKey || "").trim();
+    if (!key) return [];
+
+    const nowTs = Date.now();
+    const cached = PLANS_CACHE.get(key);
+    if (!force && cached?.data && (nowTs - cached.fetchedAt) < 15000) {
+      return cached.data;
+    }
+    if (!force && cached?.pending) return cached.pending;
+
+    const pending = (async () => {
+      const res = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(key)}/treatment-plans`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      const json = await res.json().catch(() => null);
+      const rows = Array.isArray(json?.treatment_plans) ? json.treatment_plans : [];
+      PLANS_CACHE.set(key, { data: rows, fetchedAt: Date.now(), pending: null });
+      return rows;
+    })();
+
+    PLANS_CACHE.set(key, { data: cached?.data || null, fetchedAt: cached?.fetchedAt || 0, pending });
+    try {
+      return await pending;
+    } finally {
+      const latest = PLANS_CACHE.get(key) || {};
+      PLANS_CACHE.set(key, { data: latest.data || [], fetchedAt: latest.fetchedAt || Date.now(), pending: null });
+    }
+  }
+
   async function loadPatientOptions() {
     const elPatientSelect = document.getElementById("patientSelect");
     if (!elPatientSelect) {
@@ -792,7 +878,7 @@
     }
     
     try {
-      console.log('[loadPatientOptions] Loading patient options...');
+      if (DEBUG_UI) console.log('[loadPatientOptions] Loading patient options...');
       const token = getAdminToken();
       if (!token) {
         console.error('[loadPatientOptions] No admin token');
@@ -846,22 +932,53 @@
             const normalized = rawName.toLowerCase();
             const name = (rawName && !["unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) ? rawName : pid;
             if (pid) {
-            const opt = document.createElement("option");
-            opt.value = pid;
-            opt.textContent = `${name} (${pid})`;
-            elPatientSelect.appendChild(opt);
+              const opt = document.createElement("option");
+              opt.value = pid;
+              opt.textContent = `${name} (${pid})`;
+              elPatientSelect.appendChild(opt);
             }
           });
         }
-        console.log(`[loadPatientOptions] Loaded ${patients.length} patients`);
+        if (DEBUG_UI) console.log(`[loadPatientOptions] Loaded ${patients.length} patients`);
       } else {
-        console.error('[loadPatientOptions] Invalid response format:', json);
         elPatientSelect.innerHTML = '<option value="">⚠️ Geçersiz yanıt formatı</option>';
       }
     } catch (e) {
+      if (Number(e?.status) === 401) {
+          localStorage.removeItem("adminToken");
+          window.location.href = "/admin-login.html";
+          return;
+      }
       console.error('[loadPatientOptions] Error:', e);
       elPatientSelect.innerHTML = `<option value="">⚠️ Hata: ${e.message || 'Bilinmeyen hata'}</option>`;
     }
+  }
+
+  async function loadDoctorsDirectory() {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/doctors`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!res.ok) return;
+      const json = await res.json().catch(() => null);
+      const rows = Array.isArray(json?.items) ? json.items : Array.isArray(json?.doctors) ? json.doctors : [];
+      const map = Object.create(null);
+      rows.forEach((row) => {
+        const idA = String(row?.id || "").trim();
+        const idB = String(row?.doctor_id || row?.doctorId || "").trim();
+        const name = String(row?.name || row?.full_name || row?.fullName || row?.email || "").trim();
+        if (!name) return;
+        if (idA) {
+          map[idA] = name;
+          map[idA.toLowerCase()] = name;
+        }
+        if (idB) {
+          map[idB] = name;
+          map[idB.toLowerCase()] = name;
+        }
+      });
+      DOCTOR_NAME_BY_ID = map;
+    } catch {}
   }
 
   function setMsg(text, kind="muted"){
@@ -869,7 +986,15 @@
     elMsg.textContent = text || "";
   }
 
-  function toothKey(id){ return String(id||"").trim(); }
+  function toothKey(id){
+    const raw = String(id ?? "").trim();
+    if (!raw) return "";
+    const normalizedNumeric = raw.replace(",", ".");
+    if (/^\d+(?:\.0+)?$/.test(normalizedNumeric)) {
+      return String(Number.parseInt(normalizedNumeric, 10));
+    }
+    return raw;
+  }
 
   function normalizeStatusUI(s){
     const raw = String(s || "PLANNED").trim().toUpperCase();
@@ -899,6 +1024,193 @@
       if (crypto?.randomUUID) return crypto.randomUUID();
     } catch {}
     return `proc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+
+  function renderPlanChat(){
+    if (!elPlanChatList) return;
+    const rows = Array.isArray(PLAN_CHAT_MESSAGES) ? PLAN_CHAT_MESSAGES : [];
+    if (!rows.length){
+      elPlanChatList.innerHTML = '<div class="muted">Mesaj yok.</div>';
+      return;
+    }
+
+    elPlanChatList.innerHTML = rows.map((msg) => {
+      const role = String(msg?.senderRole || msg?.author_role || "").toUpperCase();
+      const sender = String(msg?.senderName || msg?.sender_name || msg?.sender_id || role || "-");
+      const createdAt = String(msg?.createdAt || msg?.created_at || "").trim();
+      const text = String(msg?.text || msg?.message || msg?.content || "").trim();
+      const mine = role === "ADMIN";
+      const ts = createdAt ? new Date(createdAt).toLocaleString("tr-TR") : "";
+      return `
+        <div class="chat-item ${mine ? "chat-item-me" : ""}">
+          <div class="chat-item-meta">${sender}${ts ? ` · ${ts}` : ""}</div>
+          <div class="chat-item-text">${text || "-"}</div>
+        </div>
+      `;
+    }).join("");
+
+    elPlanChatList.scrollTop = elPlanChatList.scrollHeight;
+  }
+
+  async function resolveCurrentPlanId(patientId){
+    const pid = String(patientId || CURRENT_PATIENT_ID || "").trim();
+    if (!pid) {
+      CURRENT_PLAN_ID = null;
+      if (elPlanChatMeta) elPlanChatMeta.textContent = "Hasta seçilmedi.";
+      return null;
+    }
+
+    try {
+      const collectPatientKeys = async (basePid) => {
+        const keys = new Set([String(basePid || "").trim()]);
+        try {
+          const patientsRes = await fetch(`${API_BASE}/api/admin/patients`, {
+            headers: adminHeaders({ Accept: "application/json" })
+          });
+          const patientsJson = await patientsRes.json().catch(() => null);
+          const patients = Array.isArray(patientsJson?.patients) ? patientsJson.patients : [];
+          const matched = patients.find((p) => {
+            const idA = String(p?.id || "").trim();
+            const idB = String(p?.patient_id || p?.patientId || "").trim();
+            return idA === basePid || idB === basePid;
+          });
+          if (matched) {
+            const idA = String(matched?.id || "").trim();
+            const idB = String(matched?.patient_id || matched?.patientId || "").trim();
+            if (idA) keys.add(idA);
+            if (idB) keys.add(idB);
+          }
+        } catch {}
+        return Array.from(keys).filter(Boolean);
+      };
+
+      const pickActivePlan = (rows) => {
+        const plans = Array.isArray(rows) ? rows : [];
+        return plans.find((p) => {
+          const st = String(p?.status || "").toUpperCase();
+          return !["COMPLETED", "DONE", "CANCELLED", "CLOSED", "REJECTED"].includes(st);
+        }) || plans[0] || null;
+      };
+
+      const patientKeys = await collectPatientKeys(pid);
+      let plans = [];
+      for (const key of patientKeys) {
+        const res = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(key)}/treatment-plans`, {
+          headers: adminHeaders({ Accept: "application/json" })
+        });
+        const json = await res.json().catch(() => null);
+        const rows = Array.isArray(json?.treatment_plans) ? json.treatment_plans : [];
+        if (rows.length) plans.push(...rows);
+      }
+
+      if (plans.length > 1) {
+        const seen = new Set();
+        plans = plans.filter((plan) => {
+          const id = String(plan?.id || "").trim();
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      }
+
+      if (!plans.length) {
+        const urlPlanId = String(new URLSearchParams(window.location.search).get("planId") || "").trim();
+        if (urlPlanId) {
+          plans = [{ id: urlPlanId, status: "PLANNED" }];
+        }
+      }
+
+      const active = pickActivePlan(plans);
+
+      CURRENT_PLAN_ID = active?.id ? String(active.id) : null;
+      if (elPlanChatMeta) {
+        elPlanChatMeta.textContent = CURRENT_PLAN_ID
+          ? `Plan ID: ${CURRENT_PLAN_ID}`
+          : "Bu hasta için plan bulunamadı.";
+      }
+      return CURRENT_PLAN_ID;
+    } catch (error) {
+      console.error("[resolveCurrentPlanId] error:", error);
+      CURRENT_PLAN_ID = null;
+      if (elPlanChatMeta) elPlanChatMeta.textContent = "Plan alınamadı.";
+      return null;
+    }
+  }
+
+  async function loadPlanChat(){
+    if (!CURRENT_PLAN_ID) {
+      PLAN_CHAT_MESSAGES = [];
+      renderPlanChat();
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/treatment-plans/${encodeURIComponent(CURRENT_PLAN_ID)}/chat`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        PLAN_CHAT_MESSAGES = [];
+        renderPlanChat();
+        return;
+      }
+
+      PLAN_CHAT_MESSAGES = Array.isArray(json?.messages)
+        ? json.messages
+        : Array.isArray(json?.data)
+          ? json.data
+          : [];
+      renderPlanChat();
+
+      const last = PLAN_CHAT_MESSAGES[PLAN_CHAT_MESSAGES.length - 1];
+      const upto = String(last?.createdAt || last?.created_at || "").trim();
+      if (upto) {
+        fetch(`${API_BASE}/api/treatment-plans/${encodeURIComponent(CURRENT_PLAN_ID)}/chat/read`, {
+          method: "POST",
+          headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+          body: JSON.stringify({ upto }),
+        }).catch(() => {});
+      }
+    } catch (error) {
+      console.error("[loadPlanChat] error:", error);
+    }
+  }
+
+  async function refreshPlanChat(){
+    await resolveCurrentPlanId(CURRENT_PATIENT_ID);
+    await loadPlanChat();
+  }
+
+  async function sendPlanChatMessage(){
+    const text = String(elPlanChatInput?.value || "").trim();
+    if (!text) return;
+    if (!CURRENT_PLAN_ID) {
+      setMsg("Chat için aktif plan bulunamadı.", "err");
+      return;
+    }
+
+    if (elBtnSendPlanChat) elBtnSendPlanChat.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/treatment-plans/${encodeURIComponent(CURRENT_PLAN_ID)}/chat`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+        body: JSON.stringify({ text }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const err = json?.error || json?.message || `HTTP ${res.status}`;
+        setMsg(`Chat gönderilemedi: ${err}`, "err");
+        return;
+      }
+
+      if (elPlanChatInput) elPlanChatInput.value = "";
+      await loadPlanChat();
+    } catch (error) {
+      console.error("[sendPlanChatMessage] error:", error);
+      setMsg(`Chat gönderim hatası: ${error?.message || "Bilinmeyen"}`, "err");
+    } finally {
+      if (elBtnSendPlanChat) elBtnSendPlanChat.disabled = false;
+    }
   }
 
   async function loadProcedureDefs(){
@@ -952,7 +1264,41 @@
 
   function findTooth(toothId){
     toothId = toothKey(toothId);
-    return (DATA.teeth || []).find(t => toothKey(t.toothId) === toothId);
+    return (DATA.teeth || []).find(t => {
+      const candidate = toothKey(
+        t?.toothId ?? t?.tooth_id ?? t?.toothNumber ?? t?.tooth_number ?? t?.toothNo ?? t?.tooth_no ?? t?.id
+      );
+      return candidate === toothId;
+    });
+  }
+
+  function normalizeTeethData(){
+    const source = Array.isArray(DATA?.teeth) ? DATA.teeth : [];
+    const merged = new Map();
+
+    source.forEach((entry) => {
+      const toothId = toothKey(
+        entry?.toothId ?? entry?.tooth_id ?? entry?.toothNumber ?? entry?.tooth_number ?? entry?.toothNo ?? entry?.tooth_no ?? entry?.id
+      );
+      if (!toothId) return;
+
+      const existing = merged.get(toothId) || { toothId, procedures: [], diagnosis: [], diagnoses: [] };
+
+      const procedures = Array.isArray(entry?.procedures)
+        ? entry.procedures
+        : (Array.isArray(entry?.treatments) ? entry.treatments : []);
+      if (procedures.length) existing.procedures.push(...procedures);
+
+      const diagnosis = Array.isArray(entry?.diagnosis) ? entry.diagnosis : [];
+      if (diagnosis.length) existing.diagnosis.push(...diagnosis);
+
+      const diagnoses = Array.isArray(entry?.diagnoses) ? entry.diagnoses : [];
+      if (diagnoses.length) existing.diagnoses.push(...diagnoses);
+
+      merged.set(toothId, existing);
+    });
+
+    DATA.teeth = Array.from(merged.values());
   }
 
   function ensureTooth(toothId){
@@ -981,8 +1327,10 @@
 
   function refreshBadgeAndColors(){
     const all = document.querySelectorAll(".tooth");
-    console.log('[refreshBadgeAndColors] Total teeth elements:', all.length);
-    console.log('[refreshBadgeAndColors] DATA.teeth:', DATA.teeth);
+    if (DEBUG_UI) {
+      console.log('[refreshBadgeAndColors] Total teeth elements:', all.length);
+      console.log('[refreshBadgeAndColors] DATA.teeth:', DATA.teeth);
+    }
     all.forEach(el => {
       const id = toothKey(el.textContent);
       const t = findTooth(id);
@@ -1416,21 +1764,28 @@
           priceText = ` • 💰 ${price.toFixed(2)} ${currency}`;
         }
         
-        // Format scheduledAt with date and time
-        let scheduledText = "";
-        if (p.scheduledAt) {
+        // Format date/time details (scheduledAt/date first, fallback to createdAt)
+        const details = [];
+        const scheduleValue = p.scheduledAt ?? p.date ?? null;
+        const formatDateTime = (value) => {
+          if (value === null || value === undefined || value === "") return "";
           try {
-            const scheduledDate = new Date(p.scheduledAt);
-            if (!isNaN(scheduledDate.getTime())) {
-              const dateStr = scheduledDate.toLocaleDateString("tr-TR", { year: "numeric", month: "2-digit", day: "2-digit" });
-              const timeStr = scheduledDate.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-              scheduledText = `Tarih: ${dateStr} ${timeStr}`;
-            } else {
-              scheduledText = `Tarih: ${fmtDate(p.scheduledAt)}`;
+            const dt = new Date(value);
+            if (!isNaN(dt.getTime())) {
+              const dateStr = dt.toLocaleDateString("tr-TR", { year: "numeric", month: "2-digit", day: "2-digit" });
+              const timeStr = dt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+              return `${dateStr} ${timeStr}`;
             }
-          } catch {
-            scheduledText = `Tarih: ${fmtDate(p.scheduledAt)}`;
-          }
+          } catch {}
+          return fmtDate(value);
+        };
+
+        const plannedText = formatDateTime(scheduleValue);
+        if (plannedText) {
+          details.push(`Planlanan: ${plannedText}`);
+        } else {
+          const createdText = formatDateTime(p.createdAt);
+          if (createdText) details.push(`İşlem: ${createdText}`);
         }
         const chairText = String(p.chairNo || p.chair || "").trim();
         if (chairText) {
@@ -1650,8 +2005,24 @@
     if (!pid) return setMsg("Patient ID bulunamadı.", "err");
     if (!procedureId || !toothId) return setMsg("Procedure/Tooth ID bulunamadı.", "err");
 
-    const tooth = findTooth(toothId);
-    const proc = tooth?.procedures?.find(p => p.id === procedureId);
+    // 1. Fetch latest treatments
+    let latest;
+    try {
+      const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      latest = await r.json();
+    } catch (e) {
+      return setMsg("Güncel tedavi verisi alınamadı: " + e.message, "err");
+    }
+    if (!latest || !Array.isArray(latest.teeth)) return setMsg("Tedavi verisi hatalı.", "err");
+
+    // 2. Find and update the procedure in the latest data
+    const tooth = (latest.teeth || []).find(t => toothKey(
+      t?.toothId ?? t?.tooth_id ?? t?.toothNumber ?? t?.tooth_number ?? t?.toothNo ?? t?.tooth_no ?? t?.id
+    ) === toothKey(toothId));
+    if (!tooth) return setMsg("Diş bulunamadı.", "err");
+    const proc = (tooth.procedures || []).find(p => p.id === procedureId);
     if (!proc) return setMsg("Procedure bulunamadı.", "err");
 
     const newType = String(newTypeRaw || "").trim().toUpperCase() || String(proc.type || "").toUpperCase() || "";
@@ -1664,11 +2035,10 @@
       const dateStr = String(newDateStr).trim();
       const timeStr = (newTimeStr && String(newTimeStr).trim()) ? String(newTimeStr).trim() : "00:00";
       try {
-        // Create date from date + time string
         const dateTimeStr = `${dateStr}T${timeStr}:00`;
         const dateObj = new Date(dateTimeStr);
         if (!isNaN(dateObj.getTime())) {
-          newScheduledAt = dateObj.getTime(); // Store as timestamp
+          newScheduledAt = dateObj.getTime();
         }
       } catch (e) {
         console.error("[saveProcedureInlineEdit] Error parsing date/time:", e);
@@ -1728,7 +2098,7 @@
       const r = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: adminHeaders({ "Content-Type":"application/json" }),
-        body: JSON.stringify(payload)
+        body: JSON.stringify(latest)
       });
 
       const j = await r.json().catch(()=>null);
@@ -2076,6 +2446,174 @@
     }
   }
 
+  function normalizeProcedureStatus(statusRaw) {
+    const raw = String(statusRaw || '').trim().toUpperCase();
+    if (["DONE", "COMPLETED", "COMPLETE", "FINISHED"].includes(raw)) return "COMPLETED";
+    if (["IN_PROGRESS", "ACTIVE", "DOING"].includes(raw)) return "ACTIVE";
+    if (["CANCELLED", "CANCELED", "REJECTED"].includes(raw)) return "CANCELLED";
+    return "PLANNED";
+  }
+
+  function canonicalProcedureType(value) {
+    const raw = String(value || '').trim().toUpperCase();
+    if (!raw) return '';
+    if (/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(raw)) return '';
+    if (/^(PROC|PROCEDURE)_?[0-9A-F]{8,}$/.test(raw)) return '';
+    const normalized = raw.replace(/[^A-Z0-9]/g, '');
+    const aliases = {
+      DOLGU: 'FILLING',
+      KOMPOZITDOLGU: 'FILLING',
+      COMPOSITEFILLING: 'FILLING',
+      FILLINGRESTORATION: 'FILLING',
+    };
+    return aliases[normalized] || normalized;
+  }
+
+  function pickProcedureTypeFromItem(item) {
+    const candidates = [
+      item?.procedure_name,
+      item?.procedure_description,
+      item?.procedure_code,
+      item?.type,
+      item?.procedure_id,
+      item?.procedureId,
+    ];
+    for (const candidate of candidates) {
+      const canonical = canonicalProcedureType(candidate);
+      if (canonical) return String(candidate).trim().toUpperCase();
+    }
+    return 'PROCEDURE';
+  }
+
+  function toTimestamp(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+    }
+    const ts = Date.parse(raw);
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  async function enrichTeethWithPlanItems(patientId) {
+    try {
+      const pid = String(patientId || '').trim();
+      if (!pid) return;
+
+      const planIds = new Set();
+      const resolvedPlanId = await resolveCurrentPlanId(pid);
+      const currentPlanId = String(resolvedPlanId || CURRENT_PLAN_ID || '').trim();
+      if (currentPlanId) planIds.add(currentPlanId);
+
+      const urlPlanId = String(new URLSearchParams(window.location.search).get("planId") || "").trim();
+      if (urlPlanId) planIds.add(urlPlanId);
+
+      const patientKeys = new Set([pid]);
+      try {
+        const patientsRes = await fetch(`${API_BASE}/api/admin/patients`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        const patientsJson = await patientsRes.json().catch(() => null);
+        const patients = Array.isArray(patientsJson?.patients) ? patientsJson.patients : [];
+        const matched = patients.find((p) => {
+          const idA = String(p?.id || "").trim();
+          const idB = String(p?.patient_id || p?.patientId || "").trim();
+          return idA === pid || idB === pid;
+        });
+        if (matched) {
+          const idA = String(matched?.id || "").trim();
+          const idB = String(matched?.patient_id || matched?.patientId || "").trim();
+          if (idA) patientKeys.add(idA);
+          if (idB) patientKeys.add(idB);
+        }
+      } catch {}
+
+      for (const key of patientKeys) {
+        const adminPlansRes = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(key)}/treatment-plans`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        const adminPlansJson = await adminPlansRes.json().catch(() => null);
+        const adminPlans = Array.isArray(adminPlansJson?.treatment_plans) ? adminPlansJson.treatment_plans : [];
+        adminPlans.forEach((plan) => {
+          const planId = String(plan?.id || "").trim();
+          if (planId) planIds.add(planId);
+        });
+      }
+
+      if (planIds.size === 0) return;
+
+      const itemResponses = await Promise.all(
+        Array.from(planIds).map(async (planId) => {
+          const itemsRes = await fetch(`${API_BASE}/api/treatment-plans/${encodeURIComponent(planId)}/items?nocache=1`, {
+            headers: adminHeaders({ Accept: "application/json" }),
+          });
+          const itemsJson = await itemsRes.json().catch(() => null);
+          return Array.isArray(itemsJson?.data) ? itemsJson.data : [];
+        })
+      );
+
+      itemResponses.flat().forEach((item) => {
+        const toothId = toothKey(item?.tooth_fdi_code || item?.tooth_number || item?.tooth_id || item?.tooth);
+        if (!toothId) return;
+
+        const tooth = ensureTooth(toothId);
+        tooth.procedures = Array.isArray(tooth.procedures) ? tooth.procedures : [];
+
+        const procedureId = String(item?.id || item?.procedure_id || item?.procedureId || makeProcedureId());
+        const existing = tooth.procedures.find((p) => String(p?.id || p?.procedureId || '') === procedureId);
+        const scheduledAt =
+          toTimestamp(item?.scheduled_at) ||
+          toTimestamp(item?.scheduled_date) ||
+          toTimestamp(item?.due_date) ||
+          toTimestamp(item?.planned_date) ||
+          null;
+        const createdAt = toTimestamp(item?.created_at) || Date.now();
+
+        const nextProcedure = {
+          id: procedureId,
+          procedureId: procedureId,
+          type: pickProcedureTypeFromItem(item),
+          category: TYPE_TO_CATEGORY[String(item?.procedure_code || '').toUpperCase()] || null,
+          status: normalizeProcedureStatus(item?.status),
+          createdAt,
+          date: scheduledAt,
+          scheduledAt,
+          chairNo: String(item?.chair_no || item?.chair || '').trim() || null,
+          chair: String(item?.chair || item?.chair_no || '').trim() || null,
+          assignedDoctorId: String(item?.assigned_doctor_id || item?.latest_assigned_doctor_id || item?.doctor_id || '').trim() || null,
+          assignedDoctorName: String(item?.assigned_doctor_name || item?.doctor_name || item?.doctor_full_name || item?.created_by_doctor_name || '').trim() || null,
+        };
+
+        let targetProcedure = existing;
+        if (!targetProcedure) {
+          targetProcedure = tooth.procedures.find((p) => {
+            const pType = canonicalProcedureType(p?.type);
+            const nextType = canonicalProcedureType(nextProcedure?.type);
+            if (!pType || !nextType || pType !== nextType) return false;
+            const pStatus = normalizeProcedureStatus(p?.status);
+            return pStatus !== 'COMPLETED' && pStatus !== 'CANCELLED';
+          }) || null;
+        }
+
+        if (targetProcedure) {
+          const keepId = String(targetProcedure?.id || targetProcedure?.procedureId || '').trim();
+          Object.assign(targetProcedure, nextProcedure);
+          if (keepId) {
+            targetProcedure.id = keepId;
+            targetProcedure.procedureId = keepId;
+          }
+        } else {
+          tooth.procedures.push(nextProcedure);
+        }
+      });
+    } catch (error) {
+      console.warn('[enrichTeethWithPlanItems] warning:', error);
+    }
+  }
+
   // Procedure ekle ve direkt server'a kaydet
   async function addProcedure(){
     console.log('[addProcedure] Function called');
@@ -2413,12 +2951,12 @@
 
   // Initialize
   async function init() {
-    // Load procedure definitions and treatment prices
-    await loadProcedureDefs();
-    await loadTreatmentPrices();
-    
-    // Load patient options first
-    await loadPatientOptions();
+    await Promise.all([
+      loadProcedureDefs(),
+      loadTreatmentPrices(),
+      loadPatientOptions(),
+      loadDoctorsDirectory(),
+    ]);
 
     // Render tooth grid
     renderRow("upperRow1", U1);
@@ -2435,10 +2973,12 @@
     
     if (initialPid) {
       setPatientIdAndUrl(initialPid);
-      await loadProcedureDefs();
-      loadPatientInfo(initialPid);
-      await loadTreatments(initialPid);
-      loadTreatmentEvents(initialPid);
+      await Promise.all([
+        loadPatientInfo(initialPid),
+        loadTreatments(initialPid),
+        loadTreatmentEvents(initialPid),
+        refreshPlanChat(),
+      ]);
       
       // If toothId is in URL, select that tooth after treatments are loaded
       const urlProcedureId = params.get('procedureId');
@@ -2500,6 +3040,7 @@
         loadPatientInfo(pid);
         await loadTreatments(pid);
         loadTreatmentEvents(pid);
+        await refreshPlanChat();
         // Clear tooth selection when patient changes
         clearSelection();
       });

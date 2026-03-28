@@ -26,11 +26,61 @@ const express = require('express');
 const path = require('path');
 
 const app = express();
-// Prevent 304 Not Modified responses for dynamic APIs (Render/CF caching + ETag).
-// We explicitly disable ETag generation globally; admin endpoints are always dynamic.
 app.set("etag", false);
 
-// Static middleware will serve admin.html from public/
+// ================= DOCTOR DASHBOARD ENDPOINT (REAL DATA) =================
+// const jwt = require('jsonwebtoken'); // Already required elsewhere, avoid redeclaration
+
+function isValidUUID(uuid) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+}
+
+app.get("/api/doctor/dashboard", async (req, res) => {
+  try {
+    // Extract JWT from Authorization header
+    const authHeader = req.headers["authorization"] || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    let doctorId = null;
+    let clinicId = null;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        doctorId = decoded.id || decoded.doctorId || decoded.doctor_id || null;
+        clinicId = decoded.clinicId || decoded.clinic_id || null;
+      } catch (e) {
+        return res.status(401).json({ ok: false, error: "invalid_token" });
+      }
+    }
+
+    // Validate UUIDs
+    if (!isValidUUID(doctorId) || (clinicId && !isValidUUID(clinicId))) {
+      return res.status(400).json({ ok: false, error: "Invalid UUID for doctorId or clinicId" });
+    }
+
+    // Query Supabase for patients assigned to this doctor
+    const { data: patients, error: patientError } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("primary_doctor_id", doctorId);
+    if (patientError) {
+      return res.status(500).json({ ok: false, error: patientError.message });
+    }
+    res.json({
+      ok: true,
+      doctor: {
+        id: doctorId,
+        // You can add more doctor info here if needed
+      },
+      stats: {
+        totalPatients: patients ? patients.length : 0,
+        // Add more real stats as needed
+      },
+      message: "Dashboard data from Supabase."
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
 
 // admin-dashboard.html route - force canonical dashboard file (MUST be before static middleware)
 app.get("/admin-dashboard.html", (req, res) => {
@@ -42,7 +92,7 @@ app.get("/admin-dashboard.html", (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    
+
     res.sendFile(filePath);
   } catch (error) {
     console.error("[ROUTE] Error serving admin-dashboard.html:", error);
@@ -58,7 +108,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 
-// Admin authentication middleware
 const { verifyAdminToken, adminAuth } = require('./admin-auth-middleware.js');
 const corsOptions = {
   origin: true,
@@ -70,14 +119,38 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Multer configuration for general file uploads (legacy, kept for compatibility)
-const upload = multer({ 
+// GET /admin.html — register before most routes; multi-path for Render / monorepo
+app.get("/admin.html", (req, res) => {
+  try {
+    const candidates = [
+      path.join(__dirname, "public", "admin.html"),
+      path.join(__dirname, "cliniflow-admin", "public", "admin.html"),
+      path.join(process.cwd(), "public", "admin.html"),
+      path.join(process.cwd(), "cliniflow-admin", "public", "admin.html"),
+    ];
+    const filePath = candidates.find((p) => fs.existsSync(p));
+    if (!filePath) {
+      return res
+        .status(404)
+        .type("text/plain")
+        .send(
+          "admin.html not found. Deploy must include repo public/ or cliniflow-admin/public/."
+        );
+    }
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    return res.sendFile(path.resolve(filePath));
+  } catch (err) {
+    console.error("[ROUTE] /admin.html:", err);
+    return res.status(500).send(String(err?.message || err));
+  }
+});
+
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fileSize: 50 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
-    // İzin verilen dosya tipleri
     const allowedMimeTypes = [
       'image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif',
       'application/pdf',
@@ -336,9 +409,14 @@ const DATA_DIR = path.join(__dirname, "data");
 const PATIENTS_DIR = path.join(DATA_DIR, "patients");
 const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+const TREATMENT_ITEM_OVERRIDES_DIR = path.join(DATA_DIR, "treatment-item-overrides");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const ADMIN_PUBLIC_DIR = path.join(__dirname, "cliniflow-admin", "public");
+const ROOT_PUBLIC_DIR = path.join(__dirname, "..", "public");
+
+app.use(express.static(PUBLIC_DIR));
+app.use(express.static(ADMIN_PUBLIC_DIR));
 
 /* ================= HELPER FUNCTIONS ================= */
 
@@ -463,20 +541,6 @@ app.get("/admin-travel.html", (req, res) => {
   }
 });
 
-app.get("/admin.html", (req, res) => {
-  try {
-    const filePath = path.join(PUBLIC_DIR, "admin.html");
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send("admin.html not found in /public");
-    }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin.html:", err);
-    res.status(500).send(`Error: ${err.message}`);
-  }
-});
-
 app.get("/admin-patients.html", (req, res) => {
   try {
     const filePath = path.join(ADMIN_PUBLIC_DIR, "admin-patients.html");
@@ -526,26 +590,58 @@ app.get("/admin-treatment-create.html", (req, res) => {
 
 app.get("/admin-treatment.html", (req, res) => {
   try {
-    const filePath = path.join(PUBLIC_DIR, "admin-treatment.html");
-    if (!fs.existsSync(filePath)) {
+    const primaryPath = path.join(ROOT_PUBLIC_DIR, "admin-treatment.html");
+    const fallbackPath = path.join(PUBLIC_DIR, "admin-treatment.html");
+
+    if (fs.existsSync(primaryPath)) {
+      return res.sendFile(path.resolve(primaryPath));
+    }
+
+    if (fs.existsSync(fallbackPath)) {
+      return res.sendFile(path.resolve(fallbackPath));
+    }
+
+    if (!fs.existsSync(primaryPath) && !fs.existsSync(fallbackPath)) {
       return res.status(404).send(`
         <html>
           <head><title>Admin Treatment Sayfası Bulunamadı</title></head>
           <body>
             <h1>Admin Treatment Sayfası Bulunamadı</h1>
             <p>admin-treatment.html dosyası bulunamadı.</p>
-            <p>File path: ${filePath}</p>
+            <p>Primary path: ${primaryPath}</p>
+            <p>Fallback path: ${fallbackPath}</p>
             <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
+            <p>ROOT_PUBLIC_DIR: ${ROOT_PUBLIC_DIR}</p>
             <p>__dirname: ${__dirname}</p>
           </body>
         </html>
       `);
     }
-    
-    res.sendFile(filePath);
+
+    res.status(404).send("admin-treatment.html not found");
   } catch (error) {
     console.error("[ROUTE] Error serving admin-treatment.html:", error);
     res.status(500).send("Internal Server Error");
+  }
+});
+
+app.get("/admin-schedule.html", (req, res) => {
+  try {
+    const primaryPath = path.join(ROOT_PUBLIC_DIR, "admin-schedule.html");
+    const fallbackPath = path.join(PUBLIC_DIR, "admin-schedule.html");
+
+    if (fs.existsSync(primaryPath)) {
+      return res.sendFile(path.resolve(primaryPath));
+    }
+
+    if (fs.existsSync(fallbackPath)) {
+      return res.sendFile(path.resolve(fallbackPath));
+    }
+
+    return res.status(404).send("admin-schedule.html not found");
+  } catch (error) {
+    console.error("[ROUTE] Error serving admin-schedule.html:", error);
+    return res.status(500).send("Internal Server Error");
   }
 });
 
@@ -595,7 +691,7 @@ app.get("/admin-referrals.html", (req, res) => {
 
 /* ================= HELPERS ================= */
 function ensureDirs() {
-  [DATA_DIR, PATIENTS_DIR, TREATMENTS_DIR, TRAVEL_DIR, PUBLIC_DIR].forEach((d) => {
+  [DATA_DIR, PATIENTS_DIR, TREATMENTS_DIR, TRAVEL_DIR, TREATMENT_ITEM_OVERRIDES_DIR, PUBLIC_DIR].forEach((d) => {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   });
 }
@@ -611,6 +707,70 @@ function safeReadJson(filePath, fallback) {
 
 function now() {
   return Date.now();
+}
+
+function getTreatmentItemOverridePath(itemId) {
+  const safeId = String(itemId || "").trim();
+  if (!safeId) return null;
+  return path.join(TREATMENT_ITEM_OVERRIDES_DIR, `${safeId}.json`);
+}
+
+function readTreatmentItemOverride(itemId) {
+  const filePath = getTreatmentItemOverridePath(itemId);
+  if (!filePath) return null;
+  return safeReadJson(filePath, null);
+}
+
+function saveTreatmentItemOverride(itemId, patch) {
+  const filePath = getTreatmentItemOverridePath(itemId);
+  if (!filePath) return null;
+
+  ensureDirs();
+  const current = safeReadJson(filePath, {});
+  const next = {
+    ...(current || {}),
+    ...(patch || {}),
+    updated_at: new Date().toISOString(),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf-8");
+  return next;
+}
+
+function applyTreatmentItemOverride(baseRow, overrideRow) {
+  if (!baseRow || !overrideRow || typeof overrideRow !== "object") return baseRow;
+
+  const pick = (key) => Object.prototype.hasOwnProperty.call(overrideRow, key);
+  const merged = { ...(baseRow || {}) };
+
+  if (pick("planned_date")) {
+    merged.scheduled_at = overrideRow.planned_date;
+    merged.scheduled_date = overrideRow.planned_date;
+    merged.due_date = overrideRow.planned_date;
+  }
+  if (pick("note")) {
+    merged.note = overrideRow.note;
+    merged.notes = overrideRow.note;
+  }
+  if (pick("chair_no")) {
+    merged.chair_no = overrideRow.chair_no;
+    merged.chair = overrideRow.chair_no;
+  }
+  if (pick("doctor_id")) {
+    merged.doctor_id = overrideRow.doctor_id;
+    merged.created_by_doctor_id = overrideRow.doctor_id;
+  }
+  if (pick("price")) {
+    merged.price = overrideRow.price;
+  }
+  if (pick("title")) {
+    merged.procedure_description = overrideRow.title;
+    merged.procedure_name = overrideRow.title;
+  }
+  if (pick("procedure_code")) {
+    merged.procedure_code = overrideRow.procedure_code;
+  }
+
+  return merged;
 }
 
 /* ================= PATIENT LIST ================= */
@@ -928,6 +1088,341 @@ app.get("/api/patient/:patientId/treatments", async (req, res) => {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Treatments GET error:", err);
     res.status(500).json({ ok: false, error: "treatments_fetch_failed", details: err.message });
+  }
+});
+
+app.get("/api/patient/treatment-plan/:patientId", getUserFromToken, requirePatient, async (req, res) => {
+  try {
+    const requestedPatientId = String(req.params.patientId || "").trim();
+    if (!requestedPatientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    const tokenPatientId = String(req.user?.raw?.patientId || req.user?.id || "").trim();
+    if (!tokenPatientId || tokenPatientId !== requestedPatientId) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const clinicId = req.user?.clinicId || null;
+
+    let patient = null;
+    const lookupCandidates = [
+      { column: "id", value: requestedPatientId },
+      { column: "patient_id", value: requestedPatientId },
+      { column: "name", value: requestedPatientId },
+    ];
+
+    for (const candidate of lookupCandidates) {
+      const baseQuery = supabase
+        .from("patients")
+        .select("id, patient_id, name, clinic_id")
+        .eq(candidate.column, candidate.value)
+        .limit(1)
+        .maybeSingle();
+
+      const { data, error } = clinicId
+        ? await baseQuery.eq("clinic_id", clinicId)
+        : await baseQuery;
+
+      if (error) {
+        console.error("PATIENT_VIEW_PLAN_PATIENT_LOOKUP_ERROR:", error);
+        return res.status(500).json({ ok: false, error: "internal_error" });
+      }
+
+      if (data) {
+        patient = data;
+        break;
+      }
+    }
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const { data: plans, error: plansError } = await supabase
+      .from("treatment_plans")
+      .select(`
+        id,
+        status,
+        encounter_id,
+        created_at,
+        updated_at,
+        patient_encounters!inner(
+          id,
+          patient_id
+        )
+      `)
+      .eq("patient_encounters.patient_id", patient.id)
+      .neq("status", "DRAFT")
+      .order("created_at", { ascending: false });
+
+    if (plansError) {
+      console.error("PATIENT_VIEW_PLAN_ERROR:", plansError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const encounterIds = Array.from(new Set((plans || []).map((plan) => plan.encounter_id).filter(Boolean)));
+    const planIds = (plans || []).map((plan) => plan.id);
+
+    const diagnosesByEncounter = new Map();
+    if (encounterIds.length > 0) {
+      const { data: diagnoses, error: diagnosesError } = await supabase
+        .from("encounter_diagnoses")
+        .select("id, encounter_id, icd10_code, icd10_description, is_primary, tooth_number, created_at")
+        .in("encounter_id", encounterIds)
+        .order("created_at", { ascending: false });
+
+      if (!diagnosesError) {
+        for (const diagnosis of diagnoses || []) {
+          if (!diagnosesByEncounter.has(diagnosis.encounter_id)) {
+            diagnosesByEncounter.set(diagnosis.encounter_id, []);
+          }
+          diagnosesByEncounter.get(diagnosis.encounter_id).push(diagnosis);
+        }
+      }
+    }
+
+    const proceduresByPlan = new Map();
+    if (planIds.length > 0) {
+      const { data: procedures, error: proceduresError } = await supabase
+        .from("procedures")
+        .select("id, treatment_plan_id, title, status, scheduled_date, completed_at")
+        .in("treatment_plan_id", planIds)
+        .order("scheduled_date", { ascending: true });
+
+      if (proceduresError) {
+        const { data: treatmentItems, error: treatmentItemsError } = await supabase
+          .from("treatment_items")
+          .select("id, treatment_plan_id, procedure_name, procedure_code, status, created_at")
+          .in("treatment_plan_id", planIds)
+          .order("created_at", { ascending: true });
+
+        if (!treatmentItemsError) {
+          for (const item of treatmentItems || []) {
+            if (!proceduresByPlan.has(item.treatment_plan_id)) {
+              proceduresByPlan.set(item.treatment_plan_id, []);
+            }
+            proceduresByPlan.get(item.treatment_plan_id).push({
+              id: item.id,
+              title: item.procedure_name || item.procedure_code || "Procedure",
+              status: String(item.status || "PLANNED").toUpperCase(),
+              scheduled_date: item.created_at || null,
+              completed_at: null,
+            });
+          }
+        }
+      } else {
+        for (const proc of procedures || []) {
+          if (!proceduresByPlan.has(proc.treatment_plan_id)) {
+            proceduresByPlan.set(proc.treatment_plan_id, []);
+          }
+          proceduresByPlan.get(proc.treatment_plan_id).push(proc);
+        }
+      }
+    }
+
+    const formattedPlans = (plans || []).map((plan) => {
+      const encounterDiagnoses = diagnosesByEncounter.get(plan.encounter_id) || [];
+      const primaryDiagnosis = encounterDiagnoses.find((d) => d.is_primary) || encounterDiagnoses[0] || null;
+
+      return {
+        id: plan.id,
+        status: String(plan.status || "").toUpperCase(),
+        created_at: plan.created_at,
+        updated_at: plan.updated_at,
+        diagnosis: primaryDiagnosis
+          ? {
+              id: primaryDiagnosis.id,
+              code: primaryDiagnosis.icd10_code,
+              title: primaryDiagnosis.icd10_description,
+              tooth_number: primaryDiagnosis.tooth_number || null,
+            }
+          : null,
+        procedures: proceduresByPlan.get(plan.id) || [],
+      };
+    });
+
+    return res.json({ ok: true, plans: formattedPlans });
+  } catch (error) {
+    console.error("PATIENT_VIEW_PLAN_ERROR:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/patient/history/:patientId", getUserFromToken, requirePatient, async (req, res) => {
+  try {
+    const requestedPatientId = String(req.params.patientId || "").trim();
+    if (!requestedPatientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    const tokenPatientId = String(req.user?.raw?.patientId || req.user?.id || "").trim();
+    if (!tokenPatientId || tokenPatientId !== requestedPatientId) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const clinicId = req.user?.clinicId || null;
+
+    let patient = null;
+    const lookupCandidates = [
+      { column: "id", value: requestedPatientId },
+      { column: "patient_id", value: requestedPatientId },
+      { column: "name", value: requestedPatientId },
+    ];
+
+    for (const candidate of lookupCandidates) {
+      const baseQuery = supabase
+        .from("patients")
+        .select("id, patient_id, name, clinic_id")
+        .eq(candidate.column, candidate.value)
+        .limit(1)
+        .maybeSingle();
+
+      const { data, error } = clinicId
+        ? await baseQuery.eq("clinic_id", clinicId)
+        : await baseQuery;
+
+      if (error) {
+        console.error("PATIENT_HISTORY_PATIENT_LOOKUP_ERROR:", error);
+        return res.status(500).json({ ok: false, error: "internal_error" });
+      }
+
+      if (data) {
+        patient = data;
+        break;
+      }
+    }
+
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const { data: encounters, error: encountersError } = await supabase
+      .from("patient_encounters")
+      .select("id, patient_id, encounter_type, status, created_at")
+      .eq("patient_id", patient.id)
+      .order("created_at", { ascending: false });
+
+    if (encountersError) {
+      console.error("PATIENT_HISTORY_ENCOUNTERS_ERROR:", encountersError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const encounterIds = Array.from(new Set((encounters || []).map((item) => item.id).filter(Boolean)));
+
+    let diagnoses = [];
+    if (encounterIds.length > 0) {
+      const { data: diagnosesData, error: diagnosesError } = await supabase
+        .from("encounter_diagnoses")
+        .select("id, encounter_id, icd10_code, icd10_description, tooth_number, notes, is_primary, created_at")
+        .in("encounter_id", encounterIds)
+        .order("created_at", { ascending: false });
+
+      if (diagnosesError) {
+        console.error("PATIENT_HISTORY_DIAGNOSES_ERROR:", diagnosesError);
+      } else {
+        diagnoses = diagnosesData || [];
+      }
+    }
+
+    let procedures = [];
+    if (encounterIds.length > 0) {
+      const { data: plans, error: plansError } = await supabase
+        .from("treatment_plans")
+        .select("id, encounter_id, status")
+        .in("encounter_id", encounterIds)
+        .neq("status", "DRAFT");
+
+      if (!plansError) {
+        const planIds = (plans || []).map((item) => item.id);
+        if (planIds.length > 0) {
+          const { data: procedureData, error: procedureError } = await supabase
+            .from("procedures")
+            .select("id, treatment_plan_id, title, status, scheduled_date, completed_at, created_at")
+            .in("treatment_plan_id", planIds)
+            .order("created_at", { ascending: false });
+
+          if (procedureError) {
+            const { data: treatmentItems, error: treatmentItemsError } = await supabase
+              .from("treatment_items")
+              .select("id, treatment_plan_id, procedure_name, procedure_code, status, created_at")
+              .in("treatment_plan_id", planIds)
+              .order("created_at", { ascending: false });
+
+            if (!treatmentItemsError) {
+              procedures = (treatmentItems || []).map((item) => ({
+                id: item.id,
+                treatment_plan_id: item.treatment_plan_id,
+                title: item.procedure_name || item.procedure_code || "Procedure",
+                status: String(item.status || "PLANNED").toUpperCase(),
+                scheduled_date: item.created_at || null,
+                completed_at: null,
+                created_at: item.created_at || null,
+              }));
+            }
+          } else {
+            procedures = procedureData || [];
+          }
+        }
+      }
+    }
+
+    const events = [];
+
+    for (const encounter of encounters || []) {
+      events.push({
+        id: `encounter-${encounter.id}`,
+        type: "ENCOUNTER",
+        happened_at: encounter.created_at,
+        title: "Muayene açıldı",
+        description: `Tür: ${String(encounter.encounter_type || "initial").toUpperCase()}`,
+        tooth_number: null,
+        status: String(encounter.status || "ACTIVE").toUpperCase(),
+      });
+    }
+
+    for (const diagnosis of diagnoses) {
+      events.push({
+        id: `diagnosis-${diagnosis.id}`,
+        type: "DIAGNOSIS",
+        happened_at: diagnosis.created_at,
+        title: `${diagnosis.icd10_code || "ICD"} - ${diagnosis.icd10_description || "Tanı"}`,
+        description: diagnosis.notes || null,
+        tooth_number: diagnosis.tooth_number || null,
+        status: diagnosis.is_primary ? "PRIMARY" : "SECONDARY",
+      });
+    }
+
+    for (const procedure of procedures) {
+      events.push({
+        id: `procedure-${procedure.id}`,
+        type: "PROCEDURE",
+        happened_at: procedure.completed_at || procedure.scheduled_date || procedure.created_at || null,
+        title: procedure.title || "Procedure",
+        description: null,
+        tooth_number: null,
+        status: String(procedure.status || "PLANNED").toUpperCase(),
+      });
+    }
+
+    events.sort((a, b) => {
+      const left = a.happened_at ? new Date(a.happened_at).getTime() : 0;
+      const right = b.happened_at ? new Date(b.happened_at).getTime() : 0;
+      return right - left;
+    });
+
+    return res.json({
+      ok: true,
+      patient: {
+        id: patient.id,
+        patient_id: patient.patient_id,
+        name: patient.name,
+      },
+      timeline: events,
+    });
+  } catch (error) {
+    console.error("PATIENT_HISTORY_ERROR:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -2739,6 +3234,8 @@ app.post("/api/admin/login", async (req, res) => {
   try {
     const { email, password, clinicCode } = req.body || {};
 
+    console.log("[ADMIN LOGIN] Request received:", { email, clinicCode, hasPassword: !!password });
+
     if (!email || !String(email).trim()) {
       return res.status(400).json({ ok: false, error: "email_required" });
     }
@@ -2850,6 +3347,8 @@ app.post("/api/admin/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    console.log("[ADMIN LOGIN] Token generated successfully for admin:", admin.email);
+
     res.json({
       ok: true,
       user: {
@@ -2864,7 +3363,6 @@ app.post("/api/admin/login", async (req, res) => {
       }
     });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[ADMIN LOGIN] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -2884,7 +3382,7 @@ app.post("/api/patient/login", async (req, res) => {
     // Hasta bul (telefon numarası ile)
     const { data: patient, error } = await supabase
       .from("patients")
-      .select("id, name, name, phone, status, clinic_id, clinic_code, role")
+      .select("id, patient_id, name, phone, status, clinic_id, clinic_code, role")
       .eq("phone", trimmedPhone)
       .maybeSingle();
 
@@ -2908,15 +3406,17 @@ app.post("/api/patient/login", async (req, res) => {
       .eq("id", patient.clinic_id)
       .single();
 
-    if (!clinic?.data) {
+    if (clinicError || !clinic) {
       console.error("[PATIENT LOGIN] Clinic lookup error:", clinicError);
       return res.status(500).json({ ok: false, error: "internal_error", message: "Clinic lookup failed" });
     }
 
+    const stablePatientId = patient.patient_id || patient.id;
+
     // JWT token oluştur (register endpoint ile aynı format)
     const token = jwt.sign(
       { 
-        patientId: patient.name, 
+        patientId: stablePatientId,
         clinicId: patient.clinic_id,
         clinicCode: clinic.clinic_code || patient.clinic_code || "",
         role: patient.role || "PATIENT",
@@ -2930,14 +3430,14 @@ app.post("/api/patient/login", async (req, res) => {
     res.json({
       ok: true,
       user: {
-        id: patient.name, // Using patient.name as ID for now
+        id: stablePatientId,
         token: token,
         type: "patient",
         role: patient.role || "PATIENT",
         name: patient.name || "",
         email: "", // Patients don't have email
         phone: patient.phone || "",
-        patientId: patient.name,
+        patientId: stablePatientId,
         clinicId: patient.clinic_id,
         clinicCode: clinic.clinic_code || "",
         status: patient.status || "PENDING"
@@ -2945,8 +3445,8 @@ app.post("/api/patient/login", async (req, res) => {
     });
   } catch (err) {
       console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[PATIENT LOGIN] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error", message: error.message });
+    console.error("[PATIENT LOGIN] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error", message: err.message });
   }
 });
 
@@ -3211,8 +3711,424 @@ app.get("/api/admin/clinic", adminAuth, async (req, res) => {
 });
 
 /* ================= ADMIN EVENTS (GET) ================= */
-app.get("/api/admin/events", adminAuth, (req, res) => {
-  res.json({ ok: true, events: [] });
+app.get("/api/admin/events", adminAuth, async (req, res) => {
+  try {
+    const clinicId = req.admin?.clinicId || req.clinicId;
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStart = today.getTime();
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    const todayEndTs = todayEnd.getTime();
+
+    const allEvents = [];
+
+    const toIso = (value) => {
+      if (!value) return null;
+      if (typeof value === "string") {
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+      }
+      const num = Number(value);
+      if (!Number.isFinite(num)) return null;
+      return new Date(num).toISOString();
+    };
+
+    const dateTimeToIso = (dateStr, timeStr) => {
+      if (!dateStr) return null;
+      const hhmm = String(timeStr || "00:00").slice(0, 5);
+      const candidate = `${dateStr}T${hhmm}:00`;
+      const parsed = Date.parse(candidate);
+      return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+    };
+
+    const normalizeStatus = (status) => {
+      const raw = String(status || "PLANNED").trim().toUpperCase();
+      if (!raw) return "PLANNED";
+      if (["DONE", "COMPLETED", "COMPLETE", "FINISHED"].includes(raw)) return "COMPLETED";
+      if (["CANCELLED", "CANCELED"].includes(raw)) return "CANCELLED";
+      if (["ACTIVE", "IN_PROGRESS", "ONGOING"].includes(raw)) return "ACTIVE";
+      return raw;
+    };
+
+    const normalizeText = (value) => {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const normalized = text.toLowerCase();
+      if (["unknown", "unknown unknown", "unknown patient", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) {
+        return "";
+      }
+      return text;
+    };
+
+    const addEvent = (evt) => {
+      const iso = evt.timelineAt || dateTimeToIso(evt.date, evt.time) || toIso(evt.timestamp);
+      if (!iso) return;
+      const ts = Date.parse(iso);
+      if (!Number.isFinite(ts)) return;
+      allEvents.push({
+        ...evt,
+        timelineAt: iso,
+        timestamp: ts,
+      });
+    };
+
+    const patientSelectCandidates = [
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, travel, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, travel, treatments",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatments",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, travel, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, travel, treatments",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatments",
+      "id, patient_id, clinic_id, name, full_name, primary_doctor_id",
+      "id, patient_id, clinic_id, name, full_name, doctor_id, travel, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, doctor_id, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, doctor_id, travel, treatments",
+      "id, patient_id, clinic_id, name, full_name, doctor_id, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, doctor_id, treatments",
+      "id, patient_id, clinic_id, name, full_name, doctor_id",
+      "id, patient_id, clinic_id, name, full_name, travel, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, treatments, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, travel, treatments",
+      "id, patient_id, clinic_id, name, full_name, treatment_events",
+      "id, patient_id, clinic_id, name, full_name, treatments",
+      "id, patient_id, clinic_id, name, full_name",
+    ];
+
+    let patients = [];
+    for (const selectClause of patientSelectCandidates) {
+      const result = await supabase
+        .from("patients")
+        .select(selectClause)
+        .eq("clinic_id", clinicId)
+        .order("created_at", { ascending: false });
+
+      if (!result.error) {
+        patients = Array.isArray(result.data) ? result.data : [];
+        break;
+      }
+
+      const code = String(result.error.code || "");
+      if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+        console.error("[ADMIN EVENTS] patients query failed", result.error);
+        break;
+      }
+    }
+
+    const doctorIdSet = new Set();
+    patients.forEach((row) => {
+      const doctorId = String(row?.primary_doctor_id || row?.doctor_id || "").trim();
+      if (doctorId) doctorIdSet.add(doctorId);
+    });
+
+    const doctorNameById = new Map();
+    if (doctorIdSet.size > 0) {
+      const doctorIds = Array.from(doctorIdSet);
+      const doctorSelectCandidates = [
+        "id, doctor_id, name, full_name",
+        "id, doctor_id, full_name",
+        "id, doctor_id, name",
+      ];
+
+      for (const selectClause of doctorSelectCandidates) {
+        const result = await supabase
+          .from("doctors")
+          .select(selectClause)
+          .or(`id.in.(${doctorIds.join(",")}),doctor_id.in.(${doctorIds.join(",")})`);
+
+        if (!result.error) {
+          (result.data || []).forEach((doc) => {
+            const keyA = String(doc?.id || "").trim();
+            const keyB = String(doc?.doctor_id || "").trim();
+            const label = normalizeText(doc?.name) || normalizeText(doc?.full_name) || keyB || keyA;
+            if (keyA && label) doctorNameById.set(keyA, label);
+            if (keyB && label) doctorNameById.set(keyB, label);
+          });
+          break;
+        }
+
+        const code = String(result.error?.code || "");
+        if (!["42703", "PGRST204", "PGRST205", "42P01"].includes(code)) {
+          console.error("[ADMIN EVENTS] doctors query failed", result.error);
+          break;
+        }
+      }
+    }
+
+    for (const p of patients) {
+      const patientId = String(p?.patient_id || p?.id || "").trim();
+      if (!patientId) continue;
+      const first = normalizeText(p?.first_name);
+      const last = normalizeText(p?.last_name);
+      const merged = normalizeText(`${first} ${last}`.trim());
+      const patientName = normalizeText(p?.name) || normalizeText(p?.full_name) || merged || patientId;
+      const patientDoctorId = String(p?.primary_doctor_id || p?.doctor_id || "").trim();
+      const patientDoctorName = String(doctorNameById.get(patientDoctorId) || "").trim();
+      const patientLookupIds = [String(p?.id || "").trim(), String(p?.patient_id || "").trim()].filter(Boolean);
+
+      const travel = p?.travel || {};
+      if (Array.isArray(travel?.events)) {
+        travel.events.forEach((eventItem) => {
+          addEvent({
+            id: eventItem?.id || `travel_${patientId}_${eventItem?.date || ""}_${eventItem?.time || ""}`,
+            patientId,
+            patientName,
+            type: "TRAVEL_EVENT",
+            eventType: eventItem?.type || "TRAVEL",
+            title: eventItem?.title || "Travel Event",
+            description: eventItem?.desc || "",
+            date: eventItem?.date,
+            time: eventItem?.time || "",
+            status: "PLANNED",
+            source: "travel",
+          });
+        });
+      }
+
+      let treatments = p?.treatments || {};
+      if (!treatments || typeof treatments !== "object") treatments = {};
+      const teeth = Array.isArray(treatments?.teeth) ? treatments.teeth : [];
+      teeth.forEach((tooth) => {
+        const toothId = tooth?.toothId ?? tooth?.tooth_id ?? tooth?.toothNumber ?? tooth?.tooth_number;
+        const procedures = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+        procedures.forEach((proc) => {
+          const timelineAt = toIso(proc?.scheduledAt) || toIso(proc?.createdAt) || toIso(proc?.timestamp);
+          if (!timelineAt) return;
+          const procedureDoctorId = String(
+            proc?.assignedDoctorId ||
+            proc?.assigned_doctor_id ||
+            proc?.doctorId ||
+            proc?.doctor_id ||
+            proc?.meta?.doctorId ||
+            proc?.meta?.doctor_id ||
+            ""
+          ).trim();
+          const procedureDoctorName =
+            normalizeText(proc?.assignedDoctorName) ||
+            normalizeText(proc?.doctorName) ||
+            normalizeText(proc?.doctor) ||
+            normalizeText(doctorNameById.get(procedureDoctorId) || "") ||
+            patientDoctorName ||
+            "";
+          const procedureChair = String(
+            proc?.chairNo ||
+            proc?.chair_no ||
+            proc?.chair ||
+            proc?.chairId ||
+            proc?.chair_id ||
+            proc?.meta?.chairNo ||
+            proc?.meta?.chair_no ||
+            ""
+          ).trim();
+          addEvent({
+            id: proc?.id || proc?.procedureId || `treatment_${patientId}_${timelineAt}`,
+            patientId,
+            patientName,
+            doctor: procedureDoctorName,
+            chair: procedureChair,
+            type: "TREATMENT",
+            eventType: proc?.type || "PROCEDURE",
+            title: `${proc?.type || "Treatment"}${toothId ? ` - Tooth ${toothId}` : ""}`,
+            procedureName: proc?.type || proc?.procedureName || proc?.procedure_name || "",
+            procedureCode: proc?.procedureCode || proc?.procedure_code || proc?.type || "",
+            toothId: toothId ? String(toothId) : undefined,
+            date: timelineAt.split("T")[0],
+            time: new Date(timelineAt).toTimeString().slice(0, 5),
+            status: normalizeStatus(proc?.status || "PLANNED"),
+            source: "treatment",
+            timelineAt,
+          });
+        });
+      });
+
+      const treatmentEvents = Array.isArray(p?.treatment_events) ? p.treatment_events : [];
+      treatmentEvents.forEach((eventItem) => {
+        const timelineAt =
+          toIso(eventItem?.startAt) ||
+          dateTimeToIso(eventItem?.date, eventItem?.time) ||
+          toIso(eventItem?.scheduledAt) ||
+          toIso(eventItem?.createdAt) ||
+          toIso(eventItem?.timestamp);
+        if (!timelineAt) return;
+        const eventDoctorId = String(
+          eventItem?.assignedDoctorId ||
+          eventItem?.assigned_doctor_id ||
+          eventItem?.doctorId ||
+          eventItem?.doctor_id ||
+          eventItem?.meta?.doctorId ||
+          eventItem?.meta?.doctor_id ||
+          ""
+        ).trim();
+        const eventDoctorName =
+          normalizeText(eventItem?.assignedDoctorName) ||
+          normalizeText(eventItem?.doctorName) ||
+          normalizeText(eventItem?.doctor) ||
+          normalizeText(doctorNameById.get(eventDoctorId) || "") ||
+          patientDoctorName ||
+          "";
+        const eventChair = String(
+          eventItem?.chairNo ||
+          eventItem?.chair_no ||
+          eventItem?.chair ||
+          eventItem?.chairId ||
+          eventItem?.chair_id ||
+          ""
+        ).trim();
+        addEvent({
+          id: eventItem?.id || `treatment_event_${patientId}_${timelineAt}`,
+          patientId,
+          patientName,
+          doctor: eventDoctorName,
+          chair: eventChair,
+          type: "TREATMENT_EVENT",
+          eventType: eventItem?.type || "TREATMENT",
+          title: eventItem?.title || "Treatment",
+          description: eventItem?.desc || eventItem?.description || "",
+          date: eventItem?.date || timelineAt.split("T")[0],
+          time: eventItem?.time || new Date(timelineAt).toTimeString().slice(0, 5),
+          status: normalizeStatus(eventItem?.status || "PLANNED"),
+          source: "treatment",
+          timelineAt,
+        });
+      });
+
+      try {
+        const encounterResult = await supabase
+          .from("patient_encounters")
+          .select("id, patient_id")
+          .in("patient_id", patientLookupIds)
+          .order("created_at", { ascending: false });
+
+        const encounters = Array.isArray(encounterResult.data) ? encounterResult.data : [];
+        const encounterIds = encounters.map((row) => String(row?.id || "").trim()).filter(Boolean);
+        if (encounterResult.error || encounterIds.length === 0) continue;
+
+        const plansResult = await supabase
+          .from("treatment_plans")
+          .select("id, encounter_id")
+          .in("encounter_id", encounterIds)
+          .order("created_at", { ascending: false });
+
+        const plans = Array.isArray(plansResult.data) ? plansResult.data : [];
+        const planIds = plans.map((row) => String(row?.id || "").trim()).filter(Boolean);
+        if (plansResult.error || planIds.length === 0) continue;
+
+        let itemRows = [];
+        for (const tableName of ["treatment_items", "treatment_plan_items"]) {
+          const itemsResult = await supabase
+            .from(tableName)
+            .select("*")
+            .in("treatment_plan_id", planIds)
+            .order("created_at", { ascending: false });
+
+          if (!itemsResult.error) {
+            itemRows = Array.isArray(itemsResult.data) ? itemsResult.data : [];
+            if (itemRows.length > 0) break;
+            continue;
+          }
+
+          const code = String(itemsResult.error.code || "");
+          if (!["42703", "PGRST204", "PGRST205", "42P01"].includes(code)) {
+            console.error(`[ADMIN EVENTS] ${tableName} query failed`, itemsResult.error);
+          }
+        }
+
+        itemRows.forEach((item) => {
+          const timelineAt =
+            toIso(item?.scheduled_at) ||
+            toIso(item?.scheduledAt) ||
+            toIso(item?.scheduled_date) ||
+            toIso(item?.due_date) ||
+            toIso(item?.created_at) ||
+            toIso(item?.updated_at);
+          if (!timelineAt) return;
+
+          const procedureName = String(
+            item?.procedure_name || item?.procedure || item?.code || item?.name || item?.procedure_code || "PROCEDURE"
+          ).trim();
+          const procedureCode = String(item?.procedure_code || procedureName || "PROCEDURE").trim();
+          const toothIdRaw = item?.tooth_fdi_code ?? item?.tooth_number ?? item?.tooth_no;
+          const upperType = procedureCode.toUpperCase();
+
+          addEvent({
+            id: item?.id || `enc_item_${patientId}_${timelineAt}`,
+            patientId,
+            patientName,
+            doctor: normalizeText(item?.doctor_name || item?.doctor) ||
+              normalizeText(doctorNameById.get(String(item?.created_by_doctor_id || "").trim()) || "") ||
+              patientDoctorName ||
+              "",
+            chair: String(item?.chair || item?.chair_no || item?.chairNo || ''),
+            type: ["CONSULT", "FOLLOWUP", "LAB"].includes(upperType) ? upperType : "TREATMENT",
+            eventType: upperType,
+            title: `${procedureName}${toothIdRaw ? ` - Tooth ${toothIdRaw}` : ""}`,
+            procedureName,
+            procedureCode,
+            toothId: toothIdRaw ? String(toothIdRaw) : undefined,
+            description: normalizeText(doctorNameById.get(String(item?.created_by_doctor_id || "").trim()) || "") || patientDoctorName
+              ? `${normalizeText(doctorNameById.get(String(item?.created_by_doctor_id || "").trim()) || "") || patientDoctorName} • Doctor treatment plan`
+              : "Doctor treatment plan",
+            date: timelineAt.split("T")[0],
+            time: new Date(timelineAt).toTimeString().slice(0, 5),
+            status: normalizeStatus(item?.status || "PLANNED"),
+            source: "encounter_treatment",
+            timelineAt,
+          });
+        });
+      } catch (encounterError) {
+        console.error("[ADMIN EVENTS] encounter merge failed", encounterError);
+      }
+    }
+
+    const overdue = [];
+    const todayEvents = [];
+    const upcoming = [];
+
+    allEvents.forEach((evt) => {
+      const eventTs = Number(evt.timestamp || 0);
+      if (!Number.isFinite(eventTs) || eventTs <= 0) return;
+
+      const status = normalizeStatus(evt.status);
+      const isDone = status === "COMPLETED" || status === "DONE";
+      const isCancelled = status === "CANCELLED";
+      if (isDone || isCancelled) return;
+
+      if (eventTs < todayStart) {
+        overdue.push(evt);
+      } else if (eventTs <= todayEndTs) {
+        todayEvents.push(evt);
+      } else {
+        upcoming.push(evt);
+      }
+    });
+
+    overdue.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    todayEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    upcoming.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    return res.json({
+      ok: true,
+      overdue,
+      today: todayEvents,
+      upcoming,
+      total: allEvents.length,
+      overdueCount: overdue.length,
+      todayCount: todayEvents.length,
+      upcomingCount: upcoming.length,
+    });
+  } catch (error) {
+    console.error("[ADMIN EVENTS] error:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
 });
 
 /* ================= ADMIN CLINIC (PUT) ================= */
@@ -3462,7 +4378,29 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
       .eq("role", "PATIENT") // Only show patients, not doctors
       .order("created_at", { ascending: false });
 
-    if (error) {
+    let patients = [];
+    let error = null;
+    let readOk = false;
+    for (const selectClause of selectCandidates) {
+      const result = await supabase
+        .from("patients")
+        .select(selectClause)
+        .eq("clinic_id", req.admin.clinicId)
+        .order("created_at", { ascending: false });
+
+      if (!result.error) {
+        patients = Array.isArray(result.data) ? result.data : [];
+        readOk = true;
+        break;
+      }
+
+      error = result.error;
+      if (!["42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (!readOk) {
       console.error("[ADMIN PATIENTS] Error:", error);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_patients" });
     }
@@ -4733,6 +5671,65 @@ function verifyDoctorToken(req) {
   }
 }
 
+async function doctorCanAccessEncounter(doctorId, encounterId) {
+  const encounterSelectCandidates = [
+    "id, patient_id, status, doctor_id, created_by_doctor_id, assigned_doctor_id",
+    "id, patient_id, status, created_by_doctor_id, assigned_doctor_id",
+    "id, patient_id, status, created_by_doctor_id",
+    "id, patient_id, status",
+  ];
+
+  let encounterLookup = { data: null, error: null };
+  for (const selectClause of encounterSelectCandidates) {
+    const attempt = await supabase
+      .from("patient_encounters")
+      .select(selectClause)
+      .eq("id", encounterId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!attempt.error || !["42703", "PGRST204"].includes(String(attempt.error?.code || ""))) {
+      encounterLookup = attempt;
+      break;
+    }
+  }
+
+  if (encounterLookup.error || !encounterLookup.data) {
+    return { ok: false, error: "encounter_not_found" };
+  }
+
+  const encounter = encounterLookup.data;
+  const directOwnerIds = [
+    encounter.doctor_id,
+    encounter.created_by_doctor_id,
+    encounter.assigned_doctor_id,
+  ]
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+
+  if (directOwnerIds.includes(String(doctorId))) {
+    return { ok: true, encounter };
+  }
+
+  if (encounter.patient_id) {
+    const patientLookup = await supabase
+      .from("patients")
+      .select("id, primary_doctor_id")
+      .eq("id", encounter.patient_id)
+      .limit(1)
+      .maybeSingle();
+
+    if (!patientLookup.error && patientLookup.data) {
+      const primaryDoctorId = String(patientLookup.data.primary_doctor_id || "").trim();
+      if (primaryDoctorId && primaryDoctorId === String(doctorId)) {
+        return { ok: true, encounter };
+      }
+    }
+  }
+
+  return { ok: false, error: "not_assigned_doctor", encounter };
+}
+
 /* ================= DEBUG TOKEN ENDPOINT ================= */
 app.post("/debug/token", (req, res) => {
   try {
@@ -4743,6 +5740,891 @@ app.post("/debug/token", (req, res) => {
   } catch (err) {
     console.log("DEBUG TOKEN ERROR:", err.message);
     res.json({ ok: false, error: err.message });
+  }
+});
+
+function getUserFromToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ ok: false, message: "Missing token" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const role = String(decoded?.role || "").toUpperCase();
+
+    if (!role) {
+      return res.status(401).json({ ok: false, message: "Invalid token" });
+    }
+
+    const userId = decoded.adminId || decoded.doctorId || decoded.patientId || decoded.userId;
+    req.user = {
+      id: userId,
+      role,
+      clinicId: decoded.clinicId || null,
+      clinicCode: decoded.clinicCode || null,
+      raw: decoded,
+    };
+
+    return next();
+  } catch (error) {
+    return res.status(401).json({ ok: false, message: "Invalid token" });
+  }
+}
+
+function requireDoctor(req, res, next) {
+  if (!req.user || req.user.role !== "DOCTOR") {
+    return res.status(403).json({ ok: false, message: "Doctor only" });
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== "ADMIN") {
+    return res.status(403).json({ ok: false, message: "Admin only" });
+  }
+  next();
+}
+
+function requirePatient(req, res, next) {
+  if (!req.user || req.user.role !== "PATIENT") {
+    return res.status(403).json({ ok: false, message: "Patient only" });
+  }
+  next();
+}
+
+function normalizeChatStatus(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function isDoneLikeStatus(value) {
+  const normalized = normalizeChatStatus(value);
+  return ["DONE", "COMPLETED", "COMPLETE", "FINISHED"].includes(normalized);
+}
+
+function toIsoOrNull(value) {
+  if (!value) return null;
+  const parsed = Date.parse(String(value));
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function resolveAppointmentReferenceDate(appointmentRow) {
+  return (
+    toIsoOrNull(appointmentRow?.completed_at) ||
+    toIsoOrNull(appointmentRow?.done_at) ||
+    toIsoOrNull(appointmentRow?.updated_at) ||
+    toIsoOrNull(appointmentRow?.date) ||
+    toIsoOrNull(appointmentRow?.scheduled_date) ||
+    toIsoOrNull(appointmentRow?.start_time)
+  );
+}
+
+async function getPatientByExternalId(patientExternalId, clinicId) {
+  const normalized = String(patientExternalId || "").trim();
+  if (!normalized) return { ok: false, error: "patient_id_required" };
+
+  const query = supabase
+    .from("patients")
+    .select("id, patient_id, clinic_id, primary_doctor_id, assigned_doctor_id")
+    .eq("patient_id", normalized);
+
+  if (clinicId) query.eq("clinic_id", clinicId);
+
+  const { data, error } = await query.maybeSingle();
+  if (error || !data) {
+    return { ok: false, error: "patient_not_found" };
+  }
+  return { ok: true, patient: data };
+}
+
+async function getPatientByUuid(patientUuid) {
+  const normalized = String(patientUuid || "").trim();
+  if (!normalized) return { ok: false, error: "patient_id_required" };
+
+  const { data, error } = await supabase
+    .from("patients")
+    .select("id, patient_id, clinic_id, primary_doctor_id, assigned_doctor_id")
+    .eq("id", normalized)
+    .maybeSingle();
+
+  if (error || !data) return { ok: false, error: "patient_not_found" };
+  return { ok: true, patient: data };
+}
+
+async function findOpenableContext({ patientUuid, doctorId, clinicId }) {
+  let activeEncounter = null;
+  let confirmedAppointment = null;
+
+  const encounterResult = await supabase
+    .from("patient_encounters")
+    .select("id, patient_id, clinic_id, status, doctor_id, created_by_doctor_id, assigned_doctor_id, created_at")
+    .eq("patient_id", patientUuid)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (!encounterResult.error) {
+    activeEncounter = (encounterResult.data || []).find((encounter) => {
+      if (clinicId && encounter?.clinic_id && String(encounter.clinic_id) !== String(clinicId)) return false;
+      if (normalizeChatStatus(encounter?.status) !== "ACTIVE") return false;
+
+      if (!doctorId) return true;
+      const ownerDoctorIds = [
+        encounter?.doctor_id,
+        encounter?.created_by_doctor_id,
+        encounter?.assigned_doctor_id,
+      ]
+        .map((id) => String(id || "").trim())
+        .filter(Boolean);
+
+      return ownerDoctorIds.length === 0 || ownerDoctorIds.includes(String(doctorId));
+    }) || null;
+  }
+
+  const appointmentResult = await supabase
+    .from("appointments")
+    .select("id, patient_id, clinic_id, doctor_id, status, date, time, start_time, scheduled_date, completed_at, done_at, updated_at")
+    .eq("patient_id", patientUuid)
+    .order("updated_at", { ascending: false })
+    .limit(100);
+
+  if (!appointmentResult.error) {
+    confirmedAppointment = (appointmentResult.data || []).find((appointment) => {
+      if (clinicId && appointment?.clinic_id && String(appointment.clinic_id) !== String(clinicId)) return false;
+      if (doctorId && appointment?.doctor_id && String(appointment.doctor_id) !== String(doctorId)) return false;
+      return normalizeChatStatus(appointment?.status) === "CONFIRMED";
+    }) || null;
+  }
+
+  return {
+    activeEncounter,
+    confirmedAppointment,
+    eligible: !!(activeEncounter || confirmedAppointment),
+  };
+}
+
+async function loadThreadWithMessages(threadId) {
+  const normalizedThreadId = String(threadId || "").trim();
+  if (!normalizedThreadId) return { ok: false, error: "thread_id_required" };
+
+  const { data: thread, error: threadError } = await supabase
+    .from("chat_threads")
+    .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+    .eq("id", normalizedThreadId)
+    .maybeSingle();
+
+  if (threadError || !thread) {
+    return { ok: false, error: "thread_not_found" };
+  }
+
+  const { data: messages, error: messagesError } = await supabase
+    .from("chat_messages")
+    .select("id, thread_id, sender_role, sender_id, message, is_read, created_at")
+    .eq("thread_id", normalizedThreadId)
+    .order("created_at", { ascending: true });
+
+  if (messagesError) {
+    return { ok: false, error: "messages_fetch_failed", thread };
+  }
+
+  return { ok: true, thread, messages: messages || [] };
+}
+
+/* ================= ADMIN CONTROLLED CHAT ================= */
+app.post("/api/admin/chat/open", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const patientExternalId = String(body.patientId || "").trim();
+    const doctorId = String(body.doctorId || "").trim();
+
+    if (!patientExternalId || !doctorId) {
+      return res.status(400).json({ ok: false, error: "patientId_and_doctorId_required" });
+    }
+
+    const patientLookup = await getPatientByExternalId(patientExternalId, req.user?.clinicId || null);
+    if (!patientLookup.ok) {
+      return res.status(404).json({ ok: false, error: patientLookup.error || "patient_not_found" });
+    }
+
+    const patient = patientLookup.patient;
+    const context = await findOpenableContext({
+      patientUuid: patient.id,
+      doctorId,
+      clinicId: req.user?.clinicId || patient?.clinic_id || null,
+    });
+
+    if (!context.eligible) {
+      return res.status(400).json({
+        ok: false,
+        error: "chat_open_not_allowed",
+        message: "Chat can be opened only with ACTIVE encounter or CONFIRMED appointment",
+      });
+    }
+
+    const encounterId = String(body.encounterId || context.activeEncounter?.id || "").trim() || null;
+    const appointmentId = String(body.appointmentId || context.confirmedAppointment?.id || "").trim() || null;
+
+    const existingThreadLookup = await supabase
+      .from("chat_threads")
+      .select("id, status")
+      .eq("patient_id", patient.id)
+      .eq("doctor_id", doctorId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let thread = null;
+    if (!existingThreadLookup.error && existingThreadLookup.data) {
+      const updateResult = await supabase
+        .from("chat_threads")
+        .update({
+          status: "OPEN",
+          opened_by: "ADMIN",
+          opened_at: new Date().toISOString(),
+          closed_at: null,
+          encounter_id: encounterId,
+          appointment_id: appointmentId,
+          clinic_id: req.user?.clinicId || patient?.clinic_id || null,
+        })
+        .eq("id", existingThreadLookup.data.id)
+        .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+        .single();
+
+      if (updateResult.error) {
+        return res.status(500).json({ ok: false, error: "thread_update_failed", details: updateResult.error.message });
+      }
+      thread = updateResult.data;
+    } else {
+      const insertResult = await supabase
+        .from("chat_threads")
+        .insert({
+          patient_id: patient.id,
+          doctor_id: doctorId,
+          encounter_id: encounterId,
+          appointment_id: appointmentId,
+          status: "OPEN",
+          opened_by: "ADMIN",
+          opened_at: new Date().toISOString(),
+          clinic_id: req.user?.clinicId || patient?.clinic_id || null,
+        })
+        .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+        .single();
+
+      if (insertResult.error) {
+        return res.status(500).json({ ok: false, error: "thread_create_failed", details: insertResult.error.message });
+      }
+      thread = insertResult.data;
+    }
+
+    return res.json({ ok: true, thread });
+  } catch (error) {
+    console.error("[ADMIN CHAT OPEN] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/chat/close", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const threadId = String(body.threadId || "").trim();
+
+    if (!threadId) {
+      return res.status(400).json({ ok: false, error: "thread_id_required" });
+    }
+
+    const existingThreadLookup = await supabase
+      .from("chat_threads")
+      .select("id, clinic_id")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    if (existingThreadLookup.error || !existingThreadLookup.data) {
+      return res.status(404).json({ ok: false, error: "thread_not_found" });
+    }
+
+    if (req.user?.clinicId && existingThreadLookup.data?.clinic_id && String(existingThreadLookup.data.clinic_id) !== String(req.user.clinicId)) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    const updateResult = await supabase
+      .from("chat_threads")
+      .update({
+        status: "CLOSED",
+        closed_at: new Date().toISOString(),
+      })
+      .eq("id", threadId)
+      .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+      .single();
+
+    if (updateResult.error || !updateResult.data) {
+      return res.status(404).json({ ok: false, error: "thread_not_found" });
+    }
+
+    return res.json({ ok: true, thread: updateResult.data });
+  } catch (error) {
+    console.error("[ADMIN CHAT CLOSE] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/admin/chat/threads", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    let query = supabase
+      .from("chat_threads")
+      .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+      .order("updated_at", { ascending: false })
+      .limit(300);
+
+    if (req.user?.clinicId) {
+      query = query.eq("clinic_id", req.user.clinicId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      return res.status(500).json({ ok: false, error: "threads_fetch_failed", details: error.message });
+    }
+
+    return res.json({ ok: true, threads: data || [] });
+  } catch (error) {
+    console.error("[ADMIN CHAT THREADS] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/admin/chat/:threadId", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const threadId = String(req.params.threadId || "").trim();
+    const result = await loadThreadWithMessages(threadId);
+    if (!result.ok) {
+      return res.status(404).json({ ok: false, error: result.error || "thread_not_found" });
+    }
+
+    if (req.user?.clinicId && result.thread?.clinic_id && String(result.thread.clinic_id) !== String(req.user.clinicId)) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    return res.json({ ok: true, thread: result.thread, messages: result.messages });
+  } catch (error) {
+    console.error("[ADMIN CHAT THREAD DETAIL] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR CHAT ================= */
+app.get("/api/doctor/chat/:patientId", getUserFromToken, requireDoctor, async (req, res) => {
+  try {
+    const patientExternalId = String(req.params.patientId || "").trim();
+    if (!patientExternalId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    const patientLookup = await getPatientByExternalId(patientExternalId, req.user?.clinicId || null);
+    if (!patientLookup.ok) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const { data: thread, error: threadError } = await supabase
+      .from("chat_threads")
+      .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+      .eq("patient_id", patientLookup.patient.id)
+      .eq("doctor_id", req.user.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (threadError || !thread || normalizeChatStatus(thread.status) !== "OPEN") {
+      return res.status(403).json({ ok: false, error: "chat_closed" });
+    }
+
+    const threadData = await loadThreadWithMessages(thread.id);
+    if (!threadData.ok) {
+      return res.status(500).json({ ok: false, error: threadData.error || "thread_fetch_failed" });
+    }
+
+    return res.json({ ok: true, thread: threadData.thread, messages: threadData.messages });
+  } catch (error) {
+    console.error("[DOCTOR CHAT GET] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/doctor/chat/:threadId/message", getUserFromToken, requireDoctor, async (req, res) => {
+  try {
+    const threadId = String(req.params.threadId || "").trim();
+    const body = req.body || {};
+    const message = String(body.message || "").trim();
+    const encounterId = String(body.encounterId || "").trim() || null;
+
+    if (!threadId || !message) {
+      return res.status(400).json({ ok: false, error: "thread_id_and_message_required" });
+    }
+
+    const threadResult = await loadThreadWithMessages(threadId);
+    if (!threadResult.ok) {
+      return res.status(404).json({ ok: false, error: "thread_not_found" });
+    }
+
+    const thread = threadResult.thread;
+    if (normalizeChatStatus(thread.status) !== "OPEN") {
+      return res.status(403).json({ ok: false, error: "chat_closed" });
+    }
+
+    if (String(thread.doctor_id || "") !== String(req.user.id || "")) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    if (encounterId && thread.encounter_id && String(encounterId) !== String(thread.encounter_id)) {
+      return res.status(403).json({ ok: false, error: "encounter_mismatch" });
+    }
+
+    if (thread.encounter_id) {
+      const encounterAccess = await doctorCanAccessEncounter(req.user.id, thread.encounter_id);
+      if (!encounterAccess.ok) {
+        return res.status(403).json({ ok: false, error: "encounter_access_denied" });
+      }
+    }
+
+    const insertResult = await supabase
+      .from("chat_messages")
+      .insert({
+        thread_id: threadId,
+        sender_role: "DOCTOR",
+        sender_id: String(req.user.id || ""),
+        message,
+        is_read: false,
+      })
+      .select("id, thread_id, sender_role, sender_id, message, is_read, created_at")
+      .single();
+
+    if (insertResult.error) {
+      return res.status(500).json({ ok: false, error: "message_send_failed", details: insertResult.error.message });
+    }
+
+    return res.json({ ok: true, message: insertResult.data });
+  } catch (error) {
+    console.error("[DOCTOR CHAT SEND] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= PATIENT CHAT ================= */
+app.get("/api/patient/chat", getUserFromToken, requirePatient, async (req, res) => {
+  try {
+    const patientExternalId = String(req.user?.raw?.patientId || req.user?.id || "").trim();
+    if (!patientExternalId) {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+
+    const patientLookup = await getPatientByExternalId(patientExternalId, req.user?.clinicId || null);
+    if (!patientLookup.ok) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const { data: thread, error: threadError } = await supabase
+      .from("chat_threads")
+      .select("id, patient_id, doctor_id, encounter_id, appointment_id, status, opened_by, opened_at, closed_at, created_at, updated_at, clinic_id")
+      .eq("patient_id", patientLookup.patient.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (threadError || !thread || normalizeChatStatus(thread.status) !== "OPEN") {
+      return res.status(403).json({ ok: false, error: "chat_closed" });
+    }
+
+    const threadData = await loadThreadWithMessages(thread.id);
+    if (!threadData.ok) {
+      return res.status(500).json({ ok: false, error: threadData.error || "thread_fetch_failed" });
+    }
+
+    return res.json({ ok: true, thread: threadData.thread, messages: threadData.messages });
+  } catch (error) {
+    console.error("[PATIENT CHAT GET] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/patient/chat/message", getUserFromToken, requirePatient, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const threadId = String(body.threadId || "").trim();
+    const message = String(body.message || "").trim();
+
+    if (!threadId || !message) {
+      return res.status(400).json({ ok: false, error: "thread_id_and_message_required" });
+    }
+
+    const threadResult = await loadThreadWithMessages(threadId);
+    if (!threadResult.ok) {
+      return res.status(404).json({ ok: false, error: "thread_not_found" });
+    }
+
+    const thread = threadResult.thread;
+    if (normalizeChatStatus(thread.status) !== "OPEN") {
+      return res.status(403).json({ ok: false, error: "chat_closed" });
+    }
+
+    const patientExternalId = String(req.user?.raw?.patientId || req.user?.id || "").trim();
+    const patientLookup = await getPatientByExternalId(patientExternalId, req.user?.clinicId || null);
+    if (!patientLookup.ok || String(patientLookup.patient.id || "") !== String(thread.patient_id || "")) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    const insertResult = await supabase
+      .from("chat_messages")
+      .insert({
+        thread_id: threadId,
+        sender_role: "PATIENT",
+        sender_id: String(patientLookup.patient.patient_id || patientLookup.patient.id || ""),
+        message,
+        is_read: false,
+      })
+      .select("id, thread_id, sender_role, sender_id, message, is_read, created_at")
+      .single();
+
+    if (insertResult.error) {
+      return res.status(500).json({ ok: false, error: "message_send_failed", details: insertResult.error.message });
+    }
+
+    return res.json({ ok: true, message: insertResult.data });
+  } catch (error) {
+    console.error("[PATIENT CHAT SEND] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= CHAT READ RECEIPT ================= */
+app.post("/api/chat/:threadId/mark-read", getUserFromToken, async (req, res) => {
+  try {
+    const threadId = String(req.params.threadId || "").trim();
+    if (!threadId) {
+      return res.status(400).json({ ok: false, error: "thread_id_required" });
+    }
+
+    const threadResult = await loadThreadWithMessages(threadId);
+    if (!threadResult.ok) {
+      return res.status(404).json({ ok: false, error: "thread_not_found" });
+    }
+
+    const thread = threadResult.thread;
+    const role = String(req.user?.role || "").toUpperCase();
+
+    if (role === "DOCTOR") {
+      if (String(thread.doctor_id || "") !== String(req.user.id || "")) {
+        return res.status(403).json({ ok: false, error: "access_denied" });
+      }
+    } else if (role === "PATIENT") {
+      const patientExternalId = String(req.user?.raw?.patientId || req.user?.id || "").trim();
+      const patientLookup = await getPatientByExternalId(patientExternalId, req.user?.clinicId || null);
+      if (!patientLookup.ok || String(patientLookup.patient.id || "") !== String(thread.patient_id || "")) {
+        return res.status(403).json({ ok: false, error: "access_denied" });
+      }
+    } else if (role === "ADMIN") {
+      if (req.user?.clinicId && thread?.clinic_id && String(req.user.clinicId) !== String(thread.clinic_id)) {
+        return res.status(403).json({ ok: false, error: "access_denied" });
+      }
+    } else {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    const senderRole = role;
+    const updateResult = await supabase
+      .from("chat_messages")
+      .update({ is_read: true })
+      .eq("thread_id", threadId)
+      .neq("sender_role", senderRole)
+      .eq("is_read", false)
+      .select("id");
+
+    if (updateResult.error) {
+      return res.status(500).json({ ok: false, error: "mark_read_failed", details: updateResult.error.message });
+    }
+
+    return res.json({ ok: true, updated: (updateResult.data || []).length });
+  } catch (error) {
+    console.error("[CHAT MARK READ] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= CHAT AUTO CLOSE WORKER ================= */
+async function autoCloseExpiredChatThreads() {
+  try {
+    const nowMs = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+    const { data: openThreads, error: openThreadsError } = await supabase
+      .from("chat_threads")
+      .select("id, appointment_id, status")
+      .eq("status", "OPEN")
+      .not("appointment_id", "is", null)
+      .limit(500);
+
+    if (openThreadsError) {
+      console.error("[CHAT AUTO CLOSE] Thread fetch error:", openThreadsError);
+      return;
+    }
+
+    for (const thread of openThreads || []) {
+      const appointmentId = String(thread?.appointment_id || "").trim();
+      if (!appointmentId) continue;
+
+      const { data: appointment, error: appointmentError } = await supabase
+        .from("appointments")
+        .select("id, status, completed_at, done_at, updated_at, date, scheduled_date, start_time")
+        .eq("id", appointmentId)
+        .maybeSingle();
+
+      if (appointmentError || !appointment) continue;
+
+      if (!isDoneLikeStatus(appointment.status)) continue;
+
+      const referenceIso = resolveAppointmentReferenceDate(appointment);
+      if (!referenceIso) continue;
+
+      const elapsed = nowMs - Date.parse(referenceIso);
+      if (!Number.isFinite(elapsed) || elapsed < sevenDaysMs) continue;
+
+      const closeResult = await supabase
+        .from("chat_threads")
+        .update({
+          status: "AUTO_CLOSED",
+          closed_at: new Date().toISOString(),
+        })
+        .eq("id", thread.id)
+        .eq("status", "OPEN");
+
+      if (closeResult.error) {
+        console.error("[CHAT AUTO CLOSE] Failed to close thread:", thread.id, closeResult.error);
+      }
+    }
+  } catch (error) {
+    console.error("[CHAT AUTO CLOSE] Exception:", error);
+  }
+}
+
+setTimeout(() => {
+  autoCloseExpiredChatThreads().catch((error) => {
+    console.error("[CHAT AUTO CLOSE] Initial run failed:", error);
+  });
+}, 20000);
+
+setInterval(() => {
+  autoCloseExpiredChatThreads().catch((error) => {
+    console.error("[CHAT AUTO CLOSE] Scheduled run failed:", error);
+  });
+}, 24 * 60 * 60 * 1000);
+
+/* ================= TREATMENT PAGE COMPAT ENDPOINTS ================= */
+const PROCEDURE_TYPES_COMPAT = [
+  { type: "CONSULT", label: "Muayene", category: "EVENTS" },
+  { type: "FOLLOWUP", label: "Kontrol", category: "EVENTS" },
+  { type: "FILLING", label: "Dolgu", category: "RESTORATIVE" },
+  { type: "TEMP_FILLING", label: "Geçici Dolgu", category: "RESTORATIVE" },
+  { type: "ROOT_CANAL_TREATMENT", label: "Kanal Tedavisi", category: "ENDODONTIC" },
+  { type: "EXTRACTION", label: "Çekim", category: "SURGICAL" },
+  { type: "SURGICAL_EXTRACTION", label: "Cerrahi Çekim", category: "SURGICAL" },
+  { type: "CROWN", label: "Kron", category: "PROSTHETIC" },
+  { type: "BRIDGE_UNIT", label: "Köprü", category: "PROSTHETIC" },
+  { type: "IMPLANT", label: "İmplant", category: "IMPLANT" },
+];
+
+function normalizeTreatmentEventList(rawEvents) {
+  if (!Array.isArray(rawEvents)) return [];
+  return rawEvents
+    .map((eventItem) => ({
+      id: String(eventItem?.id || "").trim() || `ev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      date: String(eventItem?.date || "").trim(),
+      time: String(eventItem?.time || "").trim(),
+      type: String(eventItem?.type || "TREATMENT").trim().toUpperCase(),
+      title: String(eventItem?.title || "").trim(),
+      desc: String(eventItem?.desc || "").trim(),
+    }))
+    .filter((eventItem) => eventItem.date && eventItem.title);
+}
+
+async function resolvePatientForAdminTreatmentPage(patientIdOrUuid, clinicId) {
+  const key = String(patientIdOrUuid || "").trim();
+  if (!key) return { ok: false, error: "patient_id_required" };
+
+  const byUuid = supabase
+    .from("patients")
+    .select("id, patient_id, clinic_id")
+    .eq("id", key)
+    .limit(1)
+    .maybeSingle();
+
+  const byExternal = supabase
+    .from("patients")
+    .select("id, patient_id, clinic_id")
+    .eq("patient_id", key)
+    .limit(1)
+    .maybeSingle();
+
+  let uuidResult = await byUuid;
+  if (!uuidResult.error && uuidResult.data) {
+    if (clinicId && uuidResult.data.clinic_id && String(uuidResult.data.clinic_id) !== String(clinicId)) {
+      return { ok: false, error: "access_denied" };
+    }
+    return { ok: true, patient: uuidResult.data };
+  }
+
+  const externalResult = await byExternal;
+  if (!externalResult.error && externalResult.data) {
+    if (clinicId && externalResult.data.clinic_id && String(externalResult.data.clinic_id) !== String(clinicId)) {
+      return { ok: false, error: "access_denied" };
+    }
+    return { ok: true, patient: externalResult.data };
+  }
+
+  return { ok: false, error: "patient_not_found" };
+}
+
+app.get("/api/procedures", (req, res) => {
+  return res.json({
+    ok: true,
+    types: PROCEDURE_TYPES_COMPAT,
+    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
+    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
+    extractionTypes: ["EXTRACTION", "SURGICAL_EXTRACTION"],
+  });
+});
+
+app.get("/api/admin/treatment-prices", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    let query = supabase
+      .from("treatment_prices")
+      .select("id, treatment_code, name, price, default_price, currency, is_active, duration_minutes, break_minutes");
+
+    if (req.user?.clinicId) query = query.eq("clinic_id", req.user.clinicId);
+
+    const { data, error } = await query;
+    if (error) {
+      const code = String(error?.code || "");
+      if (["42P01", "PGRST204", "42703"].includes(code)) {
+        return res.json({ ok: true, prices: [] });
+      }
+      return res.status(500).json({ ok: false, error: "treatment_prices_fetch_failed", details: error.message });
+    }
+
+    const prices = (data || []).map((row) => ({
+      id: row.id,
+      treatment_name: row.treatment_code || row.name || "",
+      default_price:
+        row.price !== undefined && row.price !== null
+          ? Number(row.price)
+          : row.default_price !== undefined && row.default_price !== null
+            ? Number(row.default_price)
+            : 0,
+      currency: row.currency || "EUR",
+      is_active: row.is_active !== false,
+      duration_minutes: Number.parseInt(row.duration_minutes, 10) || 0,
+      break_minutes: Number.parseInt(row.break_minutes, 10) || 0,
+    }));
+
+    return res.json({ ok: true, prices });
+  } catch (error) {
+    console.error("[TREATMENT PRICES COMPAT] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/patient/:patientId/treatment-events", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const patientKey = String(req.params.patientId || "").trim();
+    if (!patientKey) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    const patientLookup = await resolvePatientForAdminTreatmentPage(patientKey, req.user?.clinicId || null);
+    if (!patientLookup.ok) {
+      return res.status(patientLookup.error === "access_denied" ? 403 : 404).json({ ok: false, error: patientLookup.error });
+    }
+
+    const patientUuid = patientLookup.patient.id;
+    const { data, error } = await supabase
+      .from("patient_treatments")
+      .select("treatment_events, treatments_data")
+      .eq("patient_id", patientUuid)
+      .maybeSingle();
+
+    if (error) {
+      const code = String(error?.code || "");
+      if (["42P01", "PGRST204", "42703"].includes(code)) {
+        return res.json({ ok: true, events: [] });
+      }
+      return res.status(500).json({ ok: false, error: "treatment_events_fetch_failed", details: error.message });
+    }
+
+    const fromColumn = Array.isArray(data?.treatment_events) ? data.treatment_events : null;
+    const fromJson = Array.isArray(data?.treatments_data?.events) ? data.treatments_data.events : [];
+    return res.json({ ok: true, events: normalizeTreatmentEventList(fromColumn || fromJson) });
+  } catch (error) {
+    console.error("[TREATMENT EVENTS GET] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.put("/api/patient/:patientId/treatment-events", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const patientKey = String(req.params.patientId || "").trim();
+    if (!patientKey) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    const patientLookup = await resolvePatientForAdminTreatmentPage(patientKey, req.user?.clinicId || null);
+    if (!patientLookup.ok) {
+      return res.status(patientLookup.error === "access_denied" ? 403 : 404).json({ ok: false, error: patientLookup.error });
+    }
+
+    const patientUuid = patientLookup.patient.id;
+    const events = normalizeTreatmentEventList(Array.isArray(req.body?.events) ? req.body.events : []);
+
+    const existing = await supabase
+      .from("patient_treatments")
+      .select("patient_id, treatments_data")
+      .eq("patient_id", patientUuid)
+      .maybeSingle();
+
+    const currentData = existing?.data?.treatments_data && typeof existing.data.treatments_data === "object"
+      ? existing.data.treatments_data
+      : { teeth: [] };
+
+    const nextTreatmentsData = {
+      ...currentData,
+      events,
+    };
+
+    const savePayload = {
+      patient_id: patientUuid,
+      treatments_data: nextTreatmentsData,
+      treatment_events: events,
+    };
+
+    let saveResult = await supabase
+      .from("patient_treatments")
+      .upsert(savePayload, { onConflict: "patient_id" })
+      .select("patient_id")
+      .maybeSingle();
+
+    if (saveResult.error && String(saveResult.error?.code || "") === "42703") {
+      const fallbackPayload = {
+        patient_id: patientUuid,
+        treatments_data: nextTreatmentsData,
+      };
+      saveResult = await supabase
+        .from("patient_treatments")
+        .upsert(fallbackPayload, { onConflict: "patient_id" })
+        .select("patient_id")
+        .maybeSingle();
+    }
+
+    if (saveResult.error) {
+      return res.status(500).json({ ok: false, error: "treatment_events_save_failed", details: saveResult.error.message });
+    }
+
+    return res.json({ ok: true, saved: true, events });
+  } catch (error) {
+    console.error("[TREATMENT EVENTS PUT] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -4933,6 +6815,192 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= AGGREGATED DOCTOR DASHBOARD ================= */
+app.get("/api/doctors/:id/dashboard", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const tokenDoctorId = String(v.decoded?.doctorId || "").trim();
+    const requestedDoctorId = String(req.params?.id || "").trim();
+
+    if (!requestedDoctorId) {
+      return res.status(400).json({ ok: false, error: "doctor_id_required" });
+    }
+
+    if (tokenDoctorId && requestedDoctorId !== tokenDoctorId) {
+      return res.status(403).json({ ok: false, error: "doctor_mismatch" });
+    }
+
+    const { clinicId, clinicCode } = v.decoded;
+    const today = new Date().toISOString().split("T")[0];
+
+    // Keep existing appointment logic: clinic scope + today + status != cancelled
+    const appointmentSelectCandidates = [
+      "id, patient_id, doctor_id, date, time, procedure, status, clinic_id, chair, chair_no",
+      "id, patient_id, doctor_id, date, time, procedure, status, clinic_id, chair",
+      "id, patient_id, doctor_id, date, time, procedure, status, clinic_id, chair_no",
+      "id, patient_id, doctor_id, date, time, procedure, status, clinic_id",
+    ];
+
+    let appointments = [];
+    let appointmentsError = null;
+
+    for (const selectClause of appointmentSelectCandidates) {
+      let appointmentsQuery = supabase
+        .from("appointments")
+        .select(selectClause)
+        .eq("date", today)
+        .neq("status", "cancelled")
+        .order("time", { ascending: true });
+
+      if (clinicId) {
+        appointmentsQuery = appointmentsQuery.eq("clinic_id", clinicId);
+      } else if (clinicCode) {
+        appointmentsQuery = appointmentsQuery.eq("clinic_code", clinicCode);
+      }
+
+      const attempt = await appointmentsQuery;
+      if (!attempt.error) {
+        appointments = Array.isArray(attempt.data) ? attempt.data : [];
+        appointmentsError = null;
+        break;
+      }
+
+      appointmentsError = attempt.error;
+      if (!["42703", "PGRST204", "PGRST205"].includes(String(attempt.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (appointmentsError) {
+      console.error("[DOCTOR DASHBOARD AGGREGATED] appointments error:", appointmentsError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    const rows = Array.isArray(appointments) ? appointments : [];
+    const patientIds = Array.from(new Set(rows.map((item) => String(item?.patient_id || "").trim()).filter(Boolean)));
+
+    let patientMap = new Map();
+    if (patientIds.length > 0) {
+      const patientSelectCandidates = [
+        "id, patient_id, name, full_name, first_name, last_name",
+        "id, patient_id, name, full_name",
+        "id, patient_id, name",
+      ];
+
+      for (const selectClause of patientSelectCandidates) {
+        let query = supabase.from("patients").select(selectClause).in("id", patientIds);
+        if (clinicId) {
+          query = query.eq("clinic_id", clinicId);
+        } else if (clinicCode) {
+          query = query.eq("clinic_code", clinicCode);
+        }
+
+        const { data, error } = await query;
+        if (!error) {
+          const patients = Array.isArray(data) ? data : [];
+          patientMap = new Map(patients.map((patient) => [String(patient.id), patient]));
+          break;
+        }
+
+        const code = String(error?.code || "");
+        if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+          console.warn("[DOCTOR DASHBOARD AGGREGATED] patients lookup error:", error);
+          break;
+        }
+      }
+    }
+
+    const riskMap = new Map();
+    if (patientIds.length > 0) {
+      let riskQuery = supabase
+        .from("patient_health_forms")
+        .select("patient_id, risk_flags")
+        .in("patient_id", patientIds);
+
+      if (clinicCode) {
+        riskQuery = riskQuery.eq("clinic_code", clinicCode);
+      }
+
+      const { data: riskRows, error: riskError } = await riskQuery;
+      if (!riskError) {
+        for (const row of Array.isArray(riskRows) ? riskRows : []) {
+          const patientId = String(row?.patient_id || "").trim();
+          if (!patientId) continue;
+          const flags = Array.isArray(row?.risk_flags) ? row.risk_flags : [];
+          const critical = flags.filter((flag) => String(flag?.type || "").toLowerCase() === "critical").length;
+          riskMap.set(patientId, {
+            total: flags.length,
+            critical,
+            hasRisk: flags.length > 0,
+          });
+        }
+      } else {
+        console.warn("[DOCTOR DASHBOARD AGGREGATED] risk lookup error:", riskError);
+      }
+    }
+
+    const schedule = rows.map((appointment) => {
+      const patientId = String(appointment?.patient_id || "").trim();
+      const patient = patientMap.get(patientId) || {};
+      const risk = riskMap.get(patientId) || { total: 0, critical: 0, hasRisk: false };
+
+      const mergedName = [patient.first_name, patient.last_name].map((item) => String(item || "").trim()).filter(Boolean).join(" ");
+      const patientName =
+        String(patient.name || "").trim() ||
+        String(patient.full_name || "").trim() ||
+        mergedName ||
+        "Unknown Patient";
+
+      return {
+        id: appointment.id,
+        patientId,
+        patientName,
+        time: appointment.time || null,
+        chair: String(
+          appointment?.chair_no ||
+          appointment?.chair ||
+          appointment?.chairNo ||
+          appointment?.chair_id ||
+          ""
+        ).trim() || null,
+        procedure: appointment.procedure || "Genel Kontrol",
+        status: appointment.status || null,
+        risk,
+      };
+    });
+
+    const inProgressCount = schedule.reduce((count, item) => {
+      const status = String(item?.status || "").trim().toUpperCase();
+      return ["IN_PROGRESS", "ACTIVE", "ONGOING"].includes(status) ? count + 1 : count;
+    }, 0);
+
+    const riskCount = schedule.reduce((count, item) => (item?.risk?.hasRisk ? count + 1 : count), 0);
+
+    return res.json({
+      ok: true,
+      data: {
+        doctorId: requestedDoctorId,
+        date: today,
+        preJoin: {
+          schedule,
+        },
+        summary: {
+          totalAppointments: schedule.length,
+          riskCount,
+          inProgressCount,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("[DOCTOR DASHBOARD AGGREGATED] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -5390,6 +7458,146 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
 });
 
 /* ================= DOCTOR TREATMENT PLANS ================= */
+const CROWN_CATEGORY = "CROWN";
+const ALLOWED_CROWN_TYPES = new Set(["ZIRCONIA", "EMAX", "PFM", "METAL", "TEMPORARY"]);
+const CROWN_DEFAULT_PRICE_BY_CODE = Object.freeze({
+  CROWN_ZIRCONIA: 5500,
+  CROWN_EMAX: 6000,
+  CROWN_PFM: 4500,
+  CROWN_METAL: 3500,
+  CROWN_TEMPORARY: 1500,
+});
+
+function normalizeProcedureCode(rawValue) {
+  return String(rawValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 50);
+}
+
+function normalizeProcedurePayload(raw = {}) {
+  const category = normalizeProcedureCode(raw.category || "") || null;
+  const type = normalizeProcedureCode(raw.type || "") || null;
+  const procedureCode = normalizeProcedureCode(raw.procedure_code || raw.procedureCode || "");
+  const procedureIdInput = normalizeProcedureCode(raw.procedure_id || raw.procedureId || "");
+
+  if (category === CROWN_CATEGORY) {
+    if (!type || !ALLOWED_CROWN_TYPES.has(type)) {
+      return { ok: false, error: "invalid_crown_type" };
+    }
+
+    const crownProcedureId = `CROWN_${type}`;
+    return {
+      ok: true,
+      category,
+      type,
+      procedureCode: procedureCode || crownProcedureId,
+      procedureId: procedureIdInput || crownProcedureId,
+    };
+  }
+
+  const finalCode = procedureCode || procedureIdInput;
+  return {
+    ok: true,
+    category,
+    type,
+    procedureCode: finalCode,
+    procedureId: procedureIdInput || finalCode,
+  };
+}
+
+async function resolveClinicProcedurePrice(clinicId, procedureCode) {
+  const normalizedCode = normalizeProcedureCode(procedureCode);
+  if (!normalizedCode) {
+    return null;
+  }
+
+  if (!clinicId) {
+    const fallbackNoClinic = CROWN_DEFAULT_PRICE_BY_CODE[normalizedCode];
+    if (Number.isFinite(fallbackNoClinic)) {
+      console.warn("[PRICE RESOLVE] Missing clinicId, using crown fallback:", {
+        procedureCode: normalizedCode,
+        fallbackPrice: fallbackNoClinic,
+      });
+      return fallbackNoClinic;
+    }
+    return null;
+  }
+
+  const selectCandidates = [
+    { codeColumn: "treatment_code", amountColumn: "price", includeIsActive: true },
+    { codeColumn: "treatment_code", amountColumn: "default_price", includeIsActive: true },
+    { codeColumn: "type", amountColumn: "price", includeIsActive: true },
+    { codeColumn: "type", amountColumn: "default_price", includeIsActive: true },
+    { codeColumn: "treatment_code", amountColumn: "price", includeIsActive: false },
+    { codeColumn: "treatment_code", amountColumn: "default_price", includeIsActive: false },
+    { codeColumn: "type", amountColumn: "price", includeIsActive: false },
+    { codeColumn: "type", amountColumn: "default_price", includeIsActive: false },
+  ];
+
+  for (const candidate of selectCandidates) {
+    const selectClause = candidate.includeIsActive
+      ? `${candidate.amountColumn}, is_active`
+      : candidate.amountColumn;
+
+    const result = await supabase
+      .from("treatment_prices")
+      .select(selectClause)
+      .eq("clinic_id", clinicId)
+      .eq(candidate.codeColumn, normalizedCode)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (result.error) {
+      const code = String(result.error.code || "");
+      if (["42703", "PGRST204"].includes(code)) {
+        continue;
+      }
+      console.warn("[PRICE RESOLVE] Query error:", {
+        clinicId,
+        procedureCode: normalizedCode,
+        codeColumn: candidate.codeColumn,
+        amountColumn: candidate.amountColumn,
+        error: result.error.message,
+      });
+      continue;
+    }
+
+    if (!result.data) {
+      continue;
+    }
+
+    if (
+      candidate.includeIsActive &&
+      Object.prototype.hasOwnProperty.call(result.data, "is_active") &&
+      result.data.is_active === false
+    ) {
+      return null;
+    }
+
+    const rawAmount = result.data[candidate.amountColumn];
+    const numericPrice = Number(rawAmount);
+    if (Number.isFinite(numericPrice)) {
+      return numericPrice;
+    }
+  }
+
+  const fallback = CROWN_DEFAULT_PRICE_BY_CODE[normalizedCode];
+  if (Number.isFinite(fallback)) {
+    console.warn("[PRICE RESOLVE] No clinic-specific crown price, using fallback:", {
+      clinicId,
+      procedureCode: normalizedCode,
+      fallbackPrice: fallback,
+    });
+    return fallback;
+  }
+
+  return null;
+}
+
 // GET /api/doctor/treatment-plans - Get doctor's treatment plans
 app.get("/api/doctor/treatment-plans", async (req, res) => {
   try {
@@ -5582,7 +7790,7 @@ app.get("/api/doctor/treatment-plans", async (req, res) => {
 
     res.json({
       ok: true,
-      treatment_plans: Object.values(formattedPlans)
+      treatment_plans: formattedPlans
     });
 
   } catch (err) {
@@ -5630,20 +7838,29 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
     if (!hasEncounterAccess) {
       return res.status(403).json({ ok: false, error: "forbidden" });
     }
+    const encounter = encounterAccess.encounter;
+
+    if (!['ACTIVE', 'active'].includes(String(encounter.status || ''))) {
+      return res.status(400).json({ ok: false, error: "encounter_not_active" });
+    }
 
     // Rule 3: Aynı encounter içinde aktif plan var mı kontrol et
     const { data: existingPlans, error: existingPlansError } = await supabase
       .from("treatment_plans")
       .select("id, status")
-      .eq("encounter_id", encounter_id)
-      .in("status", ["DRAFT", "PROPOSED", "SUBMITTED"]);
+      .eq("encounter_id", encounter_id);
 
     if (existingPlansError) {
       console.error("[TREATMENT PLANS] Error checking existing plans:", existingPlansError);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    if (existingPlans && existingPlans.length > 0) {
+    const activeExistingPlans = (existingPlans || []).filter((plan) => {
+      const status = String(plan?.status || "").toUpperCase();
+      return !["COMPLETED", "DONE", "CANCELLED", "CLOSED", "REJECTED"].includes(status);
+    });
+
+    if (activeExistingPlans.length > 0) {
       return res.status(400).json({ ok: false, error: "active_plan_already_exists" });
     }
 
@@ -5665,22 +7882,63 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 
-    // Rule 5: Plan items ekle
-    const planItems = items.map(item => ({
-      treatment_plan_id: treatmentPlan.id,
-      tooth_fdi_code: item.tooth_fdi_code,
-      procedure_code: item.procedure_code,
-      procedure_description: item.procedure_description,
-      estimated_duration_minutes: item.estimated_duration_minutes || 30,
-      status: "PLANNED",
-      is_visible_to_patient: false,
-      created_by_doctor_id: doctorId,
-      created_at: new Date().toISOString()
-    }));
+    // Rule 5: Plan items ekle (crown hierarchy + clinic price injection)
+    const planItems = [];
+    for (const item of items) {
+      const normalized = normalizeProcedurePayload(item || {});
+      if (!normalized.ok) {
+        return res.status(400).json({ ok: false, error: normalized.error });
+      }
 
-    const { error: itemsError } = await supabase
+      const resolvedPrice = await resolveClinicProcedurePrice(clinicId, normalized.procedureCode);
+      if (normalized.category === CROWN_CATEGORY && resolvedPrice === null) {
+        return res.status(400).json({ ok: false, error: "crown_price_not_configured" });
+      }
+
+      planItems.push({
+        treatment_plan_id: treatmentPlan.id,
+        tooth_fdi_code: item.tooth_fdi_code,
+        procedure_id: normalized.procedureId || null,
+        procedure_code: normalized.procedureCode || null,
+        procedure_description: item.procedure_description,
+        category: normalized.category,
+        type: normalized.type,
+        price: resolvedPrice,
+        estimated_duration_minutes: item.estimated_duration_minutes || 30,
+        status: "PLANNED",
+        is_visible_to_patient: false,
+        created_by_doctor_id: doctorId,
+        created_at: new Date().toISOString()
+      });
+    }
+
+    let { error: itemsError } = await supabase
       .from("treatment_items")
       .insert(planItems);
+
+    const hasNewColumnsError =
+      !!itemsError &&
+      (String(itemsError.code || "") === "42703" || String(itemsError.code || "") === "PGRST204");
+
+    if (hasNewColumnsError) {
+      const legacyPlanItems = planItems.map((item) => ({
+        treatment_plan_id: item.treatment_plan_id,
+        tooth_fdi_code: item.tooth_fdi_code,
+        procedure_code: item.procedure_code,
+        procedure_description: item.procedure_description,
+        estimated_duration_minutes: item.estimated_duration_minutes,
+        status: item.status,
+        is_visible_to_patient: item.is_visible_to_patient,
+        created_by_doctor_id: item.created_by_doctor_id,
+        created_at: item.created_at,
+      }));
+
+      const legacyInsert = await supabase
+        .from("treatment_items")
+        .insert(legacyPlanItems);
+
+      itemsError = legacyInsert.error;
+    }
 
     if (itemsError) {
       console.error("[TREATMENT PLANS] Error creating items:", itemsError);
@@ -5850,12 +8108,1382 @@ app.patch("/api/doctor/treatment-plans/:id/complete", async (req, res) => {
   }
 });
 
+async function planHasPrimaryDoctor(treatmentPlanId) {
+  const { data, error } = await supabase
+    .from("treatment_plan_doctors")
+    .select("id")
+    .eq("treatment_plan_id", treatmentPlanId)
+    .eq("role", "PRIMARY")
+    .limit(1);
+
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
+}
+
+app.post("/api/doctor/treatment-plan", getUserFromToken, requireDoctor, async (req, res) => {
+  try {
+    const { patientId, diagnosisId } = req.body || {};
+    const doctorId = req.user.id;
+
+    if (!patientId || !diagnosisId) {
+      return res.status(400).json({ ok: false, message: "patientId and diagnosisId are required" });
+    }
+
+    const { data: plan, error: planError } = await supabase
+      .from("treatment_plans")
+      .insert({
+        patient_id: patientId,
+        diagnosis_id: diagnosisId,
+        created_by_doctor_id: doctorId,
+        status: "DRAFT",
+      })
+      .select("*")
+      .single();
+
+    if (planError || !plan) {
+      console.error("CREATE_PLAN_ERROR:", planError);
+      return res.status(500).json({ ok: false, message: "create_plan_failed" });
+    }
+
+    const { error: assignError } = await supabase
+      .from("treatment_plan_doctors")
+      .insert({
+        treatment_plan_id: plan.id,
+        doctor_id: doctorId,
+        role: "PRIMARY",
+        assigned_at: new Date().toISOString(),
+      });
+
+    if (assignError) {
+      console.error("CREATE_PLAN_PRIMARY_ASSIGN_ERROR:", assignError);
+      await supabase.from("treatment_plans").delete().eq("id", plan.id);
+      return res.status(500).json({ ok: false, message: "primary_assign_failed" });
+    }
+
+    return res.json({ ok: true, plan });
+  } catch (error) {
+    console.error("CREATE_PLAN_ERROR:", error);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+app.post("/api/doctor/treatment-plan/:id/add-doctor", getUserFromToken, requireDoctor, async (req, res) => {
+  try {
+    const planId = req.params.id;
+    const { doctorId, role } = req.body || {};
+
+    if (!doctorId || !role) {
+      return res.status(400).json({ ok: false, message: "doctorId and role are required" });
+    }
+
+    const normalizedRole = String(role).toUpperCase();
+    if (!["PRIMARY", "ASSISTANT", "CONSULTANT"].includes(normalizedRole)) {
+      return res.status(400).json({ ok: false, message: "invalid_role" });
+    }
+
+    const { error } = await supabase
+      .from("treatment_plan_doctors")
+      .insert({
+        treatment_plan_id: planId,
+        doctor_id: doctorId,
+        role: normalizedRole,
+        assigned_at: new Date().toISOString(),
+      });
+
+    if (error) {
+      console.error("ADD_DOCTOR_ERROR:", error);
+      return res.status(500).json({ ok: false });
+    }
+
+    const hasPrimary = await planHasPrimaryDoctor(planId);
+    if (!hasPrimary) {
+      return res.status(400).json({ ok: false, message: "plan_must_have_primary" });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("ADD_DOCTOR_ERROR:", error);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requireAdmin, async (req, res) => {
+  try {
+    const { newPrimaryDoctorId } = req.body || {};
+    const planId = req.params.id;
+
+    if (!newPrimaryDoctorId) {
+      return res.status(400).json({ ok: false, message: "newPrimaryDoctorId is required" });
+    }
+
+    const { error: demoteError } = await supabase
+      .from("treatment_plan_doctors")
+      .update({ role: "ASSISTANT" })
+      .eq("treatment_plan_id", planId)
+      .eq("role", "PRIMARY");
+
+    if (demoteError) {
+      console.error("CHANGE_PRIMARY_DEMOTE_ERROR:", demoteError);
+      return res.status(500).json({ ok: false });
+    }
+
+    const { data: existingMembership, error: existingMembershipError } = await supabase
+      .from("treatment_plan_doctors")
+      .select("id")
+      .eq("treatment_plan_id", planId)
+      .eq("doctor_id", newPrimaryDoctorId)
+      .maybeSingle();
+
+    if (existingMembershipError) {
+      console.error("CHANGE_PRIMARY_LOOKUP_ERROR:", existingMembershipError);
+      return res.status(500).json({ ok: false });
+    }
+
+    if (existingMembership?.id) {
+      const { error: promoteError } = await supabase
+        .from("treatment_plan_doctors")
+        .update({ role: "PRIMARY" })
+        .eq("id", existingMembership.id);
+
+      if (promoteError) {
+        console.error("CHANGE_PRIMARY_PROMOTE_ERROR:", promoteError);
+        return res.status(500).json({ ok: false });
+      }
+    } else {
+      const { error: insertError } = await supabase
+        .from("treatment_plan_doctors")
+        .insert({
+          treatment_plan_id: planId,
+          doctor_id: newPrimaryDoctorId,
+          role: "PRIMARY",
+          assigned_at: new Date().toISOString(),
+        });
+
+      if (insertError) {
+        console.error("CHANGE_PRIMARY_INSERT_ERROR:", insertError);
+        return res.status(500).json({ ok: false });
+      }
+    }
+
+    const hasPrimary = await planHasPrimaryDoctor(planId);
+    if (!hasPrimary) {
+      return res.status(400).json({ ok: false, message: "plan_must_have_primary" });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("CHANGE_PRIMARY_ERROR:", error);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, res) => {
+  try {
+    const { treatmentPlanId, title, scheduledDate, toothId, price, currency, patientId } = req.body || {};
+    const doctorId = req.user.id;
+    const tokenClinicId = req.user?.clinicId || null;
+
+    if (!treatmentPlanId || !title) {
+      return res.status(400).json({ ok: false, message: "treatmentPlanId and title are required" });
+    }
+
+    const { data: assigned, error: assignedError } = await supabase
+      .from("treatment_plan_doctors")
+      .select("id")
+      .eq("treatment_plan_id", treatmentPlanId)
+      .eq("doctor_id", doctorId)
+      .maybeSingle();
+
+    if (assignedError) {
+      console.error("CREATE_PROCEDURE_ASSIGN_CHECK_ERROR:", assignedError);
+      return res.status(500).json({ ok: false });
+    }
+
+    if (!assigned) {
+      return res.status(403).json({ ok: false, message: "Doctor not assigned to plan" });
+    }
+
+    let clinicId = tokenClinicId;
+    if (!clinicId) {
+      const doctorLookup = await supabase
+        .from("doctors")
+        .select("id, clinic_id")
+        .eq("id", doctorId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!doctorLookup.error && doctorLookup.data?.clinic_id) {
+        clinicId = doctorLookup.data.clinic_id;
+      }
+    }
+
+    console.log("[CREATE_PROCEDURE] clinic debug", {
+      doctorId,
+      clinicId,
+      treatmentPlanId,
+      patientId: patientId || null,
+      title,
+    });
+
+    let procedure = null;
+    let procedureError = null;
+
+    const insertPayloads = [
+      {
+        treatment_plan_id: treatmentPlanId,
+        patient_id: patientId || null,
+        doctor_id: doctorId,
+        clinic_id: clinicId,
+        title,
+        tooth_id: toothId || null,
+        price: price ?? null,
+        currency: currency || "TRY",
+        status: "PLANNED",
+        scheduled_date: scheduledDate || null,
+      },
+      {
+        treatment_plan_id: treatmentPlanId,
+        patient_id: patientId || null,
+        doctor_id: doctorId,
+        title,
+        tooth_id: toothId || null,
+        price: price ?? null,
+        currency: currency || "TRY",
+        status: "PLANNED",
+        scheduled_date: scheduledDate || null,
+      },
+    ];
+
+    for (const payload of insertPayloads) {
+      const insertResult = await supabase
+        .from("procedures")
+        .insert(payload)
+        .select("*")
+        .single();
+
+      if (!insertResult.error && insertResult.data) {
+        procedure = insertResult.data;
+        procedureError = null;
+        break;
+      }
+
+      procedureError = insertResult.error;
+      const code = String(insertResult.error?.code || "");
+      if (!["42703", "PGRST204", "23502"].includes(code)) {
+        break;
+      }
+    }
+
+    if (procedureError) {
+      console.error("CREATE_PROCEDURE_ERROR:", procedureError);
+      return res.status(500).json({ ok: false });
+    }
+
+    return res.json({ ok: true, procedure });
+  } catch (error) {
+    console.error("CREATE_PROCEDURE_ERROR:", error);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+app.put("/api/treatment-plan/:id/finalize", getUserFromToken, async (req, res) => {
+  try {
+    const planId = req.params.id;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    if (!userId || !userRole) {
+      return res.status(401).json({ ok: false, message: "Invalid token" });
+    }
+
+    const { data: planOwner, error: planOwnerError } = await supabase
+      .from("treatment_plans")
+      .select("id, created_by_doctor_id")
+      .eq("id", planId)
+      .limit(1)
+      .maybeSingle();
+
+    if (planOwnerError || !planOwner) {
+      return res.status(404).json({ ok: false, message: "plan_not_found" });
+    }
+
+    const { data: doctorRole, error: doctorRoleError } = await supabase
+      .from("treatment_plan_doctors")
+      .select("role")
+      .eq("treatment_plan_id", planId)
+      .eq("doctor_id", userId)
+      .maybeSingle();
+
+    const roleCheckUnavailable = String(doctorRoleError?.code || "") === "PGRST205";
+
+    if (doctorRoleError && !roleCheckUnavailable) {
+      console.error("FINALIZE_PLAN_ROLE_CHECK_ERROR:", doctorRoleError);
+      return res.status(500).json({ ok: false });
+    }
+
+    if (userRole !== "ADMIN") {
+      if (roleCheckUnavailable) {
+        if (String(planOwner.created_by_doctor_id || "") !== String(userId || "")) {
+          return res.status(403).json({ ok: false, message: "Not authorized" });
+        }
+      } else if (!doctorRole || doctorRole.role !== "PRIMARY") {
+        return res.status(403).json({ ok: false, message: "Not authorized" });
+      }
+    }
+
+    if (!roleCheckUnavailable) {
+      const hasPrimary = await planHasPrimaryDoctor(planId);
+      if (!hasPrimary) {
+        return res.status(400).json({ ok: false, message: "plan_must_have_primary" });
+      }
+    }
+
+    const finalizedAt = new Date().toISOString();
+    let finalizeError = null;
+
+    const finalizePayloads = [
+      {
+        status: "IN_PROGRESS",
+        visible_to_patient: true,
+        finalized_by_doctor_id: userId,
+        finalized_at: finalizedAt,
+      },
+      {
+        status: "IN_PROGRESS",
+        finalized_by_doctor_id: userId,
+        finalized_at: finalizedAt,
+      },
+      {
+        status: "IN_PROGRESS",
+      },
+      {
+        status: "in_progress",
+      },
+    ];
+
+    for (const payload of finalizePayloads) {
+      const finalizeAttempt = await supabase
+        .from("treatment_plans")
+        .update(payload)
+        .eq("id", planId);
+
+      if (!finalizeAttempt.error) {
+        finalizeError = null;
+        break;
+      }
+
+      finalizeError = finalizeAttempt.error;
+
+      if (!["42703", "PGRST204", "22P02", "23514"].includes(String(finalizeAttempt.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (finalizeError) {
+      console.error("FINALIZE_PLAN_ERROR:", finalizeError);
+      return res.status(500).json({ ok: false });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("FINALIZE_PLAN_ERROR:", error);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+// ================= LEGACY MOBILE COMPAT: DIAGNOSIS-BASED TREATMENT ROUTES =================
+app.get("/api/treatment/diagnoses/:diagnosisId/plan", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const diagnosisId = String(req.params.diagnosisId || "").trim();
+
+    if (!diagnosisId) {
+      return res.status(400).json({ ok: false, error: "diagnosis_id_required" });
+    }
+
+    const { data: diagnosis, error: diagnosisError } = await supabase
+      .from("encounter_diagnoses")
+      .select("id, encounter_id")
+      .eq("id", diagnosisId)
+      .limit(1)
+      .maybeSingle();
+
+    if (diagnosisError || !diagnosis) {
+      return res.status(404).json({ ok: false, error: "diagnosis_not_found" });
+    }
+
+    const { data: plan, error } = await supabase
+      .from("treatment_plans")
+      .select("*")
+      .eq("encounter_id", diagnosis.encounter_id)
+      .eq("created_by_doctor_id", doctorId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("LEGACY_GET_PLAN_BY_DIAGNOSIS_ERROR:", error);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    return res.json({ ok: true, exists: !!plan, treatmentPlan: plan || null });
+  } catch (error) {
+    console.error("LEGACY_GET_PLAN_BY_DIAGNOSIS_EXCEPTION:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/treatment/diagnoses/:diagnosisId/plan", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const diagnosisId = String(req.params.diagnosisId || "").trim();
+
+    if (!diagnosisId) {
+      return res.status(400).json({ ok: false, error: "diagnosis_id_required" });
+    }
+
+    const { data: diagnosis, error: diagnosisError } = await supabase
+      .from("encounter_diagnoses")
+      .select("id, encounter_id")
+      .eq("id", diagnosisId)
+      .limit(1)
+      .maybeSingle();
+
+    if (diagnosisError || !diagnosis) {
+      return res.status(404).json({ ok: false, error: "diagnosis_not_found" });
+    }
+
+    const encounterAccess = await doctorCanAccessEncounter(doctorId, diagnosis.encounter_id);
+    if (!encounterAccess.ok) {
+      if (encounterAccess.error === "encounter_not_found") {
+        return res.status(404).json({ ok: false, error: "encounter_not_found" });
+      }
+      return res.status(403).json({ ok: false, error: "not_assigned_doctor" });
+    }
+    const encounter = encounterAccess.encounter;
+
+    const { data: existingPlan, error: existingError } = await supabase
+      .from("treatment_plans")
+      .select("*")
+      .eq("encounter_id", diagnosis.encounter_id)
+      .eq("created_by_doctor_id", doctorId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error("LEGACY_CREATE_PLAN_EXISTING_LOOKUP_ERROR:", existingError);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+
+    if (existingPlan) {
+      return res.json({ ok: true, exists: true, treatmentPlan: existingPlan });
+    }
+
+    const basePayload = {
+      encounter_id: diagnosis.encounter_id,
+      created_by_doctor_id: doctorId,
+      assigned_doctor_id: doctorId,
+      created_at: new Date().toISOString(),
+    };
+    const payloadBases = [
+      {
+        ...basePayload,
+        visible_to_patient: false,
+      },
+      basePayload,
+    ];
+
+    const statusCandidates = [
+      "draft",
+      "proposed",
+      "approved",
+      "rejected",
+      "completed",
+      "active",
+      "closed",
+      "planned",
+      "in_progress",
+      "done",
+      "cancelled",
+      "DRAFT",
+      "SUBMITTED",
+      "PROPOSED",
+      "APPROVED",
+      "REJECTED",
+      "COMPLETED",
+      "IN_PROGRESS",
+      "PLANNED",
+      "DONE",
+      "CANCELLED",
+      "ACTIVE",
+      "CLOSED",
+    ];
+    const payloadCandidates = [];
+
+    for (const payloadBase of payloadBases) {
+      for (const candidateStatus of statusCandidates) {
+        payloadCandidates.push({
+          ...payloadBase,
+          status: candidateStatus,
+          patient_id: encounter.patient_id,
+          diagnosis_id: diagnosisId,
+        });
+        payloadCandidates.push({
+          ...payloadBase,
+          status: candidateStatus,
+          diagnosis_id: diagnosisId,
+        });
+        payloadCandidates.push({
+          ...payloadBase,
+          status: candidateStatus,
+        });
+      }
+    }
+
+    for (const payloadBase of payloadBases) {
+      payloadCandidates.push({
+        ...payloadBase,
+        patient_id: encounter.patient_id,
+        diagnosis_id: diagnosisId,
+      });
+      payloadCandidates.push({
+        ...payloadBase,
+        diagnosis_id: diagnosisId,
+      });
+      payloadCandidates.push(payloadBase);
+    }
+    payloadCandidates.push({
+      encounter_id: diagnosis.encounter_id,
+      created_by_doctor_id: doctorId,
+    });
+
+    let plan = null;
+    let createPlanError = null;
+
+    for (const payloadCandidate of payloadCandidates) {
+      const createAttempt = await supabase
+        .from("treatment_plans")
+        .insert(payloadCandidate)
+        .select("*")
+        .single();
+
+      if (!createAttempt.error && createAttempt.data) {
+        plan = createAttempt.data;
+        createPlanError = null;
+        break;
+      }
+
+      createPlanError = createAttempt.error;
+
+      if (!["42703", "23514", "23503", "22P02", "PGRST204"].includes(String(createAttempt.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (createPlanError || !plan) {
+      const { data: fallbackPlan, error: fallbackPlanError } = await supabase
+        .from("treatment_plans")
+        .select("*")
+        .eq("encounter_id", diagnosis.encounter_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!fallbackPlanError && fallbackPlan) {
+        return res.json({ ok: true, exists: true, treatmentPlan: fallbackPlan });
+      }
+
+      console.error("LEGACY_CREATE_PLAN_ERROR:", createPlanError);
+      return res.json({
+        ok: true,
+        exists: false,
+        treatmentPlan: null,
+        createPlanFailed: true,
+        createPlanError: createPlanError?.message || null,
+      });
+    }
+
+    const { error: assignError } = await supabase
+      .from("treatment_plan_doctors")
+      .insert({
+        treatment_plan_id: plan.id,
+        doctor_id: doctorId,
+        role: "PRIMARY",
+        assigned_at: new Date().toISOString(),
+      });
+
+    if (assignError) {
+      console.error("LEGACY_CREATE_PLAN_ASSIGN_ERROR:", assignError);
+    }
+
+    return res.json({ ok: true, exists: false, treatmentPlan: plan });
+  } catch (error) {
+    console.error("LEGACY_CREATE_PLAN_EXCEPTION:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/treatment/plans/:id/items", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId, clinicId } = v.decoded;
+    const planId = String(req.params.id || "").trim();
+
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: "plan_id_required" });
+    }
+
+    const {
+      tooth_number,
+      procedure_id,
+      procedure_code,
+      procedure_name,
+      category,
+      type,
+      linked_icd10_code,
+      status,
+      chair_no,
+      chairNo,
+      chair,
+      scheduled_at,
+      scheduledAt,
+      scheduled_date,
+      duration_minutes,
+      duration,
+    } = req.body || {};
+    if (!tooth_number || !procedure_code || !procedure_name) {
+      return res.status(400).json({ ok: false, error: "missing_required_fields" });
+    }
+
+    const parseScheduledAtIso = (value) => {
+      if (!value) return null;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return new Date(value).toISOString();
+      }
+      const raw = String(value).trim();
+      if (!raw) return null;
+      const ts = Date.parse(raw);
+      if (!Number.isFinite(ts)) return null;
+      return new Date(ts).toISOString();
+    };
+
+    const scheduledAtValue =
+      parseScheduledAtIso(scheduled_at) ||
+      parseScheduledAtIso(scheduledAt) ||
+      parseScheduledAtIso(scheduled_date) ||
+      null;
+    const chairValue = String(chair_no || chairNo || chair || "").trim() || null;
+    const durationRaw = Number.parseInt(String(duration_minutes ?? duration ?? "10"), 10);
+    const durationValue = Number.isFinite(durationRaw) ? Math.max(10, Math.min(240, durationRaw)) : 10;
+
+    const normalized = normalizeProcedurePayload({
+      procedure_id,
+      procedure_code,
+      category,
+      type,
+    });
+
+    if (!normalized.ok) {
+      return res.status(400).json({ ok: false, error: normalized.error });
+    }
+
+    const resolvedPrice = await resolveClinicProcedurePrice(clinicId, normalized.procedureCode);
+    if (normalized.category === CROWN_CATEGORY && resolvedPrice === null) {
+      return res.status(400).json({ ok: false, error: "crown_price_not_configured" });
+    }
+
+    const { data: plan, error: planError } = await supabase
+      .from("treatment_plans")
+      .select("id, created_by_doctor_id")
+      .eq("id", planId)
+      .limit(1)
+      .maybeSingle();
+
+    if (planError || !plan) {
+      return res.status(404).json({ ok: false, error: "plan_not_found" });
+    }
+
+    if (plan.created_by_doctor_id && plan.created_by_doctor_id !== doctorId) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    if (scheduledAtValue) {
+      const normalizeChair = (value) => {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        const prefixed = raw.match(/^chair\s*(\d+)$/i);
+        if (prefixed) return String(Number(prefixed[1]));
+        if (/^\d+$/.test(raw)) return String(Number(raw));
+        return raw.toUpperCase();
+      };
+
+      const dateOnly = scheduledAtValue.slice(0, 10);
+      const dayStartIso = `${dateOnly}T00:00:00.000Z`;
+      const dayEndDate = new Date(dayStartIso);
+      dayEndDate.setUTCDate(dayEndDate.getUTCDate() + 1);
+      const dayEndIso = dayEndDate.toISOString();
+      const requestStartTs = Date.parse(scheduledAtValue);
+      const requestEndTs = requestStartTs + durationValue * 60000;
+      const targetChair = normalizeChair(chairValue);
+
+      const fetchDayRows = async (tableName) => {
+        const attempts = [];
+
+        if (clinicId) {
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", clinicId).eq("date", dateOnly));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", clinicId).eq("appointment_date", dateOnly));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", clinicId).gte("start_at", dayStartIso).lt("start_at", dayEndIso));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", clinicId).gte("startAt", dayStartIso).lt("startAt", dayEndIso));
+        }
+
+        if (v.decoded?.clinicCode) {
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", v.decoded.clinicCode).eq("date", dateOnly));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", v.decoded.clinicCode).eq("appointment_date", dateOnly));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", v.decoded.clinicCode).gte("start_at", dayStartIso).lt("start_at", dayEndIso));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", v.decoded.clinicCode).gte("startAt", dayStartIso).lt("startAt", dayEndIso));
+        }
+
+        for (const run of attempts) {
+          const result = await run();
+          if (!result.error) return Array.isArray(result.data) ? result.data : [];
+          const code = String(result.error?.code || "");
+          const msg = String(result.error?.message || "").toLowerCase();
+          const schemaIssue = ["42P01", "42703", "PGRST204", "PGRST205"].includes(code) || msg.includes("does not exist") || msg.includes("column");
+          if (schemaIssue) continue;
+        }
+
+        return [];
+      };
+
+      const toIso = (value) => {
+        if (!value) return null;
+        const ts = Date.parse(String(value));
+        if (!Number.isFinite(ts)) return null;
+        return new Date(ts).toISOString();
+      };
+
+      const dateTimeToIsoSafe = (dateValue, timeValue) => {
+        const d = String(dateValue || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+        const tRaw = String(timeValue || "00:00").trim();
+        const t = /^\d{2}:\d{2}$/.test(tRaw) ? `${tRaw}:00` : tRaw;
+        return toIso(`${d}T${t}`);
+      };
+
+      const getDurationFromRow = (row, fallback = 10) => {
+        const parsed = Number.parseInt(
+          String(row?.duration_minutes ?? row?.estimated_duration_minutes ?? row?.duration ?? row?.estimated_duration ?? "0"),
+          10
+        );
+        if (Number.isFinite(parsed) && parsed > 0) return Math.max(10, Math.min(240, parsed));
+        const endIso = toIso(row?.end_at) || toIso(row?.endAt) || null;
+        const startIso = toIso(row?.start_at) || toIso(row?.startAt) || dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+        if (startIso && endIso) {
+          const diff = Math.round((Date.parse(endIso) - Date.parse(startIso)) / 60000);
+          if (Number.isFinite(diff) && diff > 0) return Math.max(10, Math.min(240, diff));
+        }
+        return fallback;
+      };
+
+      const overlaps = (startA, endA, startB, endB) => startA < endB && endA > startB;
+      const ignoredStatuses = new Set(["CANCELLED", "CANCELED", "REJECTED"]);
+
+      const [appointments, requests] = await Promise.all([
+        fetchDayRows("appointments"),
+        fetchDayRows("appointment_requests"),
+      ]);
+      const dayRows = [...appointments, ...requests];
+
+      for (const row of dayRows) {
+        const rowStatus = String(row?.status || "").trim().toUpperCase();
+        if (ignoredStatuses.has(rowStatus)) continue;
+
+        const rowDoctor = String(row?.doctor_id || row?.doctorId || row?.doctor || "").trim();
+        if (!rowDoctor || rowDoctor !== String(doctorId || "").trim()) continue;
+
+        const startIso =
+          toIso(row?.start_at) ||
+          toIso(row?.startAt) ||
+          dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+        if (!startIso) continue;
+
+        const rowStartTs = Date.parse(startIso);
+        if (!Number.isFinite(rowStartTs)) continue;
+        const rowDuration = getDurationFromRow(row, 10);
+        const rowEndTs = rowStartTs + rowDuration * 60000;
+
+        if (overlaps(requestStartTs, requestEndTs, rowStartTs, rowEndTs)) {
+          return res.status(409).json({
+            ok: false,
+            error: "doctor_visit_conflict",
+            message: "Doctor has another visit appointment at this time",
+          });
+        }
+      }
+
+      if (targetChair) {
+        for (const row of dayRows) {
+          const rowStatus = String(row?.status || "").trim().toUpperCase();
+          if (ignoredStatuses.has(rowStatus)) continue;
+
+          const rowChair = normalizeChair(row?.chair ?? row?.chair_no ?? row?.chairNo ?? row?.chair_name ?? row?.chairName ?? row?.chair_id ?? row?.chairId);
+          if (!rowChair || rowChair !== targetChair) continue;
+
+          const startIso =
+            toIso(row?.start_at) ||
+            toIso(row?.startAt) ||
+            dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+          if (!startIso) continue;
+
+          const rowStartTs = Date.parse(startIso);
+          if (!Number.isFinite(rowStartTs)) continue;
+          const rowDuration = getDurationFromRow(row, 10);
+          const rowEndTs = rowStartTs + rowDuration * 60000;
+
+          if (overlaps(requestStartTs, requestEndTs, rowStartTs, rowEndTs)) {
+            return res.status(409).json({
+              ok: false,
+              error: "chair_conflict",
+              message: "Chair is not available at this time",
+            });
+          }
+        }
+      }
+    }
+
+    const basePayload = {
+      treatment_plan_id: planId,
+      tooth_fdi_code: String(tooth_number),
+      procedure_id: normalized.procedureId || null,
+      procedure_code: normalized.procedureCode || String(procedure_code),
+      category: normalized.category,
+      type: normalized.type,
+      price: resolvedPrice,
+      linked_icd10_code: linked_icd10_code || null,
+      status: String(status || "planned").toLowerCase(),
+      created_by_doctor_id: doctorId,
+      chair_no: chairValue,
+      chair: chairValue,
+      scheduled_at: scheduledAtValue,
+    };
+
+    const buildLegacySchedulePayloads = (payload) => {
+      const base = { ...(payload || {}) };
+      const attempts = [];
+
+      if (scheduledAtValue) {
+        attempts.push({ ...base, scheduled_at: scheduledAtValue });
+        attempts.push({ ...base, scheduled_date: scheduledAtValue });
+        attempts.push({ ...base, due_date: scheduledAtValue });
+      }
+
+      attempts.push(base);
+      return attempts;
+    };
+
+    let item = null;
+    let itemError = null;
+
+    let usedLegacyColumns = false;
+
+    const primaryInsert = await supabase
+      .from("treatment_items")
+      .insert({
+        ...basePayload,
+        procedure_description: String(procedure_name),
+      })
+      .select("id, treatment_plan_id, tooth_fdi_code, procedure_id, procedure_code, procedure_description, category, type, price, linked_icd10_code, status")
+      .single();
+
+    item = primaryInsert.data;
+    itemError = primaryInsert.error;
+
+    const missingProcedureDescriptionColumn =
+      !!itemError &&
+      (
+        String(itemError.code || "") === "42703" ||
+        String(itemError.code || "") === "PGRST204" ||
+        /procedure_description.*(does not exist|schema cache)/i.test(String(itemError.message || ""))
+      );
+
+    const missingNewColumns =
+      !!itemError &&
+      (
+        /procedure_id|category|type|price/i.test(String(itemError.message || "")) ||
+        String(itemError.code || "") === "42703" ||
+        String(itemError.code || "") === "PGRST204"
+      );
+
+    if (missingNewColumns) {
+      usedLegacyColumns = true;
+      const legacyBase = {
+        treatment_plan_id: planId,
+        tooth_fdi_code: String(tooth_number),
+        procedure_code: normalized.procedureCode || String(procedure_code),
+        procedure_description: String(procedure_name),
+        linked_icd10_code: linked_icd10_code || null,
+        status: String(status || "planned").toLowerCase(),
+        created_by_doctor_id: doctorId,
+        chair_no: chairValue,
+        chair: chairValue,
+      };
+
+      for (const payload of buildLegacySchedulePayloads(legacyBase)) {
+        const attempt = await supabase
+          .from("treatment_items")
+          .insert(payload)
+          .select("id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_description, linked_icd10_code, status, scheduled_at, scheduled_date, due_date, created_at")
+          .single();
+
+        if (!attempt.error) {
+          item = attempt.data;
+          itemError = null;
+          break;
+        }
+
+        itemError = attempt.error;
+        const code = String(attempt.error?.code || "");
+        if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+          break;
+        }
+      }
+    }
+
+    if (missingProcedureDescriptionColumn) {
+      const legacyBase = {
+        treatment_plan_id: planId,
+        tooth_fdi_code: String(tooth_number),
+        procedure_code: normalized.procedureCode || String(procedure_code),
+        linked_icd10_code: linked_icd10_code || null,
+        status: String(status || "planned").toLowerCase(),
+        created_by_doctor_id: doctorId,
+        procedure_name: String(procedure_name),
+        chair_no: chairValue,
+        chair: chairValue,
+      };
+
+      for (const payload of buildLegacySchedulePayloads(legacyBase)) {
+        const attempt = await supabase
+          .from("treatment_items")
+          .insert(payload)
+          .select("id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, linked_icd10_code, status, scheduled_at, scheduled_date, due_date, created_at")
+          .single();
+
+        if (!attempt.error) {
+          item = attempt.data;
+          itemError = null;
+          break;
+        }
+
+        itemError = attempt.error;
+        const code = String(attempt.error?.code || "");
+        if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+          break;
+        }
+      }
+
+      if (!itemError && item) {
+        item = {
+          ...item,
+          procedure_description: item.procedure_name || null,
+        };
+      }
+    }
+
+    if (itemError || !item) {
+      console.error("LEGACY_ADD_TREATMENT_ITEM_ERROR:", itemError);
+      return res.status(500).json({ ok: false, error: "item_create_failed", details: itemError?.message || null });
+    }
+
+    if (item?.id && resolvedPrice !== null && usedLegacyColumns) {
+      const priceInsert = await supabase
+        .from("treatment_item_prices")
+        .insert({
+          treatment_item_id: item.id,
+          price: resolvedPrice,
+          currency: "TRY",
+          visible_to: "admin",
+        });
+
+      if (priceInsert.error) {
+        console.warn("[TREATMENT ITEMS] price fallback insert failed", priceInsert.error);
+      }
+    }
+
+    if (item && resolvedPrice !== null && (item.price === undefined || item.price === null)) {
+      item.price = resolvedPrice;
+    }
+
+    if (item && (item.procedure_id === undefined || item.procedure_id === null) && normalized.procedureId) {
+      item.procedure_id = normalized.procedureId;
+    }
+    if (item && (item.category === undefined || item.category === null) && normalized.category) {
+      item.category = normalized.category;
+    }
+    if (item && (item.type === undefined || item.type === null) && normalized.type) {
+      item.type = normalized.type;
+    }
+
+    return res.json({
+      id: item.id,
+      treatment_plan_id: item.treatment_plan_id,
+      tooth_number: item.tooth_fdi_code,
+      procedure_code: item.procedure_code,
+      procedure_name: item.procedure_description,
+      linked_icd10_code: item.linked_icd10_code,
+      scheduled_at: item.scheduled_at || item.scheduled_date || item.due_date || scheduledAtValue || null,
+      created_at: item.created_at || null,
+      status: String(item.status || "PLANNED").toLowerCase(),
+    });
+  } catch (error) {
+    console.error("LEGACY_ADD_TREATMENT_ITEM_EXCEPTION:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+async function updateTreatmentItemStatusHandler(req, res) {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+    const itemId = String(req.params.id || "").trim();
+    const requestedStatus = String(req.body?.status || "").trim().toUpperCase();
+
+    if (!itemId) {
+      return res.status(400).json({ ok: false, error: "item_id_required" });
+    }
+
+    if (!requestedStatus || !["DONE", "CANCELLED", "IN_PROGRESS", "ACTIVE"].includes(requestedStatus)) {
+      return res.status(400).json({ ok: false, error: "invalid_status" });
+    }
+
+    const { data: itemWithPlan, error: lookupError } = await supabase
+      .from("treatment_items")
+      .select(`
+        id,
+        treatment_plan_id,
+        treatment_plans!inner(
+          id,
+          created_by_doctor_id
+        )
+      `)
+      .eq("id", itemId)
+      .limit(1)
+      .maybeSingle();
+
+    if (lookupError || !itemWithPlan) {
+      return res.status(404).json({ ok: false, error: "item_not_found" });
+    }
+
+    const ownerDoctorId = String(itemWithPlan?.treatment_plans?.created_by_doctor_id || "");
+    if (ownerDoctorId && ownerDoctorId !== doctorId) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const statusCandidates =
+      requestedStatus === "DONE"
+        ? ["done", "DONE", "completed", "COMPLETED"]
+        : (requestedStatus === "IN_PROGRESS" || requestedStatus === "ACTIVE")
+          ? ["in_progress", "active", "IN_PROGRESS", "ACTIVE"]
+          : ["cancelled", "CANCELLED", "canceled", "CANCELED"];
+
+    let updatedItem = null;
+    let updateError = null;
+
+    for (const statusCandidate of statusCandidates) {
+      const attempt = await supabase
+        .from("treatment_items")
+        .update({ status: statusCandidate })
+        .eq("id", itemId)
+        .select("id, treatment_plan_id, status")
+        .single();
+
+      if (!attempt.error && attempt.data) {
+        updatedItem = attempt.data;
+        updateError = null;
+        break;
+      }
+
+      updateError = attempt.error;
+      if (!["22P02", "23514", "PGRST204"].includes(String(attempt.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (updateError || !updatedItem) {
+      console.error("LEGACY_UPDATE_TREATMENT_ITEM_STATUS_ERROR:", updateError);
+      return res.status(500).json({ ok: false, error: "status_update_failed", details: updateError?.message || null });
+    }
+
+    return res.json({
+      ok: true,
+      item: {
+        id: updatedItem.id,
+        treatment_plan_id: updatedItem.treatment_plan_id,
+        status: String(updatedItem.status || requestedStatus).toUpperCase(),
+      },
+    });
+  } catch (error) {
+    console.error("LEGACY_UPDATE_TREATMENT_ITEM_STATUS_EXCEPTION:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+}
+
+app.put("/api/treatment/treatment-items/:id/status", updateTreatmentItemStatusHandler);
+app.put("/api/treatment-items/:id/status", updateTreatmentItemStatusHandler);
+
+app.put("/api/treatment/treatment-items/:id", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const itemId = String(req.params.id || "").trim();
+    if (!itemId) {
+      return res.status(400).json({ ok: false, error: "item_id_required" });
+    }
+
+    const doctorKeys = [...new Set([
+      String(v.decoded?.doctorId || "").trim(),
+      String(v.decoded?.id || "").trim(),
+      String(v.decoded?.doctor_id || "").trim(),
+    ].filter(Boolean))];
+
+    const {
+      title,
+      procedure_name,
+      procedure_code,
+      scheduledDate,
+      scheduled_at,
+      scheduled_date,
+      due_date,
+      price,
+      doctorId,
+      doctor_id,
+      chairNo,
+      chair_no,
+      chair,
+      note,
+      notes,
+    } = req.body || {};
+
+    const parseIso = (value) => {
+      if (!value) return null;
+      const ts = Date.parse(String(value));
+      return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+    };
+
+    const normalizedTitle = String(title || procedure_name || "").trim() || null;
+    const normalizedCode = String(procedure_code || "").trim() || null;
+    const normalizedDoctor = String(doctorId || doctor_id || "").trim() || null;
+    const normalizedChair = String(chairNo || chair_no || chair || "").trim() || null;
+    const normalizedNote = String(note || notes || "").trim() || null;
+    const normalizedScheduled =
+      parseIso(scheduledDate) ||
+      parseIso(scheduled_at) ||
+      parseIso(scheduled_date) ||
+      parseIso(due_date) ||
+      null;
+
+    const normalizedPrice =
+      price === undefined || price === null || String(price).trim() === ""
+        ? null
+        : Number(price);
+
+    const overridePatch = {};
+    if (title !== undefined || procedure_name !== undefined) {
+      overridePatch.title = normalizedTitle;
+    }
+    if (procedure_code !== undefined) {
+      overridePatch.procedure_code = normalizedCode;
+    }
+    if (scheduledDate !== undefined || scheduled_at !== undefined || scheduled_date !== undefined || due_date !== undefined) {
+      overridePatch.planned_date = normalizedScheduled;
+    }
+    if (price !== undefined) {
+      overridePatch.price = normalizedPrice;
+    }
+    if (doctorId !== undefined || doctor_id !== undefined) {
+      overridePatch.doctor_id = normalizedDoctor;
+    }
+    if (chairNo !== undefined || chair_no !== undefined || chair !== undefined) {
+      overridePatch.chair_no = normalizedChair;
+    }
+    if (note !== undefined || notes !== undefined) {
+      overridePatch.note = normalizedNote;
+    }
+
+    if (price !== undefined && price !== null && String(price).trim() !== "" && !Number.isFinite(normalizedPrice)) {
+      return res.status(400).json({ ok: false, error: "invalid_price" });
+    }
+
+    const hasAnyUpdate = [
+      title,
+      procedure_name,
+      procedure_code,
+      scheduledDate,
+      scheduled_at,
+      scheduled_date,
+      due_date,
+      price,
+      doctorId,
+      doctor_id,
+      chairNo,
+      chair_no,
+      chair,
+      note,
+      notes,
+    ].some((value) => value !== undefined);
+
+    if (!hasAnyUpdate) {
+      return res.status(400).json({ ok: false, error: "no_updatable_fields" });
+    }
+
+    const verifyOwnership = async (tableName) => {
+      const item = await supabase
+        .from(tableName)
+        .select("id, treatment_plan_id")
+        .eq("id", itemId)
+        .maybeSingle();
+
+      if (item.error || !item.data) return { exists: false, ok: false };
+
+      const planId = String(item.data.treatment_plan_id || "");
+      if (!planId) return { exists: true, ok: true };
+
+      const plan = await supabase
+        .from("treatment_plans")
+        .select("id, created_by_doctor_id")
+        .eq("id", planId)
+        .maybeSingle();
+
+      if (plan.error || !plan.data) return { exists: true, ok: false };
+      const owner = String(plan.data.created_by_doctor_id || "");
+      return { exists: true, ok: doctorKeys.includes(owner) };
+    };
+
+    const applyUpdateCandidates = async (tableName, columnNames, value) => {
+      if (value === undefined) return { updated: false, skipped: true };
+
+      for (const columnName of columnNames) {
+        const result = await supabase
+          .from(tableName)
+          .update({ [columnName]: value })
+          .eq("id", itemId)
+          .select("id")
+          .maybeSingle();
+
+        if (!result.error) return { updated: true };
+
+        const code = String(result.error?.code || "");
+        const msg = String(result.error?.message || "").toLowerCase();
+        const schemaIssue = ["42703", "PGRST204", "PGRST205"].includes(code) || msg.includes("column") || msg.includes("does not exist");
+        if (schemaIssue) continue;
+
+        if (code === "22P02" || code === "23514") continue;
+        return { updated: false, hardError: result.error };
+      }
+
+      return { updated: false };
+    };
+
+    const patchTable = async (tableName) => {
+      const ownership = await verifyOwnership(tableName);
+      if (!ownership.exists) return { exists: false, updated: false, forbidden: false };
+      if (!ownership.ok) return { exists: true, updated: false, forbidden: true };
+
+      const candidateUpdates = [
+        { cols: ["procedure_description", "procedure_name"], value: normalizedTitle },
+        { cols: ["procedure_code", "procedure_id"], value: normalizedCode },
+        { cols: ["price"], value: normalizedPrice },
+        { cols: ["doctor_id", "created_by_doctor_id"], value: normalizedDoctor },
+        { cols: ["chair_no", "chair"], value: normalizedChair },
+        { cols: ["note", "notes"], value: normalizedNote },
+        { cols: ["scheduled_at", "scheduled_date", "due_date"], value: normalizedScheduled },
+      ];
+
+      let anyUpdated = false;
+      for (const upd of candidateUpdates) {
+        const result = await applyUpdateCandidates(tableName, upd.cols, upd.value);
+        if (result.hardError) return { exists: true, updated: false, forbidden: false, hardError: result.hardError };
+        if (result.updated) anyUpdated = true;
+      }
+
+      if (!anyUpdated) {
+        return { exists: true, updated: false, forbidden: false, noChangesApplied: true };
+      }
+
+      const row = await supabase
+        .from(tableName)
+        .select("*")
+        .eq("id", itemId)
+        .maybeSingle();
+
+      if (!row.error && row.data) {
+        return { exists: true, updated: true, forbidden: false, item: row.data };
+      }
+
+      return { exists: true, updated: false, forbidden: false };
+    };
+
+    const primary = await patchTable("treatment_items");
+    if (primary.forbidden) return res.status(403).json({ ok: false, error: "forbidden" });
+    if (primary.hardError) return res.status(500).json({ ok: false, error: "item_update_failed" });
+    if (primary.updated) {
+      const overrideData = Object.keys(overridePatch).length ? saveTreatmentItemOverride(itemId, overridePatch) : null;
+      const itemWithOverride = overrideData ? applyTreatmentItemOverride(primary.item, overrideData) : primary.item;
+      return res.json({ ok: true, item: itemWithOverride });
+    }
+
+    const fallback = await patchTable("treatment_plan_items");
+    if (fallback.forbidden) return res.status(403).json({ ok: false, error: "forbidden" });
+    if (fallback.hardError) return res.status(500).json({ ok: false, error: "item_update_failed" });
+    if (fallback.updated) {
+      const overrideData = Object.keys(overridePatch).length ? saveTreatmentItemOverride(itemId, overridePatch) : null;
+      const itemWithOverride = overrideData ? applyTreatmentItemOverride(fallback.item, overrideData) : fallback.item;
+      return res.json({ ok: true, item: itemWithOverride });
+    }
+
+    if (primary.noChangesApplied || fallback.noChangesApplied) {
+      if (Object.keys(overridePatch).length) {
+        const overrideData = saveTreatmentItemOverride(itemId, overridePatch);
+        return res.json({ ok: true, item: { id: itemId, ...overrideData }, persisted_via_override: true });
+      }
+      return res.status(422).json({ ok: false, error: "no_changes_applied" });
+    }
+
+    return res.status(404).json({ ok: false, error: "item_not_found" });
+  } catch (error) {
+    console.error("[TREATMENT ITEM UPDATE] exception:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 /* ================= DOCTOR TREATMENT ENDPOINTS ================= */
 
 // Get patient info for doctor
 app.get("/api/doctor/patient/:patientId", async (req, res) => {
   try {
-    const v = verifyDoctorToken(req);
+    const v = await verifyDoctorToken(req);
     if (!v.ok) {
       return res.status(401).json({ ok: false, error: v.code });
     }
@@ -6033,7 +9661,7 @@ app.get("/api/doctor/patient/:patientId", async (req, res) => {
         patientId: patient.patient_id || patient.id,
         name: patientDisplayName,
         status: patient.status === "ACTIVE" ? "Active" : "Pending",
-        lastVisit: patient.last_visit,
+        lastVisit: null,
       }
     });
   } catch (err) {
@@ -6790,10 +10418,14 @@ app.post("/api/register/doctor", async (req, res) => {
     res.status(500).json({ ok: false, error: "registration_failed" });
   }
 });
+// doctor dev-login handler removed; all clients should hit /api/doctor/login instead
+
 /* ================= DOCTOR LOGIN ================= */
 app.post("/api/doctor/login", async (req, res) => {
   try {
-    const { email, phone, password, clinicCode } = req.body || {};
+    const body = req.body || {};
+    const rawEmail = body.email ?? body.mail ?? body.userEmail;
+    const rawClinicCode = body.clinicCode ?? body.clinic_code ?? body.cliniccode;
 
     if (!clinicCode || (!email && !phone)) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
@@ -8436,6 +12068,588 @@ app.get("/api/doctor/tasks", async (req, res) => {
     const formattedTasks = [...procedureTasks, ...treatmentItemTasks]
       .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
 
+    const doctorIds = doctors.map((doctor) => doctor.id).filter(Boolean);
+    if (doctorIds.length === 0) {
+      return res.json({ ok: true, date: selectedDay, doctors: [], tasks: [], unscheduled: [] });
+    }
+
+    const selectCandidates = [
+      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_name, procedure_code, status, priority, start_time, end_time, scheduled_date, due_date, scheduled_by, suggested_by_doctor, created_at, updated_at",
+      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_name, procedure_code, status, priority, scheduled_date, due_date, created_at, updated_at",
+      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_code, status, scheduled_date, created_at, updated_at",
+    ];
+
+    let procedures = [];
+    let queryError = null;
+    for (const selectClause of selectCandidates) {
+      let query = supabase
+        .from("procedures")
+        .select(selectClause)
+        .in("doctor_id", doctorIds)
+        .order("created_at", { ascending: false });
+
+      if (doctorFilter) {
+        query = query.eq("doctor_id", doctorFilter);
+      }
+
+      const result = await query;
+      if (!result.error) {
+        procedures = Array.isArray(result.data) ? result.data : [];
+        queryError = null;
+        break;
+      }
+
+      queryError = result.error;
+      const code = String(result.error?.code || "");
+      if (!["42703", "PGRST204"].includes(code)) {
+        break;
+      }
+    }
+
+    if (queryError && procedures.length === 0) {
+      return res.status(500).json({ ok: false, error: "calendar_tasks_fetch_failed" });
+    }
+
+    console.log("[ADMIN CALENDAR DAY] procedures raw query result", {
+      count: procedures.length,
+      procedures,
+    });
+
+    const patientIds = Array.from(new Set(procedures.map((item) => item?.patient_id).filter(Boolean)));
+    let patientMap = new Map();
+    if (patientIds.length > 0) {
+      const patientsRes = await supabase
+        .from("patients")
+        .select("id, name, full_name, first_name, last_name")
+        .in("id", patientIds);
+
+      const patients = Array.isArray(patientsRes.data) ? patientsRes.data : [];
+      patientMap = new Map(patients.map((patient) => [String(patient.id), patient]));
+    }
+
+    const tasks = [];
+    const unscheduled = [];
+
+    for (const procedure of procedures) {
+      const rawStart = toIsoOrNull(procedure?.start_time || procedure?.scheduled_date || procedure?.due_date);
+      const rawEnd = toIsoOrNull(procedure?.end_time) || (rawStart ? addMinutesIso(rawStart, 30) : null);
+
+      const patient = patientMap.get(String(procedure?.patient_id || ""));
+      const patientName =
+        String(patient?.full_name || "").trim() ||
+        `${String(patient?.first_name || "").trim()} ${String(patient?.last_name || "").trim()}`.trim() ||
+        String(patient?.name || "").trim() ||
+        "Unknown Patient";
+
+      const block = {
+        id: procedure.id,
+        doctorId: procedure.doctor_id,
+        patientId: procedure.patient_id || null,
+        patientName,
+        procedure: procedure.title || procedure.procedure_name || procedure.procedure_code || "Procedure",
+        status: normalizeCalendarStatus(procedure),
+        startTime: rawStart,
+        endTime: rawEnd,
+        priority: String(procedure?.priority || "").toUpperCase() || null,
+        scheduledBy: String(procedure?.scheduled_by || "").toUpperCase() || null,
+        suggestedByDoctor: procedure?.suggested_by_doctor === true,
+      };
+
+      if (!rawStart) {
+        unscheduled.push(block);
+        continue;
+      }
+
+      const startDate = new Date(rawStart);
+      if (startDate >= dayStart && startDate <= dayEnd) {
+        tasks.push(block);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      date: selectedDay,
+      doctors,
+      tasks,
+      unscheduled,
+    });
+  } catch (error) {
+    console.error("[ADMIN CALENDAR DAY] error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.patch("/api/admin/calendar/tasks/:taskId/confirm", adminAuth, async (req, res) => {
+  try {
+    const taskId = String(req.params.taskId || "").trim();
+    const doctorId = String(req.body?.doctorId || "").trim();
+    const requestedStatus = String(req.body?.status || "CONFIRMED").trim().toUpperCase();
+    const startTimeIso = toIsoOrNull(req.body?.startTime);
+    const endTimeIso = toIsoOrNull(req.body?.endTime) || (startTimeIso ? addMinutesIso(startTimeIso, 30) : null);
+
+    if (!taskId) {
+      return res.status(400).json({ ok: false, error: "task_id_required" });
+    }
+
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctor_id_required" });
+    }
+
+    if (!startTimeIso || !endTimeIso) {
+      return res.status(400).json({ ok: false, error: "start_end_required" });
+    }
+
+    const clinicId = req.admin?.clinicId;
+    const doctorRes = await supabase
+      .from("doctors")
+      .select("id, clinic_id, role")
+      .eq("id", doctorId)
+      .eq("clinic_id", clinicId)
+      .eq("role", "DOCTOR")
+      .limit(1)
+      .maybeSingle();
+
+    if (doctorRes.error || !doctorRes.data) {
+      return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    }
+
+    const hasConflict = await hasDoctorConflict(doctorId, startTimeIso, endTimeIso, taskId);
+    if (hasConflict) {
+      return res.status(409).json({ ok: false, error: "doctor_time_conflict" });
+    }
+
+    const normalizedStatus = requestedStatus === "DONE" ? "DONE" : "CONFIRMED";
+    const statusCandidates = normalizedStatus === "DONE"
+      ? ["DONE", "done", "COMPLETED", "completed"]
+      : ["CONFIRMED", "confirmed", "PLANNED", "planned"];
+
+    const updateCandidates = statusCandidates.map((statusValue) => ({
+      doctor_id: doctorId,
+      start_time: startTimeIso,
+      end_time: endTimeIso,
+      scheduled_date: startTimeIso,
+      due_date: startTimeIso,
+      scheduled_by: "ADMIN",
+      suggested_by_doctor: false,
+      status: statusValue,
+    }));
+
+    const fallbackUpdateCandidates = statusCandidates.map((statusValue) => ({
+      doctor_id: doctorId,
+      scheduled_date: startTimeIso,
+      due_date: startTimeIso,
+      status: statusValue,
+    }));
+
+    let updated = null;
+    let lastError = null;
+
+    for (const payload of [...updateCandidates, ...fallbackUpdateCandidates]) {
+      const attempt = await supabase
+        .from("procedures")
+        .update(payload)
+        .eq("id", taskId)
+        .select("id, doctor_id, status, start_time, end_time, scheduled_date, due_date")
+        .single();
+
+      if (!attempt.error && attempt.data) {
+        updated = attempt.data;
+        lastError = null;
+        break;
+      }
+
+      lastError = attempt.error;
+      const code = String(attempt.error?.code || "");
+      if (!["42703", "PGRST204", "22P02", "23514"].includes(code)) {
+        break;
+      }
+    }
+
+    if (!updated) {
+      return res.status(500).json({ ok: false, error: "calendar_confirm_failed", details: lastError?.message || null });
+    }
+
+    return res.json({
+      ok: true,
+      task: {
+        id: updated.id,
+        doctorId: updated.doctor_id || doctorId,
+        status: normalizedStatus,
+        startTime: toIsoOrNull(updated.start_time || updated.scheduled_date || updated.due_date) || startTimeIso,
+        endTime: toIsoOrNull(updated.end_time) || endTimeIso,
+        scheduledBy: "ADMIN",
+      },
+    });
+  } catch (error) {
+    console.error("[ADMIN CALENDAR CONFIRM] error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.patch("/api/doctor/calendar/tasks/:taskId/suggest", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: "missing_token" });
+    }
+
+    const taskId = String(req.params.taskId || "").trim();
+    const doctorId = String(v.decoded?.doctorId || "").trim();
+    const startTimeIso = toIsoOrNull(req.body?.startTime);
+    const endTimeIso = toIsoOrNull(req.body?.endTime) || (startTimeIso ? addMinutesIso(startTimeIso, 30) : null);
+
+    if (!taskId || !startTimeIso || !endTimeIso) {
+      return res.status(400).json({ ok: false, error: "invalid_payload" });
+    }
+
+    const lookup = await getDoctorProcedureById(taskId);
+    if (lookup.error) {
+      return res.status(500).json({ ok: false, error: "task_lookup_failed" });
+    }
+
+    if (!lookup.data) {
+      return res.status(404).json({ ok: false, error: "task_not_found" });
+    }
+
+    if (String(lookup.data?.doctor_id || "") !== doctorId) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const hasConflict = await hasDoctorConflict(doctorId, startTimeIso, endTimeIso, taskId);
+    if (hasConflict) {
+      return res.status(409).json({ ok: false, error: "doctor_time_conflict" });
+    }
+
+    const updateCandidates = [
+      {
+        start_time: startTimeIso,
+        end_time: endTimeIso,
+        scheduled_date: startTimeIso,
+        due_date: startTimeIso,
+        scheduled_by: "DOCTOR",
+        suggested_by_doctor: true,
+        status: "PENDING",
+      },
+      {
+        scheduled_date: startTimeIso,
+        due_date: startTimeIso,
+        status: "planned",
+      },
+    ];
+
+    let updated = null;
+    let lastError = null;
+    for (const payload of updateCandidates) {
+      const attempt = await supabase
+        .from("procedures")
+        .update(payload)
+        .eq("id", taskId)
+        .eq("doctor_id", doctorId)
+        .select("id, doctor_id, status, start_time, end_time, scheduled_date, due_date")
+        .single();
+
+      if (!attempt.error && attempt.data) {
+        updated = attempt.data;
+        lastError = null;
+        break;
+      }
+
+      lastError = attempt.error;
+      const code = String(attempt.error?.code || "");
+      if (!["42703", "PGRST204", "22P02", "23514"].includes(code)) {
+        break;
+      }
+    }
+
+    if (!updated) {
+      return res.status(500).json({ ok: false, error: "suggest_failed", details: lastError?.message || null });
+    }
+
+    return res.json({
+      ok: true,
+      task: {
+        id: updated.id,
+        doctorId,
+        status: "PENDING",
+        startTime: toIsoOrNull(updated.start_time || updated.scheduled_date || updated.due_date) || startTimeIso,
+        endTime: toIsoOrNull(updated.end_time) || endTimeIso,
+        scheduledBy: "DOCTOR",
+        suggestedByDoctor: true,
+      },
+    });
+  } catch (error) {
+    console.error("[DOCTOR CALENDAR SUGGEST] error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR TASKS ================= */
+app.get("/api/doctor/tasks", async (req, res) => {
+  let completed = false;
+  const safeJson = (statusCode, payload) => {
+    if (completed || res.headersSent) return;
+    completed = true;
+    res.status(statusCode).json(payload);
+  };
+
+  const hardDeadline = setTimeout(() => {
+    console.warn("[DOCTOR TASKS] hard deadline reached, returning fallback empty tasks");
+    safeJson(200, { ok: true, tasks: [] });
+  }, 8500);
+
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return safeJson(401, { ok: false, error: "missing_token" });
+    }
+
+    const { doctorId } = v.decoded;
+
+    const withTimeout = async (promise, ms, label) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+
+    const procedureSelectCandidates = [
+      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_name, procedure_code, tooth_number, due_date, scheduled_date, status, priority, created_at, updated_at",
+      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_code, tooth_number, due_date, scheduled_date, status, priority, created_at, updated_at",
+      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_code, tooth_id, scheduled_date, status, created_at, updated_at",
+      "id, treatment_plan_id, patient_id, doctor_id, title, status, scheduled_date, created_at, updated_at",
+    ];
+
+    let procedures = [];
+    let proceduresError = null;
+
+    for (const selectClause of procedureSelectCandidates) {
+      const result = await withTimeout(
+        supabase
+          .from("procedures")
+          .select(selectClause)
+          .eq("doctor_id", doctorId)
+          .in("status", ["PLANNED", "IN_PROGRESS", "planned", "in_progress"])
+          .order("created_at", { ascending: false }),
+        7000,
+        "procedures_query"
+      );
+
+      if (!result?.error) {
+        procedures = Array.isArray(result?.data) ? result.data : [];
+        proceduresError = null;
+        break;
+      }
+
+      proceduresError = result.error;
+      if (!["42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
+        break;
+      }
+    }
+
+    if (proceduresError && !["42703", "PGRST204", "PGRST205"].includes(String(proceduresError?.code || ""))) {
+      console.error("[DOCTOR TASKS] procedures query error:", proceduresError);
+      return safeJson(200, { ok: true, tasks: [] });
+    }
+
+    let treatmentItems = [];
+    if (procedures.length === 0) {
+      const treatmentItemsSelectCandidates = [
+        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, procedure_description, status, category, type, scheduled_at, scheduled_date, due_date, created_at, updated_at, treatment_plans!inner(id, created_by_doctor_id, assigned_doctor_id, patient_encounters!left(id, patient_id))",
+        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, status, scheduled_at, scheduled_date, due_date, created_at, updated_at, treatment_plans!inner(id, created_by_doctor_id, assigned_doctor_id, patient_encounters!left(id, patient_id))",
+        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, status, scheduled_at, due_date, created_at, treatment_plans!inner(id, created_by_doctor_id, patient_encounters!left(id, patient_id))",
+      ];
+
+      for (const selectClause of treatmentItemsSelectCandidates) {
+        const result = await withTimeout(
+          supabase
+            .from("treatment_items")
+            .select(selectClause)
+            .eq("treatment_plans.created_by_doctor_id", doctorId)
+            .in("status", ["PLANNED", "IN_PROGRESS", "planned", "in_progress"])
+            .order("created_at", { ascending: false }),
+          7000,
+          "treatment_items_query"
+        );
+
+        if (!result?.error) {
+          treatmentItems = Array.isArray(result?.data) ? result.data : [];
+          break;
+        }
+
+        if (!["42703", "PGRST204"].includes(String(result.error?.code || ""))) {
+          console.warn("[DOCTOR TASKS] treatment_items query error:", result.error);
+          break;
+        }
+      }
+    }
+
+    const patientIds = Array.from(
+      new Set(
+        [
+          ...procedures.map((p) => p?.patient_id),
+          ...treatmentItems.map((item) => item?.treatment_plans?.patient_encounters?.patient_id),
+        ].filter(Boolean)
+      )
+    );
+
+    let patientMap = new Map();
+    if (patientIds.length > 0) {
+      try {
+        const patientsResult = await withTimeout(
+          supabase
+            .from("patients")
+            .select("id, patient_id, name, full_name, first_name, last_name")
+            .in("id", patientIds),
+          5000,
+          "task_patients_query"
+        );
+
+        const patients = Array.isArray(patientsResult?.data) ? patientsResult.data : [];
+        patientMap = new Map(patients.map((p) => [String(p.id), p]));
+      } catch (patientError) {
+        console.warn("[DOCTOR TASKS] patient lookup timeout/failure:", patientError?.message || patientError);
+      }
+    }
+
+    const now = Date.now();
+    const sanitizeName = (value) => {
+      const text = String(value || "").trim();
+      if (!text) return "";
+
+      const normalized = text
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[^a-zçğıöşü0-9 ]/gi, "")
+        .trim();
+
+      if (!normalized) return "";
+      if (["unknown", "unknown unknown", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) {
+        return "";
+      }
+
+      return text;
+    };
+    const procedureTasks = procedures
+      .map((procedure) => {
+        const status = String(procedure?.status || "").toUpperCase();
+        if (!["PLANNED", "IN_PROGRESS"].includes(status)) {
+          return null;
+        }
+
+        const patient = patientMap.get(String(procedure?.patient_id || "")) || null;
+        const legacyName = sanitizeName(patient?.name);
+        const fullName = sanitizeName(patient?.full_name);
+        const firstName = sanitizeName(patient?.first_name);
+        const lastName = sanitizeName(patient?.last_name);
+        const mergedName = sanitizeName(`${firstName} ${lastName}`.trim());
+        const displayName = legacyName || fullName || mergedName || "Unknown Patient";
+
+        const dueDateRaw =
+          procedure?.due_date ||
+          procedure?.scheduled_date ||
+          procedure?.planned_date ||
+          null;
+        const dueDateTs = dueDateRaw ? new Date(dueDateRaw).getTime() : null;
+
+        const rawPriority = String(procedure?.priority || "").toUpperCase();
+        const isHighPriority = rawPriority === "HIGH" || rawPriority === "URGENT";
+
+        return {
+          id: procedure.id,
+          procedure_id: procedure.id,
+          assigned_doctor_id: procedure.doctor_id || doctorId,
+          treatment_plan_id: procedure.treatment_plan_id || null,
+          patient_id: procedure.patient_id || null,
+          tooth_number: procedure.tooth_number || procedure.tooth_fdi_code || procedure.tooth_id || null,
+          procedure_name:
+            procedure.title ||
+            procedure.procedure_name ||
+            procedure.procedure_code ||
+            "Procedure",
+          due_date: dueDateRaw,
+          status,
+          priority: rawPriority || null,
+          high_priority: isHighPriority,
+          overdue: !!dueDateTs && dueDateTs < now,
+          created_at: procedure.created_at || null,
+          updated_at: procedure.updated_at || null,
+          patient: {
+            id: patient?.id || procedure.patient_id || null,
+            patient_id: patient?.patient_id || null,
+            name: displayName,
+          },
+          task_source: "PROCEDURE",
+        };
+      })
+      .filter(Boolean);
+
+    const treatmentItemTasks = treatmentItems
+      .map((item) => {
+        const status = String(item?.status || "").toUpperCase();
+        if (!["PLANNED", "IN_PROGRESS"].includes(status)) {
+          return null;
+        }
+
+        const patientId = item?.treatment_plans?.patient_encounters?.patient_id || null;
+        const patient = patientMap.get(String(patientId || "")) || null;
+        const legacyName = sanitizeName(patient?.name);
+        const fullName = sanitizeName(patient?.full_name);
+        const firstName = sanitizeName(patient?.first_name);
+        const lastName = sanitizeName(patient?.last_name);
+        const mergedName = sanitizeName(`${firstName} ${lastName}`.trim());
+        const displayName = legacyName || fullName || mergedName || "Unknown Patient";
+
+        const dueDateRaw =
+          item?.scheduled_at ||
+          item?.scheduledAt ||
+          item?.scheduled_date ||
+          item?.due_date ||
+          null;
+        const dueDateTs = dueDateRaw ? new Date(dueDateRaw).getTime() : null;
+
+        return {
+          id: item.id,
+          treatment_item_id: item.id,
+          assigned_doctor_id:
+            item?.treatment_plans?.assigned_doctor_id ||
+            item?.treatment_plans?.created_by_doctor_id ||
+            doctorId,
+          treatment_plan_id: item.treatment_plan_id || item?.treatment_plans?.id || null,
+          patient_id: patientId,
+          tooth_number: item.tooth_fdi_code || null,
+          procedure_name:
+            item.procedure_description ||
+            item.procedure_name ||
+            item.procedure_code ||
+            "Procedure",
+          procedure_category: item.category || item.type || null,
+          due_date: dueDateRaw,
+          status,
+          priority: null,
+          high_priority: false,
+          overdue: !!dueDateTs && dueDateTs < now,
+          created_at: item.created_at || null,
+          updated_at: item.updated_at || null,
+          patient: {
+            id: patient?.id || patientId || null,
+            patient_id: patient?.patient_id || null,
+            name: displayName,
+          },
+          task_source: "TREATMENT_ITEM",
+        };
+      })
+      .filter(Boolean);
+
+    const formattedTasks = [...procedureTasks, ...treatmentItemTasks]
+      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
+
     console.log("[DOCTOR TASKS] Success:", {
       doctorId,
       taskCount: formattedTasks.length
@@ -8652,6 +12866,348 @@ app.post("/api/admin/assign-patient", adminAuth, async (req, res) => {
       ok: false,
       error: "internal_error"
     });
+  }
+});
+
+/* ================= ADMIN VISITS ================= */
+app.get("/api/admin/patients/:patientId/visits", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+
+    if (!patientId || !clinicId) {
+      return res.status(400).json({ ok: false, error: "patient_and_clinic_required" });
+    }
+
+    const { data: visits, error } = await supabase
+      .from("visits")
+      .select("id, clinic_id, patient_id, visit_date, notes, created_at, updated_at")
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patientId)
+      .order("visit_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ADMIN VISITS GET] error:", error);
+      return res.status(500).json({ ok: false, error: "visits_fetch_failed" });
+    }
+
+    res.json({ ok: true, visits: visits || [] });
+  } catch (error) {
+    console.error("[ADMIN VISITS GET] fatal:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/patients/:patientId/visits", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+    const { visit_date, notes } = req.body || {};
+
+    if (!patientId || !clinicId) {
+      return res.status(400).json({ ok: false, error: "patient_and_clinic_required" });
+    }
+
+    if (!visit_date) {
+      return res.status(400).json({ ok: false, error: "visit_date_required" });
+    }
+
+    const payload = {
+      clinic_id: clinicId,
+      patient_id: patientId,
+      visit_date,
+      notes: notes ? String(notes).trim() : null,
+    };
+
+    const { data: visit, error } = await supabase
+      .from("visits")
+      .insert(payload)
+      .select("id, clinic_id, patient_id, visit_date, notes, created_at, updated_at")
+      .single();
+
+    if (error) {
+      console.error("[ADMIN VISITS POST] error:", error);
+      return res.status(500).json({ ok: false, error: "visit_create_failed" });
+    }
+
+    res.json({ ok: true, visit });
+  } catch (error) {
+    console.error("[ADMIN VISITS POST] fatal:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN VISIT-BASED TREATMENT BOARD ================= */
+app.get("/api/admin/patients/:patientId/visit-treatment", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("id, name")
+      .eq("id", patientId)
+      .eq("clinic_id", clinicId)
+      .single();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const visitsResult = await supabase
+      .from("visits")
+      .select("id, patient_id, visit_date, notes, created_at")
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patientId)
+      .order("visit_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (visitsResult.error) {
+      console.error("[ADMIN VISIT BOARD] visits fetch error:", visitsResult.error);
+      return res.status(500).json({ ok: false, error: "visits_fetch_failed" });
+    }
+
+    const visits = Array.isArray(visitsResult.data) ? visitsResult.data : [];
+    const visitIds = visits.map((v) => v.id).filter(Boolean);
+
+    const diagnosesResult = await supabase
+      .from("visit_diagnoses")
+      .select("id, clinic_id, patient_id, visit_id, icd10_code, icd10_description, created_at")
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (diagnosesResult.error) {
+      console.error("[ADMIN VISIT BOARD] visit_diagnoses fetch error:", diagnosesResult.error);
+      return res.status(500).json({ ok: false, error: "visit_diagnoses_schema_not_ready" });
+    }
+
+    const treatmentsResult = await supabase
+      .from("treatments")
+      .select("id, clinic_id, patient_id, visit_id, tooth_number, procedure_code, procedure_name, notes, status, created_at")
+      .eq("clinic_id", clinicId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (treatmentsResult.error) {
+      console.error("[ADMIN VISIT BOARD] treatments fetch error:", treatmentsResult.error);
+      return res.status(500).json({ ok: false, error: "treatments_schema_not_ready" });
+    }
+
+    const diagnoses = Array.isArray(diagnosesResult.data) ? diagnosesResult.data : [];
+    const treatments = Array.isArray(treatmentsResult.data) ? treatmentsResult.data : [];
+
+    if (visits.length === 0) {
+      const legacyPlansResult = await supabase
+        .from("treatment_plans")
+        .select("id, encounter_id, created_at, patient_encounters!left(id, patient_id)")
+        .eq("patient_encounters.patient_id", patientId)
+        .order("created_at", { ascending: false });
+
+      if (!legacyPlansResult.error) {
+        const legacyPlans = Array.isArray(legacyPlansResult.data) ? legacyPlansResult.data : [];
+        const legacyPlanIds = legacyPlans.map((plan) => plan.id).filter(Boolean);
+        const planToVisitMap = new Map();
+
+        const legacyVisits = legacyPlans.map((plan) => {
+          const visitId = plan.encounter_id || `legacy-${plan.id}`;
+          planToVisitMap.set(String(plan.id), visitId);
+          return {
+            id: visitId,
+            patient_id: patientId,
+            visit_date: plan.created_at || null,
+            notes: "Legacy visit",
+            created_at: plan.created_at || null,
+          };
+        });
+
+        let legacyTreatments = [];
+        if (legacyPlanIds.length > 0) {
+          const legacyProceduresResult = await supabase
+            .from("procedures")
+            .select("id, treatment_plan_id, tooth_number, tooth_id, procedure_code, procedure_name, title, status, created_at")
+            .in("treatment_plan_id", legacyPlanIds)
+            .order("created_at", { ascending: false });
+
+          if (!legacyProceduresResult.error && Array.isArray(legacyProceduresResult.data)) {
+            legacyTreatments = legacyProceduresResult.data.map((row) => ({
+              id: row.id,
+              clinic_id: clinicId,
+              patient_id: patientId,
+              visit_id: planToVisitMap.get(String(row.treatment_plan_id)) || null,
+              tooth_number: row.tooth_number || row.tooth_id || null,
+              procedure_code: row.procedure_code || null,
+              procedure_name: row.procedure_name || row.title || row.procedure_code || "Procedure",
+              notes: null,
+              status: row.status || null,
+              created_at: row.created_at || null,
+            })).filter((item) => item.visit_id);
+          }
+
+          if (legacyTreatments.length === 0) {
+            const legacyItemsResult = await supabase
+              .from("treatment_items")
+              .select("id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, procedure_description, status, created_at")
+              .in("treatment_plan_id", legacyPlanIds)
+              .order("created_at", { ascending: false });
+
+            if (!legacyItemsResult.error && Array.isArray(legacyItemsResult.data)) {
+              legacyTreatments = legacyItemsResult.data.map((row) => ({
+                id: row.id,
+                clinic_id: clinicId,
+                patient_id: patientId,
+                visit_id: planToVisitMap.get(String(row.treatment_plan_id)) || null,
+                tooth_number: row.tooth_fdi_code || null,
+                procedure_code: row.procedure_code || null,
+                procedure_name: row.procedure_name || row.procedure_description || row.procedure_code || "Procedure",
+                notes: null,
+                status: row.status || null,
+                created_at: row.created_at || null,
+              })).filter((item) => item.visit_id);
+            }
+          }
+        }
+
+        const legacyBoard = legacyVisits.map((visit) => ({
+          ...visit,
+          diagnoses: [],
+          treatments: legacyTreatments.filter((item) => item.visit_id === visit.id),
+        }));
+
+        return res.json({
+          ok: true,
+          patient,
+          visits: legacyBoard,
+          visit_ids: legacyVisits.map((v) => v.id),
+          source: "legacy_fallback",
+        });
+      }
+    }
+
+    const board = visits.map((visit) => ({
+      ...visit,
+      diagnoses: diagnoses.filter((item) => item.visit_id === visit.id),
+      treatments: treatments.filter((item) => item.visit_id === visit.id),
+    }));
+
+    res.json({ ok: true, patient, visits: board, visit_ids: visitIds });
+  } catch (error) {
+    console.error("[ADMIN VISIT BOARD] fatal:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/patients/:patientId/visit-diagnoses", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+    const { visit_id, icd10_code, icd10_description } = req.body || {};
+
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    if (!patientId || !visit_id || !icd10_code) {
+      return res.status(400).json({ ok: false, error: "patient_visit_icd_required" });
+    }
+
+    const { data: visit, error: visitError } = await supabase
+      .from("visits")
+      .select("id, patient_id")
+      .eq("id", visit_id)
+      .eq("patient_id", patientId)
+      .single();
+
+    if (visitError || !visit) {
+      return res.status(404).json({ ok: false, error: "visit_not_found" });
+    }
+
+    const payload = {
+      clinic_id: clinicId,
+      patient_id: patientId,
+      visit_id,
+      icd10_code: String(icd10_code).trim(),
+      icd10_description: icd10_description ? String(icd10_description).trim() : null,
+    };
+
+    const { data, error } = await supabase
+      .from("visit_diagnoses")
+      .insert(payload)
+      .select("id, clinic_id, patient_id, visit_id, icd10_code, icd10_description, created_at")
+      .single();
+
+    if (error) {
+      console.error("[ADMIN ADD VISIT DIAGNOSIS] error:", error);
+      return res.status(500).json({ ok: false, error: "visit_diagnosis_insert_failed" });
+    }
+
+    res.json({ ok: true, diagnosis: data });
+  } catch (error) {
+    console.error("[ADMIN ADD VISIT DIAGNOSIS] fatal:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/patients/:patientId/visit-treatments", adminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
+    const { visit_id, tooth_number, procedure_code, procedure_name, notes, status } = req.body || {};
+
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    if (!patientId || !visit_id || !tooth_number || !procedure_name) {
+      return res.status(400).json({ ok: false, error: "patient_visit_tooth_procedure_required" });
+    }
+
+    const { data: visit, error: visitError } = await supabase
+      .from("visits")
+      .select("id, patient_id")
+      .eq("id", visit_id)
+      .eq("patient_id", patientId)
+      .single();
+
+    if (visitError || !visit) {
+      return res.status(404).json({ ok: false, error: "visit_not_found" });
+    }
+
+    const payload = {
+      clinic_id: clinicId,
+      patient_id: patientId,
+      visit_id,
+      tooth_number: String(tooth_number).trim(),
+      procedure_code: procedure_code ? String(procedure_code).trim() : null,
+      procedure_name: String(procedure_name).trim(),
+      notes: notes ? String(notes).trim() : null,
+      status: status ? String(status).trim() : "PLANNED",
+    };
+
+    const { data, error } = await supabase
+      .from("treatments")
+      .insert(payload)
+      .select("id, clinic_id, patient_id, visit_id, tooth_number, procedure_code, procedure_name, notes, status, created_at")
+      .single();
+
+    if (error) {
+      console.error("[ADMIN ADD VISIT TREATMENT] error:", error);
+      return res.status(500).json({ ok: false, error: "treatment_insert_failed" });
+    }
+
+    res.json({ ok: true, treatment: data });
+  } catch (error) {
+    console.error("[ADMIN ADD VISIT TREATMENT] fatal:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -9724,6 +14280,19 @@ app.post("/api/doctor/encounters", async (req, res) => {
       break;
     }
 
+    encounter = insertWithAllFields.data;
+    encounterError = insertWithAllFields.error;
+
+    if (encounterError && String(encounterError.code || "") === "PGRST204") {
+      const insertWithCoreFields = await supabase
+        .from("patient_encounters")
+        .insert(basePayload)
+        .select("id, patient_id, created_by_doctor_id, status, created_at")
+        .single();
+      encounter = insertWithCoreFields.data;
+      encounterError = insertWithCoreFields.error;
+    }
+
     if (encounterError) {
       console.error("[ENCOUNTERS] Error creating encounter:", encounterError);
       return res.status(500).json({ ok: false, error: "encounter_creation_failed" });
@@ -9881,6 +14450,60 @@ app.get("/api/doctor/encounters/patient/:patientId", async (req, res) => {
   }
 });
 
+async function resolveDoctorEncounterAccess(doctorId, encounterId) {
+  const selectCandidates = [
+    "id, created_by_doctor_id, assigned_doctor_id, doctor_id, patient_id, status",
+    "id, created_by_doctor_id, assigned_doctor_id, patient_id, status",
+    "id, created_by_doctor_id, patient_id, status",
+    "id, patient_id, status",
+  ];
+
+  let encounter = null;
+  let lastError = null;
+
+  for (const selectClause of selectCandidates) {
+    const attempt = await supabase
+      .from("patient_encounters")
+      .select(selectClause)
+      .eq("id", encounterId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!attempt.error && attempt.data) {
+      encounter = attempt.data;
+      lastError = null;
+      break;
+    }
+
+    lastError = attempt.error;
+    if (!attempt.error) {
+      break;
+    }
+
+    if (!["42703", "PGRST204"].includes(String(attempt.error?.code || ""))) {
+      break;
+    }
+  }
+
+  if (!encounter) {
+    return { ok: false, error: "encounter_not_found", details: lastError };
+  }
+
+  const ownerIds = [
+    encounter.created_by_doctor_id,
+    encounter.assigned_doctor_id,
+    encounter.doctor_id,
+  ]
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+
+  if (ownerIds.length === 0 || ownerIds.includes(String(doctorId))) {
+    return { ok: true, encounter };
+  }
+
+  return { ok: false, error: "not_assigned_doctor", encounter };
+}
+
 // GET /api/doctor/encounters/:id/diagnoses - Get diagnoses for specific encounter
 app.get("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
   try {
@@ -9911,7 +14534,14 @@ app.get("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       return res.status(400).json({ ok: false, error: "encounterId_required" });
     }
 
-    // Rule: Doctor sadece kendi encounter'larının diagnoses'larını görebilir
+    const encounterAccess = await resolveDoctorEncounterAccess(doctorId, encounterId);
+    if (!encounterAccess.ok) {
+      if (encounterAccess.error === "encounter_not_found") {
+        return res.status(404).json({ ok: false, error: "encounter_not_found" });
+      }
+      return res.status(403).json({ ok: false, error: "not_assigned_doctor" });
+    }
+
     const { data: diagnoses, error } = await supabase
       .from("encounter_diagnoses")
       .select(`
@@ -9994,9 +14624,10 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       .eq("id", encounterId)
       .maybeSingle();
 
-    if (encounterError || !encounter) {
-      console.error("[ENCOUNTER DIAGNOSES POST] Encounter not found or access denied");
-      return res.status(404).json({ ok: false, error: "encounter_not_found" });
+    const invalidDiagnosis = normalizedDiagnoses.find((item) => !item.icd10_code);
+    if (invalidDiagnosis) {
+      console.error("[ENCOUNTER DIAGNOSES POST] Missing icd10_code in one or more diagnoses");
+      return res.status(400).json({ ok: false, error: "icd10_code_required" });
     }
 
     const ownerDoctorId = String(encounter?.created_by_doctor_id || doctorId || "").trim();
@@ -10008,21 +14639,151 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       p_diagnoses: diagnoses
     });
 
-    if (transactionError) {
-      console.error("[ENCOUNTER DIAGNOSES POST] Transaction error:", transactionError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "transaction_failed",
-        details: transactionError.message 
+    const toothNumbers = Array.from(
+      new Set(
+        normalizedDiagnoses
+          .map((item) => item.tooth_number)
+          .filter((tooth) => !!tooth)
+      )
+    );
+
+    let existingByTooth = new Map();
+    if (toothNumbers.length > 0) {
+      const { data: existingRows, error: existingRowsError } = await supabase
+        .from("encounter_diagnoses")
+        .select("id, tooth_number, created_at")
+        .eq("encounter_id", encounterId)
+        .eq("created_by_doctor_id", doctorId)
+        .in("tooth_number", toothNumbers)
+        .order("created_at", { ascending: false });
+
+      if (existingRowsError) {
+        console.error("[ENCOUNTER DIAGNOSES POST] Existing diagnosis lookup failed:", existingRowsError.message);
+        return res.status(500).json({ ok: false, error: "existing_lookup_failed", details: existingRowsError.message });
+      }
+
+      existingByTooth = (existingRows || []).reduce((map, row) => {
+        if (!map.has(row.tooth_number)) {
+          map.set(row.tooth_number, row);
+        }
+        return map;
+      }, new Map());
+    }
+
+    const diagnosesToUpdate = [];
+    const diagnosesToInsert = [];
+    for (const diagnosis of normalizedDiagnoses) {
+      const existingRow = diagnosis.tooth_number ? existingByTooth.get(diagnosis.tooth_number) : null;
+      if (existingRow) {
+        diagnosesToUpdate.push({ ...diagnosis, id: existingRow.id });
+      } else {
+        diagnosesToInsert.push(diagnosis);
+      }
+    }
+
+    for (const updateItem of diagnosesToUpdate) {
+      if (updateItem.is_primary && updateItem.tooth_number) {
+        const { error: clearPrimaryError } = await supabase
+          .from("encounter_diagnoses")
+          .update({ is_primary: false })
+          .eq("encounter_id", encounterId)
+          .eq("created_by_doctor_id", doctorId)
+          .eq("tooth_number", updateItem.tooth_number)
+          .neq("id", updateItem.id);
+
+        if (clearPrimaryError) {
+          console.warn("[ENCOUNTER DIAGNOSES POST] Primary clear warning:", clearPrimaryError.message);
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from("encounter_diagnoses")
+        .update({
+          icd10_code: updateItem.icd10_code,
+          icd10_description: updateItem.icd10_description,
+          is_primary: updateItem.is_primary,
+          notes: typeof updateItem.notes === "string" && updateItem.notes.trim().length > 0
+            ? updateItem.notes.trim()
+            : null
+        })
+        .eq("id", updateItem.id)
+        .eq("encounter_id", encounterId)
+        .eq("created_by_doctor_id", doctorId);
+
+      if (updateError) {
+        console.error("[ENCOUNTER DIAGNOSES POST] Update failed:", updateError.message);
+        return res.status(500).json({ ok: false, error: "diagnosis_update_failed", details: updateError.message });
+      }
+    }
+
+    let transactionResult = null;
+    if (diagnosesToInsert.length > 0) {
+      const rpcResponse = await supabase.rpc('save_diagnoses_atomic', {
+        p_encounter_id: encounterId,
+        p_doctor_id: doctorId,
+        p_diagnoses: diagnosesToInsert
       });
+      transactionResult = rpcResponse.data;
+
+      if (rpcResponse.error) {
+        console.error("[ENCOUNTER DIAGNOSES POST] Transaction error:", rpcResponse.error);
+        return res.status(500).json({ 
+          ok: false, 
+          error: "transaction_failed",
+          details: rpcResponse.error.message 
+        });
+      }
+    }
+
+    const diagnosesWithNotes = diagnosesToInsert
+      .filter((item) => item.tooth_number && typeof item.notes === "string" && item.notes.trim().length > 0)
+      .map((item) => ({
+        tooth_number: item.tooth_number,
+        icd10_code: item.icd10_code,
+        notes: item.notes.trim()
+      }));
+
+    for (const noteItem of diagnosesWithNotes) {
+      const { data: latestDiagnosis, error: latestDiagnosisError } = await supabase
+        .from("encounter_diagnoses")
+        .select("id")
+        .eq("encounter_id", encounterId)
+        .eq("created_by_doctor_id", doctorId)
+        .eq("tooth_number", noteItem.tooth_number)
+        .eq("icd10_code", noteItem.icd10_code)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (latestDiagnosisError || !latestDiagnosis || latestDiagnosis.length === 0) {
+        if (latestDiagnosisError) {
+          console.warn("[ENCOUNTER DIAGNOSES POST] Notes lookup warning:", latestDiagnosisError.message);
+        }
+        continue;
+      }
+
+      const targetId = latestDiagnosis[0]?.id;
+      if (!targetId) {
+        continue;
+      }
+
+      const { error: notesUpdateError } = await supabase
+        .from("encounter_diagnoses")
+        .update({ notes: noteItem.notes })
+        .eq("id", targetId);
+
+      if (notesUpdateError) {
+        console.warn("[ENCOUNTER DIAGNOSES POST] Notes update warning:", notesUpdateError.message);
+      }
     }
 
     // Enhanced logging for successful transaction
     console.log("[ENCOUNTER DIAGNOSES POST] Transaction result:", {
-      saved: transactionResult?.saved || 0,
+      saved: (transactionResult?.saved || 0) + diagnosesToUpdate.length,
       encounterId,
       doctorId,
-      primary_count: transactionResult?.primary_count || 0
+      primary_count: transactionResult?.primary_count || 0,
+      updated: diagnosesToUpdate.length,
+      inserted: diagnosesToInsert.length
     });
 
     return res.json({
@@ -10251,9 +15012,39 @@ app.patch("/api/doctor/encounters/:id/status", async (req, res) => {
       .select()
       .single();
 
-    if (updateError) {
-      console.error("[ENCOUNTER PATCH STATUS] Update error:", updateError.message);
-      return res.status(500).json({ ok: false, error: updateError.message });
+    const statusCandidates = statusCandidatesByInput[normalizedStatus] || [String(status)];
+
+    let updatedEncounter = null;
+    let updateError = null;
+
+    for (const statusCandidate of statusCandidates) {
+      const updateAttempt = await supabase
+        .from("patient_encounters")
+        .update({
+          status: statusCandidate,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", encounterId)
+        .eq("created_by_doctor_id", doctorId)
+        .select()
+        .single();
+
+      if (!updateAttempt.error && updateAttempt.data) {
+        updatedEncounter = updateAttempt.data;
+        updateError = null;
+        break;
+      }
+
+      updateError = updateAttempt.error;
+      const isConstraintMismatch = ["23514", "22P02", "PGRST204"].includes(String(updateAttempt.error?.code || ""));
+      if (!isConstraintMismatch) {
+        break;
+      }
+    }
+
+    if (updateError || !updatedEncounter) {
+      console.error("[ENCOUNTER PATCH STATUS] Update error:", updateError?.message || updateError);
+      return res.status(500).json({ ok: false, error: updateError?.message || "encounter_status_update_failed" });
     }
 
     // Enhanced logging for successful update
@@ -10778,10 +15569,17 @@ app.post("/api/admin/encounters/:id/notes", adminAuth, async (req, res) => {
 app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
   try {
     const { patientId } = req.params;
+    const clinicId = req.admin?.clinicId;
 
     if (!patientId) {
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
+
+    console.log("[ADMIN PATIENT DETAIL] clinic debug", {
+      patientId,
+      clinicId,
+      adminId: req.admin?.id || null,
+    });
 
     // Fetch patient from patients table
     const { data: patient, error } = await supabase
@@ -10801,7 +15599,7 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
           email
         )
       `)
-      .eq("clinic_id", req.admin.clinicId)
+      .eq("clinic_id", clinicId)
       .eq("id", patientId)
       .single();
 
@@ -10810,12 +15608,98 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
+    const plansRes = await supabase
+      .from("treatment_plans")
+      .select("id, status, created_at, finalized_at, encounter_id, patient_encounters!left(id, patient_id)")
+      .eq("patient_encounters.patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    const plans = Array.isArray(plansRes.data) ? plansRes.data : [];
+    const planIds = plans.map((plan) => plan.id).filter(Boolean);
+
+    let procedures = [];
+    let proceduresError = null;
+
+    if (planIds.length > 0) {
+      const procedureSelectCandidates = [
+        "id, treatment_plan_id, patient_id, doctor_id, clinic_id, title, procedure_name, procedure_code, status, scheduled_date, start_time, end_time, created_at, updated_at, finalized_at",
+        "id, treatment_plan_id, patient_id, doctor_id, title, procedure_name, procedure_code, status, scheduled_date, created_at, updated_at",
+      ];
+
+      for (const selectClause of procedureSelectCandidates) {
+        const result = await supabase
+          .from("procedures")
+          .select(selectClause)
+          .in("treatment_plan_id", planIds)
+          .order("created_at", { ascending: false });
+
+        if (!result.error) {
+          procedures = Array.isArray(result.data) ? result.data : [];
+          proceduresError = null;
+          break;
+        }
+
+        proceduresError = result.error;
+        const code = String(result.error?.code || "");
+        if (!["42703", "PGRST204"].includes(code)) {
+          break;
+        }
+      }
+    }
+
+    console.log("[ADMIN PATIENT DETAIL] procedures raw query result", {
+      clinicId,
+      patientId,
+      planCount: planIds.length,
+      proceduresCount: procedures.length,
+      procedures,
+      proceduresError,
+    });
+
+    if (proceduresError && procedures.length === 0 && planIds.length > 0) {
+      console.warn("[ADMIN PATIENT DETAIL] primary procedures query failed, trying treatment_items fallback");
+      const fallbackItems = await supabase
+        .from("treatment_items")
+        .select("id, treatment_plan_id, procedure_name, procedure_code, status, created_at, updated_at")
+        .in("treatment_plan_id", planIds)
+        .order("created_at", { ascending: false });
+
+      if (!fallbackItems.error && Array.isArray(fallbackItems.data)) {
+        procedures = fallbackItems.data.map((item) => ({
+          id: item.id,
+          treatment_plan_id: item.treatment_plan_id,
+          patient_id: patientId,
+          doctor_id: null,
+          clinic_id: clinicId,
+          title: item.procedure_name || item.procedure_code || "Procedure",
+          procedure_name: item.procedure_name || null,
+          procedure_code: item.procedure_code || null,
+          status: item.status || null,
+          scheduled_date: null,
+          start_time: null,
+          end_time: null,
+          created_at: item.created_at || null,
+          updated_at: item.updated_at || null,
+          finalized_at: null,
+        }));
+
+        console.log("[ADMIN PATIENT DETAIL] treatment_items fallback raw query result", {
+          count: procedures.length,
+          procedures,
+        });
+      }
+    }
+
     res.json({
       ok: true,
-      patient: patient
+      patient: {
+        ...patient,
+        treatment_plans: plans,
+        procedures,
+      }
     });
   } catch (err) {
-    console.error("[ADMIN PATIENT DETAIL] Error:", error);
+    console.error("[ADMIN PATIENT DETAIL] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -12592,6 +17476,197 @@ app.get("/api/patient/:patientId/referrals", async (req, res) => {
 });
 
 /* ================= PATIENT HEALTH FORM ================= */
+function normalizeMedicalForm(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function computeMedicalRiskFlags(formDataInput) {
+  const formData = normalizeMedicalForm(formDataInput);
+  const flags = [];
+  const pushFlag = (type, code, label) => {
+    const normalizedType = String(type || "").toLowerCase() === "critical" ? "critical" : "relevant";
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    const normalizedLabel = String(label || "").trim();
+    if (!normalizedCode || !normalizedLabel) return;
+    if (flags.some((item) => item.code === normalizedCode)) return;
+    flags.push({ type: normalizedType, code: normalizedCode, label: normalizedLabel });
+  };
+
+  const allergies = normalizeMedicalForm(formData.allergies);
+  const medications = normalizeMedicalForm(formData.medications);
+  const dentalHistory = normalizeMedicalForm(formData.dentalHistory);
+  const generalHealth = normalizeMedicalForm(formData.generalHealth);
+  const conditions = Array.isArray(generalHealth.conditions)
+    ? generalHealth.conditions.map((value) => String(value || "").trim().toLowerCase())
+    : [];
+
+  if (!allergies.none && (allergies.penicillin || allergies.localAnesthesia || allergies.latex || allergies.other)) {
+    const allergyDetails = String(allergies.allergyDetails || "").trim();
+    pushFlag("critical", "DRUG_ALLERGY", allergyDetails ? `Drug Allergy: ${allergyDetails}` : "Drug Allergy");
+  }
+
+  if (medications.bloodThinner || conditions.includes("bleeding_disorder")) {
+    pushFlag("critical", "BLEEDING_RISK", "Bleeding / Anticoagulant Risk");
+  }
+
+  if (conditions.includes("diabetes")) {
+    pushFlag("relevant", "DIABETES", "Diabetes");
+  }
+  if (conditions.includes("heart_disease")) {
+    pushFlag("relevant", "HEART_DISEASE", "Heart Disease");
+  }
+  if (conditions.includes("hypertension")) {
+    pushFlag("relevant", "HYPERTENSION", "Hypertension");
+  }
+  if (conditions.includes("asthma")) {
+    pushFlag("relevant", "ASTHMA", "Asthma / Respiratory Disease");
+  }
+  if (conditions.includes("epilepsy")) {
+    pushFlag("relevant", "EPILEPSY", "Epilepsy");
+  }
+  if (conditions.includes("kidney_disease")) {
+    pushFlag("relevant", "KIDNEY_DISEASE", "Kidney Disease");
+  }
+  if (conditions.includes("liver_disease")) {
+    pushFlag("relevant", "LIVER_DISEASE", "Liver Disease");
+  }
+  if (conditions.includes("thyroid")) {
+    pushFlag("relevant", "THYROID_DISEASE", "Thyroid Disease");
+  }
+  if (conditions.includes("cancer")) {
+    pushFlag("relevant", "CANCER_HISTORY", "Cancer (Past or Active)");
+  }
+  if (conditions.includes("pregnancy")) {
+    pushFlag("relevant", "PREGNANCY", "Pregnancy");
+  }
+
+  if (!medications.none && (medications.regularMedication || medications.cortisone || medications.antibiotics)) {
+    pushFlag("relevant", "ACTIVE_MEDICATION", "Active Medication Use");
+  }
+
+  if (dentalHistory.previousProcedures || dentalHistory.previousProblems || dentalHistory.anesthesiaProblems) {
+    pushFlag("relevant", "SURGICAL_HISTORY", "Dental / Surgical History");
+  }
+
+  return flags;
+}
+
+function isMissingColumnSupabaseError(error) {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "").toLowerCase();
+  return ["42703", "PGRST204", "PGRST205"].includes(code) || message.includes("does not exist") || message.includes("column");
+}
+
+async function syncMedicalSnapshotToPatient({ patientId, clinicCode, formData, medicalRiskFlags }) {
+  const normalizedPatientId = String(patientId || "").trim();
+  if (!normalizedPatientId) return;
+
+  const snapshot = {
+    medical_form: normalizeMedicalForm(formData),
+    medical_risk_flags: Array.isArray(medicalRiskFlags) ? medicalRiskFlags : [],
+    updated_at: Date.now(),
+  };
+
+  const payload = { ...snapshot };
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let query = supabase.from("patients").update(payload).eq("id", normalizedPatientId);
+    if (clinicCode) {
+      query = query.eq("clinic_code", String(clinicCode));
+    }
+
+    const { error } = await query;
+    if (!error) return;
+    if (!isMissingColumnSupabaseError(error)) return;
+
+    const missingCol = ["medical_form", "medical_risk_flags", "updated_at"].find((column) =>
+      String(error.message || "").includes(column)
+    );
+
+    if (!missingCol || !(missingCol in payload)) return;
+    delete payload[missingCol];
+    if (!Object.keys(payload).length) return;
+  }
+}
+
+async function getHealthFormWithFlags({ patientId, clinicCode }) {
+  const normalizedPatientId = String(patientId || "").trim();
+  if (!normalizedPatientId) {
+    return { ok: false, status: 400, error: "patient_id_required" };
+  }
+
+  let query = supabase
+    .from("patient_health_forms")
+    .select("id, patient_id, clinic_code, form_data, risk_flags, is_complete, completed_at, updated_at")
+    .eq("patient_id", normalizedPatientId);
+
+  if (clinicCode) {
+    query = query.eq("clinic_code", String(clinicCode));
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    return { ok: false, status: 500, error: "health_form_fetch_failed", details: error.message };
+  }
+
+  if (!data) {
+    return {
+      ok: true,
+      formData: null,
+      medicalRiskFlags: [],
+      isComplete: false,
+      completedAt: null,
+      updatedAt: null,
+    };
+  }
+
+  const formData = normalizeMedicalForm(data.form_data);
+  const flagsFromDb = Array.isArray(data.risk_flags) ? data.risk_flags : [];
+  const medicalRiskFlags = flagsFromDb.length ? flagsFromDb : computeMedicalRiskFlags(formData);
+
+  return {
+    ok: true,
+    formData,
+    medicalRiskFlags,
+    isComplete: data.is_complete === true,
+    completedAt: data.completed_at || null,
+    updatedAt: data.updated_at || null,
+  };
+}
+
+async function resolvePatientForMedicalAccess(patientIdentifier, requester) {
+  const normalizedPatientId = String(patientIdentifier || "").trim();
+  if (!normalizedPatientId) {
+    return { ok: false, status: 400, error: "patient_id_required" };
+  }
+
+  const clinicId = String(requester?.clinicId || "").trim();
+  const clinicCode = String(requester?.clinicCode || "").trim();
+
+  let query = supabase
+    .from("patients")
+    .select("id, patient_id, clinic_id, clinic_code, primary_doctor_id")
+    .or(`id.eq.${normalizedPatientId},patient_id.eq.${normalizedPatientId}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (clinicId) {
+    query = query.eq("clinic_id", clinicId);
+  } else if (clinicCode) {
+    query = query.eq("clinic_code", clinicCode);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return { ok: false, status: 500, error: "patient_lookup_failed", details: error.message };
+  }
+
+  if (!data) {
+    return { ok: false, status: 404, error: "patient_not_found" };
+  }
+
+  return { ok: true, patient: data };
+}
+
 // GET health form
 app.get("/api/patient/:patientId/health", async (req, res) => {
   try {
@@ -12691,6 +17766,7 @@ app.post("/api/patient/:patientId/health", async (req, res) => {
 
     const formData = req.body.formData || {};
     const isComplete = req.body.isComplete === true;
+    const medicalRiskFlags = computeMedicalRiskFlags(formData);
 
     const now = Date.now();
 
@@ -12711,6 +17787,7 @@ app.post("/api/patient/:patientId/health", async (req, res) => {
       patient_id: patientId,
       clinic_code: clinicCode,
       form_data: formData,
+      risk_flags: medicalRiskFlags,
       is_complete: isComplete,
       updated_at: now,
     };
@@ -12753,9 +17830,17 @@ app.post("/api/patient/:patientId/health", async (req, res) => {
       result = data;
     }
 
+    await syncMedicalSnapshotToPatient({
+      patientId,
+      clinicCode,
+      formData: result.form_data || {},
+      medicalRiskFlags,
+    });
+
     res.json({ 
       ok: true, 
       formData: result.form_data || {},
+      medicalRiskFlags,
       isComplete: result.is_complete || false,
       completedAt: result.completed_at || null,
       updatedAt: result.updated_at || null
@@ -12801,6 +17886,7 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
 
     const formData = req.body.formData || {};
     const isComplete = req.body.isComplete === true;
+    const medicalRiskFlags = computeMedicalRiskFlags(formData);
 
     const now = Date.now();
 
@@ -12820,6 +17906,7 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
       patient_id: patientId,
       clinic_code: clinicCode,
       form_data: formData,
+      risk_flags: medicalRiskFlags,
       is_complete: isComplete,
       updated_at: now,
     };
@@ -12860,9 +17947,17 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
       result = data;
     }
 
+    await syncMedicalSnapshotToPatient({
+      patientId,
+      clinicCode,
+      formData: result.form_data || {},
+      medicalRiskFlags,
+    });
+
     res.json({ 
       ok: true, 
       formData: result.form_data || {},
+      medicalRiskFlags,
       isComplete: result.is_complete || false,
       completedAt: result.completed_at || null,
       updatedAt: result.updated_at || null
@@ -12871,6 +17966,62 @@ app.put("/api/patient/:patientId/health", async (req, res) => {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Health Form PUT - Error:", error);
     res.status(500).json({ ok: false, error: "health_form_save_failed", details: error.message });
+  }
+});
+
+app.get("/api/patients/:id/medical-summary", getUserFromToken, async (req, res) => {
+  try {
+    const role = String(req.user?.role || "").toUpperCase();
+    if (!["DOCTOR", "ADMIN"].includes(role)) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    const patientLookup = await resolvePatientForMedicalAccess(req.params.id, req.user || {});
+    if (!patientLookup.ok) {
+      return res.status(patientLookup.status || 500).json({ ok: false, error: patientLookup.error, details: patientLookup.details });
+    }
+
+    const medical = await getHealthFormWithFlags({
+      patientId: patientLookup.patient.id,
+      clinicCode: patientLookup.patient.clinic_code || req.user?.clinicCode || null,
+    });
+
+    if (!medical.ok) {
+      return res.status(medical.status || 500).json({ ok: false, error: medical.error, details: medical.details });
+    }
+
+    return res.json({ ok: true, medicalRiskFlags: medical.medicalRiskFlags || [] });
+  } catch (error) {
+    console.error("[PATIENT MEDICAL SUMMARY] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/patients/:id/medical-form", getUserFromToken, async (req, res) => {
+  try {
+    const role = String(req.user?.role || "").toUpperCase();
+    if (!["DOCTOR", "ADMIN"].includes(role)) {
+      return res.status(403).json({ ok: false, error: "access_denied" });
+    }
+
+    const patientLookup = await resolvePatientForMedicalAccess(req.params.id, req.user || {});
+    if (!patientLookup.ok) {
+      return res.status(patientLookup.status || 500).json({ ok: false, error: patientLookup.error, details: patientLookup.details });
+    }
+
+    const medical = await getHealthFormWithFlags({
+      patientId: patientLookup.patient.id,
+      clinicCode: patientLookup.patient.clinic_code || req.user?.clinicCode || null,
+    });
+
+    if (!medical.ok) {
+      return res.status(medical.status || 500).json({ ok: false, error: medical.error, details: medical.details });
+    }
+
+    return res.json({ ok: true, medicalForm: medical.formData || {}, medicalRiskFlags: medical.medicalRiskFlags || [] });
+  } catch (error) {
+    console.error("[PATIENT MEDICAL FORM] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -12971,7 +18122,7 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
       
       if (!clinicId) {
         console.error("ClinicId missing in admin referrals endpoint");
-        return res.status(400).json({ ok: false, error: "clinic_missing" });
+        return { data: null, error: { message: "clinic_missing" }, source: "validation" };
       }
 
       const { data: byId, error: byIdError } = await supabase
@@ -13114,9 +18265,10 @@ app.get("/api/admin/referrals", adminAuth, async (req, res) => {
     console.log(`[ADMIN REFERRALS] Returning ${formattedReferrals.length} formatted referral(s)`);
     res.json({ ok: true, items: formattedReferrals });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ADMIN REFERRALS] Exception:", error);
-    res.status(500).json({ ok: false, error: "referrals_fetch_exception", details: error.message });
+    console.error("[ADMIN REFERRALS] Exception:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: "referrals_fetch_exception", details: err.message });
+    }
   }
 });
 
@@ -13442,7 +18594,7 @@ app.post("/auth/send-otp", async (req, res) => {
 
 /* ================= HEALTH ================= */
 app.get("/health", (req, res) => {
-  res.json({ ok: true, port: String(PORT) });
+  res.json({ ok: true, port: String(PORT), entry: "repo-root/index.cjs" });
 });
 
 /* ================= FAVICON ================= */
@@ -14300,10 +19452,6 @@ app.use('/api/treatment', treatmentRoutes);
 const doctorTreatmentRoutes = require('./routes/doctor/treatments');
 app.use('/api/doctor', doctorTreatmentRoutes);
 
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(PUBLIC_DIR));
-
 // Root route - serve admin-login.html
 app.get('/', (req, res) => {
   const loginPath = path.join(PUBLIC_DIR, 'admin-login.html');
@@ -14427,8 +19575,219 @@ app.get("/api/admin/timeline", adminAuth, async (req, res) => {
 
     console.log(`[ADMIN TIMELINE] Fetched ${data?.length || 0} events for clinic ${clinicId}`);
 
-    // 🔥 CRITICAL: Return raw data - no formatting needed for new schema
-    res.json(data);
+    const rows = Array.isArray(data) ? data : [];
+
+    const normalizeText = (value) => {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const normalized = text.toLowerCase();
+      if (["unknown", "unknown patient", "unknown doctor", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) {
+        return "";
+      }
+      return text;
+    };
+
+    const extractMeta = (row) => {
+      if (row?.metadata && typeof row.metadata === "object") return row.metadata;
+      if (typeof row?.metadata === "string") {
+        try {
+          const parsed = JSON.parse(row.metadata);
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+      return {};
+    };
+
+    const patientIdSet = new Set();
+    const doctorIdSet = new Set();
+
+    rows.forEach((row) => {
+      const meta = extractMeta(row);
+
+      const patientCandidates = [
+        meta?.patient_id,
+        meta?.patientId,
+        meta?.patient_uuid,
+        meta?.patientUuid,
+        row?.entity_type === "PATIENT" || row?.entity_type === "patient" ? row?.entity_id : null,
+      ];
+      patientCandidates.forEach((value) => {
+        const key = String(value || "").trim();
+        if (key) patientIdSet.add(key);
+      });
+
+      const doctorCandidates = [
+        meta?.doctor_id,
+        meta?.doctorId,
+        meta?.assigned_doctor_id,
+        meta?.assignedDoctorId,
+        row?.entity_type === "DOCTOR" || row?.entity_type === "doctor" ? row?.entity_id : null,
+        row?.created_by,
+      ];
+      doctorCandidates.forEach((value) => {
+        const key = String(value || "").trim();
+        if (key) doctorIdSet.add(key);
+      });
+    });
+
+    const patientMap = new Map();
+    if (patientIdSet.size > 0) {
+      const patientIds = Array.from(patientIdSet);
+      const patientSelectCandidates = [
+        "id, patient_id, name, full_name, first_name, last_name",
+        "id, patient_id, name, full_name",
+        "id, patient_id, name, first_name, last_name",
+        "id, patient_id, name",
+      ];
+
+      for (const selectClause of patientSelectCandidates) {
+        const result = await supabase
+          .from("patients")
+          .select(selectClause)
+          .or(`id.in.(${patientIds.join(",")}),patient_id.in.(${patientIds.join(",")})`);
+
+        if (!result.error) {
+          (result.data || []).forEach((patient) => {
+            const keyA = String(patient?.id || "").trim();
+            const keyB = String(patient?.patient_id || "").trim();
+            const fullName = normalizeText(patient?.full_name);
+            const first = normalizeText(patient?.first_name);
+            const last = normalizeText(patient?.last_name);
+            const merged = normalizeText(`${first} ${last}`.trim());
+            const name = normalizeText(patient?.name) || fullName || merged || keyB || keyA;
+            if (keyA && name) patientMap.set(keyA, name);
+            if (keyB && name) patientMap.set(keyB, name);
+          });
+          break;
+        }
+
+        if (!["42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
+          console.error("[ADMIN TIMELINE] patients resolve error:", result.error);
+          break;
+        }
+      }
+    }
+
+    const doctorMap = new Map();
+    if (doctorIdSet.size > 0) {
+      const doctorIds = Array.from(doctorIdSet);
+      const doctorSelectCandidates = [
+        "id, doctor_id, name, full_name",
+        "id, doctor_id, full_name",
+        "id, doctor_id, name",
+        "id, name, full_name",
+      ];
+
+      for (const selectClause of doctorSelectCandidates) {
+        const result = await supabase
+          .from("doctors")
+          .select(selectClause)
+          .or(`id.in.(${doctorIds.join(",")}),doctor_id.in.(${doctorIds.join(",")})`);
+
+        if (!result.error) {
+          (result.data || []).forEach((doctor) => {
+            const keyA = String(doctor?.id || "").trim();
+            const keyB = String(doctor?.doctor_id || "").trim();
+            const name = normalizeText(doctor?.full_name) || normalizeText(doctor?.name) || keyB || keyA;
+            if (keyA && name) doctorMap.set(keyA, name);
+            if (keyB && name) doctorMap.set(keyB, name);
+          });
+          break;
+        }
+
+        if (!["42703", "PGRST204", "PGRST205", "42P01"].includes(String(result.error?.code || ""))) {
+          console.error("[ADMIN TIMELINE] doctors resolve error:", result.error);
+          break;
+        }
+      }
+    }
+
+    const getRelativeTime = (iso) => {
+      if (!iso) return "";
+      const ts = Date.parse(String(iso));
+      if (!Number.isFinite(ts)) return "";
+      const diff = Date.now() - ts;
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return "Az önce";
+      if (mins < 60) return `${mins} dk önce`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours} saat önce`;
+      const days = Math.floor(hours / 24);
+      if (days < 30) return `${days} gün önce`;
+      const months = Math.floor(days / 30);
+      return `${months} ay önce`;
+    };
+
+    const iconForEvent = (eventType) => {
+      const t = String(eventType || "").toUpperCase();
+      if (t.includes("TREATMENT") || t.includes("PROCEDURE")) return "🦷";
+      if (t.includes("APPOINTMENT") || t.includes("SCHEDULE")) return "📅";
+      if (t.includes("PATIENT")) return "👤";
+      if (t.includes("DOCTOR")) return "👨‍⚕️";
+      return "📝";
+    };
+
+    const formatted = rows.map((row) => {
+      const meta = extractMeta(row);
+      const patientId = String(
+        meta?.patient_id ||
+        meta?.patientId ||
+        meta?.patient_uuid ||
+        meta?.patientUuid ||
+        ((row?.entity_type === "PATIENT" || row?.entity_type === "patient") ? row?.entity_id : "") ||
+        ""
+      ).trim();
+      const doctorId = String(
+        meta?.doctor_id ||
+        meta?.doctorId ||
+        meta?.assigned_doctor_id ||
+        meta?.assignedDoctorId ||
+        ((row?.entity_type === "DOCTOR" || row?.entity_type === "doctor") ? row?.entity_id : "") ||
+        row?.created_by ||
+        ""
+      ).trim();
+
+      const patientName = normalizeText(meta?.patient_name || meta?.patientName) || (patientId ? patientMap.get(patientId) || "" : "");
+      const doctorName = normalizeText(meta?.doctor_name || meta?.doctorName) || (doctorId ? doctorMap.get(doctorId) || "" : "");
+
+      let title = normalizeText(row?.title) || "Sistem Olayı";
+      if (/unknown patient/i.test(title) && patientName) {
+        title = title.replace(/unknown patient/ig, patientName);
+      }
+      if (/unknown doctor/i.test(title) && doctorName) {
+        title = title.replace(/unknown doctor/ig, doctorName);
+      }
+
+      const detailParts = [];
+      const description = normalizeText(row?.description || meta?.description || meta?.message);
+      if (description) detailParts.push(description);
+      if (patientName) detailParts.push(`Hasta: ${patientName}`);
+      if (doctorName) detailParts.push(`Doktor: ${doctorName}`);
+
+      const subtitle = detailParts.join(" • ") || "Detay yok";
+
+      return {
+        ...row,
+        icon: iconForEvent(row?.event_type || row?.entity_type),
+        title,
+        subtitle,
+        message: subtitle,
+        patient_id: patientId || null,
+        patient_name: patientName || null,
+        doctor_id: doctorId || null,
+        doctor_name: doctorName || null,
+        relative_time: getRelativeTime(row?.created_at),
+      };
+    });
+
+    return res.json({
+      ok: true,
+      events: formatted,
+      data: formatted,
+      total: formatted.length,
+    });
 
   } catch (err) {
     console.error("[ADMIN TIMELINE] Fatal error:", err);
@@ -15195,6 +20554,7 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
         treatment_plan_id,
         tooth_fdi_code,
         procedure_code,
+        procedure_name,
         procedure_description,
         scheduled_date,
         due_date,
@@ -15257,16 +20617,83 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
       }));
     }
 
-    console.log("[TREATMENT PLAN ITEMS] Supabase data:", items);
-    console.log("[TREATMENT PLAN ITEMS] Supabase error:", error);
-    console.log("[TREATMENT PLAN ITEMS] Items length:", items?.length || 0);
+    const readItemsFromTable = async (tableName) => {
+      for (const selectClause of selectCandidates) {
+        const result = await supabase
+          .from(tableName)
+          .select(selectClause)
+          .eq("treatment_plan_id", id)
+          .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("[TREATMENT PLAN ITEMS] Database error:", error);
+        if (!result.error) {
+          return { ok: true, items: Array.isArray(result.data) ? result.data : [] };
+        }
+
+        const code = String(result.error?.code || "");
+        if (!schemaCodes.has(code)) {
+          return { ok: false, hardError: result.error };
+        }
+      }
+
+      return { ok: false, items: [] };
+    };
+
+    const primaryRead = await readItemsFromTable("treatment_items");
+    const fallbackRead = await readItemsFromTable("treatment_plan_items");
+
+    if (primaryRead.hardError) {
+      console.error("[TREATMENT PLAN ITEMS] Database error:", primaryRead.hardError);
       return res.status(500).json({
         ok: false,
         error: "treatment_items_fetch_failed",
-        details: error.message
+        details: primaryRead.hardError.message
+      });
+    }
+
+    if (fallbackRead.hardError) {
+      console.error("[TREATMENT PLAN ITEMS] Database error:", fallbackRead.hardError);
+      return res.status(500).json({
+        ok: false,
+        error: "treatment_items_fetch_failed",
+        details: fallbackRead.hardError.message
+      });
+    }
+
+    let items = [
+      ...(Array.isArray(primaryRead.items) ? primaryRead.items : []),
+      ...(Array.isArray(fallbackRead.items) ? fallbackRead.items : []),
+    ];
+
+    const seen = new Set();
+    items = items
+      .map((item) => ({
+        ...item,
+        tooth_fdi_code: item?.tooth_fdi_code || item?.tooth_number || null,
+        procedure_description: item?.procedure_description || item?.procedure_name || null,
+      }))
+      .filter((row) => {
+        const key = String(row?.id || [
+          row?.treatment_plan_id,
+          row?.tooth_fdi_code || "",
+          row?.procedure_code || row?.procedure_name || row?.procedure_description || "",
+          row?.status || "",
+          row?.created_at || "",
+        ].join("|"));
+        if (!key) return false;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+    console.log("[TREATMENT PLAN ITEMS] Supabase data:", items);
+    console.log("[TREATMENT PLAN ITEMS] Items length:", items?.length || 0);
+
+    if (Array.isArray(items) && items.length > 0) {
+      items = items.map((row) => {
+        const itemId = String(row?.id || "").trim();
+        if (!itemId) return row;
+        const override = readTreatmentItemOverride(itemId);
+        return applyTreatmentItemOverride(row, override);
       });
     }
 

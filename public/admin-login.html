@@ -243,7 +243,7 @@
     </div>
 
     <div class="nav">
-      <a href="/admin-dashboard.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
       <span style="margin: 0 8px; color: var(--muted);">|</span>
       <a href="/doctor-login.html" data-i18n="login.doctorLogin">Doctor Login</a>
     </div>
@@ -333,7 +333,9 @@
         body: JSON.stringify({ email, clinicCode, password }),
       });
       
-      const json = await res.json();
+      console.log("[LOGIN] Response status:", res.status);
+      const data = await res.json();
+      console.log("[LOGIN] Response JSON:", data);
       
       console.log("LOGIN RESPONSE:", json);
       
@@ -341,11 +343,11 @@
         let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
         if (json.error === "invalid_admin_credentials") {
           errorMsg = i18n.t("login.errors.invalidCredentials");
-        } else if (json.error === "email_required") {
+        } else if (data.error === "email_required") {
           errorMsg = i18n.t("login.errors.emailRequired");
-        } else if (json.error === "clinic_code_required") {
+        } else if (data.error === "clinic_code_required") {
           errorMsg = i18n.t("login.errors.clinicCodeRequired");
-        } else if (json.error === "password_required") {
+        } else if (data.error === "password_required") {
           errorMsg = i18n.t("login.errors.passwordRequired");
         }
         setMsg(errorMsg, "err");
@@ -354,9 +356,9 @@
         return;
       }
       
-      if (json.ok && json.requiresOTP) {
+      if (data.ok && data.requiresOTP) {
         // OTP required - show OTP input form
-        showOTPForm(json.clinicCode, json.email);
+        showOTPForm(data.clinicCode, data.email);
         return;
       }
       

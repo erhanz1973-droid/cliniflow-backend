@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////////////////////////////////
+// ENUMS
+//////////////////////////////////////////////////////
+
+enum VisitStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum TreatmentStatus {
+  PLANNED
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+//////////////////////////////////////////////////////
+// PATIENT
+//////////////////////////////////////////////////////
+
+model Patient {
+  id          String   @id @default(uuid())
+  firstName   String
+  lastName    String
+  phone       String?
+  email       String?
+  birthDate   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  visits      Visit[]
+}
+
+//////////////////////////////////////////////////////
+// DOCTOR
+//////////////////////////////////////////////////////
+
+model Doctor {
+  id          String   @id @default(uuid())
+  firstName   String
+  lastName    String
+  email       String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  visits      Visit[]
+  treatments  Treatment[]
+}
+
+//////////////////////////////////////////////////////
+// VISIT (MERKEZ MODEL)
+//////////////////////////////////////////////////////
+
+model Visit {
+  id          String      @id @default(uuid())
+  patientId   String
+  doctorId    String?
+  visitDate   DateTime    @default(now())
+  status      VisitStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor      Doctor?     @relation(fields: [doctorId], references: [id])
+
+  diagnoses   Diagnosis[]
+  treatments  Treatment[]
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+//////////////////////////////////////////////////////
+// ICD-10 MASTER TABLE (OPSİYONEL AMA ÖNERİLİR)
+//////////////////////////////////////////////////////
+
+model IcdCode {
+  id            String  @id @default(uuid())
+  code          String  @unique
+  descriptionEn String
+  descriptionKa String?
+  descriptionTr String?
+
+  diagnoses     Diagnosis[]
+}
+
+//////////////////////////////////////////////////////
+// DIAGNOSIS (VISIT SEVİYESİ)
+//////////////////////////////////////////////////////
+
+model Diagnosis {
+  id          String   @id @default(uuid())
+  visitId     String
+  icdCodeId   String
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  visit       Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  icdCode     IcdCode  @relation(fields: [icdCodeId], references: [id])
+
+  @@index([visitId])
+  @@index([icdCodeId])
+}
+
+//////////////////////////////////////////////////////
+// TREATMENT (TOOTH SEVİYESİ)
+//////////////////////////////////////////////////////
+
+model Treatment {
+  id            String           @id @default(uuid())
+  visitId       String
+  toothNumber   Int
+  procedureType String
+  status        TreatmentStatus  @default(PLANNED)
+  doctorId      String?
+  price         Float?
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  visit         Visit            @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  doctor        Doctor?          @relation(fields: [doctorId], references: [id])
+
+  @@index([visitId])
+  @@index([toothNumber])
+}
