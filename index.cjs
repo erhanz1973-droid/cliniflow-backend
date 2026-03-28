@@ -101,6 +101,15 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Admin UI and shared static assets (admin-login.html, admin-layout.js, api-base.js, …)
+const publicDir = path.join(__dirname, "public");
+app.use(
+  express.static(publicDir, {
+    etag: false,
+    maxAge: process.env.NODE_ENV === "production" ? "1h" : 0,
+  })
+);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
