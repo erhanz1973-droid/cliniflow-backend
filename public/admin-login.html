@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
@@ -244,8 +245,20 @@
   </div>
 
 <script>
-  const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain (admin service)
-  
+  const API = (function resolveLoginApiOrigin() {
+    if (typeof cliniflowApiBase === 'function') {
+      const b = cliniflowApiBase();
+      if (b) return b;
+    }
+    const h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+    if (/^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h)) {
+      return (typeof window.CLINIFLOW_ADMIN_API_ORIGIN === 'string' && window.CLINIFLOW_ADMIN_API_ORIGIN.trim())
+        ? window.CLINIFLOW_ADMIN_API_ORIGIN.replace(/\/+$/, '')
+        : 'https://cliniflow-admin.onrender.com';
+    }
+    return '';
+  })();
+
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
     container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;

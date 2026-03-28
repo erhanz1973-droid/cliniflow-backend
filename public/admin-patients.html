@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Hastalar - Clinifly Admin</title>
   <link rel="stylesheet" href="/admin-layout.css"/>
@@ -611,12 +612,51 @@
       } catch {}
     })();
 
-    const API_BASE = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain
+    const API_BASE = (function resolvePatientsApiOrigin() {
+      if (typeof cliniflowApiBase === 'function') {
+        const b = cliniflowApiBase();
+        if (b) return b;
+      }
+      const h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+      if (/^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h)) {
+        return (typeof window.CLINIFLOW_ADMIN_API_ORIGIN === 'string' && window.CLINIFLOW_ADMIN_API_ORIGIN.trim())
+          ? window.CLINIFLOW_ADMIN_API_ORIGIN.replace(/\/+$/, '')
+          : 'https://cliniflow-admin.onrender.com';
+      }
+      return '';
+    })();
+
+    function patientsFetchUrl(path) {
+      const p = path.startsWith('/') ? path : '/' + path;
+      if (typeof apiUrl === 'function') {
+        const u = apiUrl(p);
+        if (String(u).indexOf('http') === 0) return u;
+        if (API_BASE) return String(API_BASE).replace(/\/+$/, '') + p;
+        const h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+        if (/^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h)) {
+          const o = (typeof window.CLINIFLOW_ADMIN_API_ORIGIN === 'string' && window.CLINIFLOW_ADMIN_API_ORIGIN.trim())
+            ? window.CLINIFLOW_ADMIN_API_ORIGIN.replace(/\/+$/, '')
+            : 'https://cliniflow-admin.onrender.com';
+          return o + p;
+        }
+        return u;
+      }
+      return API_BASE ? String(API_BASE).replace(/\/+$/, '') + p : p;
+    }
+
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
     let DOCTORS_CACHE = [];
     let DOCTORS_BY_ID = {};
+
+    /** UUID compare-safe + optional doctor_id (d_…) alias for DOCTORS_BY_ID */
+    function normalizeDoctorKey(id) {
+      const s = String(id == null ? "" : id).trim();
+      if (!s) return "";
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)) return s.toLowerCase();
+      return s;
+    }
     
     // Clean protection for doctor select
     document.addEventListener('click', function(e) {
@@ -953,8 +993,12 @@ if (Array.isArray(json)) {
         const afterPercent = formatScore(afterScore);
         const clinicCode = p.clinicCode || p.clinic_code || '';
         
-        const assignedDoctor = DOCTORS_BY_ID[String(p.primary_doctor_id || "")] || null;
-        const primaryDoctorIdStr = p.primary_doctor_id ? String(p.primary_doctor_id) : "";
+        const primaryDoctorIdStr = p.primary_doctor_id ? String(p.primary_doctor_id).trim() : "";
+        const primaryNk = normalizeDoctorKey(primaryDoctorIdStr);
+        const assignedDoctor =
+          (primaryNk && DOCTORS_BY_ID[primaryNk]) ||
+          (primaryDoctorIdStr && DOCTORS_BY_ID[primaryDoctorIdStr]) ||
+          null;
         
         const initials = displayName.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
         const photoUrl = p.profilePhotoUrl || p.profile_photo_url || '';
@@ -1076,10 +1120,16 @@ if (Array.isArray(json)) {
                   onchange="assignDoctor('${escapeHtml(patientId)}', this.value)"
                   style="flex:1; padding:6px 8px; background:var(--b); border:1px solid #4b5563; border-radius:6px; color:#e6eaf2; font-size:12px;">
                   ${!p.primary_doctor_id ? `<option value="" selected disabled>Select Doctor</option>` : ''}
-                  ${primaryDoctorIdStr && !DOCTORS_CACHE.some(function (d) { return String(d.id) === primaryDoctorIdStr; }) ? `<option value="${escapeHtml(primaryDoctorIdStr)}" selected>— Atanmış doktor (yenile) —</option>` : ''}
+                  ${primaryDoctorIdStr && !DOCTORS_CACHE.some(function (d) {
+                    return normalizeDoctorKey(d.id) === primaryNk || (d.doctor_id && String(d.doctor_id).trim() === primaryDoctorIdStr);
+                  }) ? `<option value="${escapeHtml(primaryDoctorIdStr)}" selected>— Atanmış doktor (yenile) —</option>` : ''}
                   ${DOCTORS_CACHE.map(doctor => {
                     const name = doctor.name || doctor.full_name || doctor.email || "Doctor";
-                    const selected = String(p.primary_doctor_id) === String(doctor.id) ? "selected" : "";
+                    const selected =
+                      (primaryNk && normalizeDoctorKey(doctor.id) === primaryNk) ||
+                      (primaryDoctorIdStr && String(doctor.doctor_id || "").trim() === primaryDoctorIdStr)
+                        ? "selected"
+                        : "";
                     return `<option value="${escapeHtml(doctor.id)}" ${selected}>
                               ${escapeHtml(name)}
                             </option>`;
@@ -1397,7 +1447,6 @@ if (Array.isArray(json)) {
     }
 
     // Badge loading functions
-    const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`;
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
@@ -1432,7 +1481,7 @@ if (Array.isArray(json)) {
       const token = getAdminToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API}/api/admin/messages/unread-counts?totalOnly=1`, {
+        const res = await fetch(patientsFetchUrl('/api/admin/messages/unread-counts?totalOnly=1'), {
           headers: adminHeaders({ Accept: "application/json" }),
         });
         if (!res.ok) return;
@@ -1464,7 +1513,7 @@ if (Array.isArray(json)) {
       try {
         let patients = ALL_PATIENTS;
         if (!Array.isArray(patients) || patients.length === 0) {
-          const res = await fetch(`${API}/api/admin/patients`, {
+          const res = await fetch(patientsFetchUrl('/api/admin/patients'), {
             headers: adminHeaders({ Accept: "application/json" }),
           });
           if (!res.ok) return;
@@ -1503,7 +1552,7 @@ if (Array.isArray(json)) {
       const token = getAdminToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+        const res = await fetch(patientsFetchUrl('/api/admin/referrals?status=PENDING'), {
           headers: adminHeaders({ Accept: "application/json" }),
         });
         if (!res.ok) return;
@@ -1629,7 +1678,7 @@ if (Array.isArray(json)) {
       if (!token) return [];
 
       try {
-        const res = await fetch('/api/admin/doctors', {
+        const res = await fetch(patientsFetchUrl('/api/admin/doctors'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -1658,11 +1707,14 @@ if (Array.isArray(json)) {
 
       const doctors = await loadDoctors();
       DOCTORS_CACHE = doctors;
-      DOCTORS_BY_ID = doctors.reduce((acc, doctor) => {
-        const id = doctor && doctor.id !== undefined && doctor.id !== null ? String(doctor.id) : "";
-        if (id) acc[id] = doctor;
-        return acc;
-      }, {});
+      DOCTORS_BY_ID = {};
+      for (const doctor of doctors || []) {
+        if (!doctor) continue;
+        const nk = normalizeDoctorKey(doctor.id);
+        if (nk) DOCTORS_BY_ID[nk] = doctor;
+        const code = doctor.doctor_id != null ? String(doctor.doctor_id).trim() : "";
+        if (code) DOCTORS_BY_ID[code] = doctor;
+      }
       return doctors;
     }
 
@@ -1689,7 +1741,7 @@ if (Array.isArray(json)) {
       }
 
       try {
-        const res = await fetch('/api/admin/patients/assign-doctor', {
+        const res = await fetch(patientsFetchUrl('/api/admin/patients/assign-doctor'), {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1730,7 +1782,7 @@ if (Array.isArray(json)) {
     }
 
   </script>
-  <script src="/admin-layout.js?v=20260322"></script>
+  <script src="/admin-layout.js?v=20260329"></script>
 </body>
 </html>
 

@@ -62,4 +62,7 @@
     if (!p.startsWith('/')) p = '/' + p;
     return cached ? cached + p : p;
   };
+
+  /** Same origin as DEFAULT_ADMIN_API_RENDER — use in HTML fallbacks if this script is cached old. */
+  w.CLINIFLOW_ADMIN_API_ORIGIN = DEFAULT_ADMIN_API_RENDER;
 })();

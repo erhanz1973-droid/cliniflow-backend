@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Admin – Clinic Settings</title>
   <link rel="stylesheet" href="/admin-layout.css"/>
@@ -329,7 +330,7 @@
   </div>
 
 <script src="/admin-i18n.js"></script>
-<script src="/admin-layout.js?v=20260322"></script>
+<script src="/admin-layout.js?v=20260329"></script>
 <script>
   // Nav: if a patient is selected, make top-nav Travel link carry patientId.
   (function bindNavTravelLink() {
@@ -341,7 +342,7 @@
     } catch {}
   })();
 
-  const API_BASE = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`; // Production: Use same domain (admin service)
+  const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
   const $ = (id) => document.getElementById(id);
 
   let clinicPlan = "";

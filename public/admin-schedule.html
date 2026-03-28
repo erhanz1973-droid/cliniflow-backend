@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Takvim - Clinifly Admin</title>
   <link rel="stylesheet" href="/admin-layout.css"/>
@@ -409,7 +410,7 @@
       if (!token) return;
 
       try {
-        const response = await fetch('/api/admin/clinic', {
+        const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/admin/clinic') : '/api/admin/clinic'), {
           headers: {
             Accept: 'application/json',
             Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -519,7 +520,7 @@
       if (!token) return;
 
       try {
-        const response = await fetch('/api/admin/doctors', {
+        const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/admin/doctors') : '/api/admin/doctors'), {
           headers: {
             Accept: 'application/json',
             Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -564,7 +565,7 @@
       if (!token) return;
 
       try {
-        const response = await fetch('/api/admin/treatment-prices', {
+        const response = await fetch((typeof apiUrl === 'function' ? apiUrl('/api/admin/treatment-prices') : '/api/admin/treatment-prices'), {
           headers: {
             Accept: 'application/json',
             Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -690,7 +691,7 @@
 
     async function fetchDayAppointments(date) {
       const token = getToken();
-      const response = await fetch(`/api/admin/appointments?date=${encodeURIComponent(date)}`, {
+      const response = await fetch((typeof apiUrl === 'function' ? apiUrl(`/api/admin/appointments?date=${encodeURIComponent(date)}`) : `/api/admin/appointments?date=${encodeURIComponent(date)}`), {
         headers: {
           Accept: 'application/json',
           Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -706,7 +707,7 @@
 
     async function fetchRangeAppointments(startDate, endDate) {
       const token = getToken();
-      const response = await fetch(`/api/admin/appointments?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, {
+      const response = await fetch((typeof apiUrl === 'function' ? apiUrl(`/api/admin/appointments?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`) : `/api/admin/appointments?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`), {
         headers: {
           Accept: 'application/json',
           Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -724,7 +725,7 @@
       const token = getToken();
       const startDate = toDateOnly(weekDays[0]);
       const endDate = toDateOnly(weekDays[6]);
-      const response = await fetch(`/api/admin/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, {
+      const response = await fetch((typeof apiUrl === 'function' ? apiUrl(`/api/admin/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`) : `/api/admin/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`), {
         headers: {
           Accept: 'application/json',
           Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -902,6 +903,6 @@
 
     bootstrapSchedule();
   </script>
-  <script src="/admin-layout.js?v=20260322"></script>
+  <script src="/admin-layout.js?v=20260329"></script>
 </body>
 </html>

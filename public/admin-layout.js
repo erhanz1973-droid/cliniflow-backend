@@ -5,6 +5,35 @@
  */
 (function () {
 
+  /** When admin HTML is on backend static but API lives on cliniflow-admin service (must match login + JWT_SECRET there). */
+  var RENDER_ADMIN_API_FALLBACK =
+    (typeof window !== 'undefined' && window.CLINIFLOW_ADMIN_API_ORIGIN) ||
+    'https://cliniflow-admin.onrender.com';
+  function isBackendUiHost() {
+    var h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+    return /^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h);
+  }
+  /** Always hit the same API origin as admin-login (avoids 401 when token was signed on admin service). */
+  function adminFetchUrl(path) {
+    var p = String(path || '');
+    if (!p.startsWith('/')) p = '/' + p;
+    var u;
+    if (typeof apiUrl === 'function') {
+      u = apiUrl(p);
+      if (String(u).indexOf('http') === 0) return u;
+      if (isBackendUiHost() && (u === p || (u && u.charAt(0) === '/'))) {
+        return String(RENDER_ADMIN_API_FALLBACK).replace(/\/+$/, '') + p;
+      }
+      return u;
+    }
+    if (typeof cliniflowApiBase === 'function') {
+      var b = cliniflowApiBase();
+      if (b) return String(b).replace(/\/+$/, '') + p;
+    }
+    if (isBackendUiHost()) return String(RENDER_ADMIN_API_FALLBACK).replace(/\/+$/, '') + p;
+    return p;
+  }
+
   /* ── Navigation items (key maps to dashboard.nav.{key}) ────── */
   const NAV = [
     { href: '/admin.html', icon: iconGrid(),     key: 'dashboard' },
@@ -190,7 +219,7 @@
     try {
       const token = localStorage.getItem('adminToken');
       if (!token) return;
-      const res = await fetch('/api/admin/clinic', {
+      const res = await fetch(adminFetchUrl('/api/admin/clinic'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -221,12 +250,6 @@
     }
     return false;
   };
-
-  function adminApiBase() {
-    return window.location.hostname.includes('onrender.com')
-      ? 'https://cliniflow-admin.onrender.com'
-      : `http://${window.location.hostname}:10000`;
-  }
 
   /* ── Unread chat badge polling ───────────────────────────── */
   function updateChatBadge(count) {
@@ -267,7 +290,7 @@
     try {
       const token = localStorage.getItem('adminToken');
       if (!token) return;
-      const res = await fetch(`${adminApiBase()}/api/admin/messages/unread-counts?totalOnly=1`, {
+      const res = await fetch(adminFetchUrl('/api/admin/messages/unread-counts?totalOnly=1'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
       });
       if (!res.ok) return;
@@ -282,7 +305,7 @@
     try {
       const token = localStorage.getItem('adminToken');
       if (!token) return;
-      const res = await fetch(`${adminApiBase()}/api/admin/referrals?status=PENDING`, {
+      const res = await fetch(adminFetchUrl('/api/admin/referrals?status=PENDING'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
         cache: 'no-store'
       });
@@ -298,7 +321,7 @@
       const token = localStorage.getItem('adminToken');
       if (!token) return;
       // admin-doctor-applications-v2.html ile aynı kaynak (clinic_code); /api/admin/doctors clinic_id kullanır, sayım sapabilir.
-      const res = await fetch(`${adminApiBase()}/admin/doctor-list`, {
+      const res = await fetch(adminFetchUrl('/admin/doctor-list'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
       });
       if (!res.ok) return;

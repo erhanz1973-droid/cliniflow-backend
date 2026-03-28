@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
+  <script src="/api-base.js"></script>
   <title data-i18n="files.pageTitle">Admin – Hasta Dosyaları</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>
@@ -178,7 +179,7 @@
   </div>
 </div>
 
-<script src="/admin-layout.js?v=20260322"></script>
+<script src="/admin-layout.js?v=20260329"></script>
 <script>
   const API = '';
   const params = new URLSearchParams(location.search);
@@ -217,7 +218,10 @@
     // Already absolute URL (Supabase storage, CDN, etc.)
     if (url.startsWith('http://') || url.startsWith('https://')) return url;
     // Relative path — prepend current origin
-    if (url.startsWith('/')) return window.location.origin + url;
+    if (url.startsWith('/')) {
+      const b = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
+      return (b || window.location.origin) + url;
+    }
     return url;
   }
 

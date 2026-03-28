@@ -2,6 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Admin – Referrals</title>
   <script>
@@ -12,7 +13,7 @@
   </script>
   <script src="/admin-i18n.js"></script>
   <link rel="stylesheet" href="/admin-layout.css" />
-  <script src="/admin-layout.js?v=20260322" defer></script>
+  <script src="/admin-layout.js?v=20260329" defer></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background: #111827; color: #e6eaf2; }
     body.al-ready { background: #111827; color: #e6eaf2; }
@@ -144,7 +145,7 @@
   </div>
 
 <script>
-  const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`;
+  const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
 
   function token() {
     return (localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "").trim();
