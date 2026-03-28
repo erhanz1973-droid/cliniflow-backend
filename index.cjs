@@ -4378,29 +4378,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
       .eq("role", "PATIENT") // Only show patients, not doctors
       .order("created_at", { ascending: false });
 
-    let patients = [];
-    let error = null;
-    let readOk = false;
-    for (const selectClause of selectCandidates) {
-      const result = await supabase
-        .from("patients")
-        .select(selectClause)
-        .eq("clinic_id", req.admin.clinicId)
-        .order("created_at", { ascending: false });
-
-      if (!result.error) {
-        patients = Array.isArray(result.data) ? result.data : [];
-        readOk = true;
-        break;
-      }
-
-      error = result.error;
-      if (!["42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
-        break;
-      }
-    }
-
-    if (!readOk) {
+    if (error) {
       console.error("[ADMIN PATIENTS] Error:", error);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_patients" });
     }
@@ -6417,71 +6395,6 @@ setInterval(() => {
   });
 }, 24 * 60 * 60 * 1000);
 
-/* ================= TREATMENT PAGE COMPAT ENDPOINTS ================= */
-const PROCEDURE_TYPES_COMPAT = [
-  { type: "CONSULT", label: "Muayene", category: "EVENTS" },
-  { type: "FOLLOWUP", label: "Kontrol", category: "EVENTS" },
-  { type: "FILLING", label: "Dolgu", category: "RESTORATIVE" },
-  { type: "TEMP_FILLING", label: "Geçici Dolgu", category: "RESTORATIVE" },
-  { type: "ROOT_CANAL_TREATMENT", label: "Kanal Tedavisi", category: "ENDODONTIC" },
-  { type: "EXTRACTION", label: "Çekim", category: "SURGICAL" },
-  { type: "SURGICAL_EXTRACTION", label: "Cerrahi Çekim", category: "SURGICAL" },
-  { type: "CROWN", label: "Kron", category: "PROSTHETIC" },
-  { type: "BRIDGE_UNIT", label: "Köprü", category: "PROSTHETIC" },
-  { type: "IMPLANT", label: "İmplant", category: "IMPLANT" },
-];
-
-function normalizeTreatmentEventList(rawEvents) {
-  if (!Array.isArray(rawEvents)) return [];
-  return rawEvents
-    .map((eventItem) => ({
-      id: String(eventItem?.id || "").trim() || `ev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      date: String(eventItem?.date || "").trim(),
-      time: String(eventItem?.time || "").trim(),
-      type: String(eventItem?.type || "TREATMENT").trim().toUpperCase(),
-      title: String(eventItem?.title || "").trim(),
-      desc: String(eventItem?.desc || "").trim(),
-    }))
-    .filter((eventItem) => eventItem.date && eventItem.title);
-}
-
-async function resolvePatientForAdminTreatmentPage(patientIdOrUuid, clinicId) {
-  const key = String(patientIdOrUuid || "").trim();
-  if (!key) return { ok: false, error: "patient_id_required" };
-
-  const byUuid = supabase
-    .from("patients")
-    .select("id, patient_id, clinic_id")
-    .eq("id", key)
-    .limit(1)
-    .maybeSingle();
-
-  const byExternal = supabase
-    .from("patients")
-    .select("id, patient_id, clinic_id")
-    .eq("patient_id", key)
-    .limit(1)
-    .maybeSingle();
-
-  let uuidResult = await byUuid;
-  if (!uuidResult.error && uuidResult.data) {
-    if (clinicId && uuidResult.data.clinic_id && String(uuidResult.data.clinic_id) !== String(clinicId)) {
-      return { ok: false, error: "access_denied" };
-    }
-    return { ok: true, patient: uuidResult.data };
-  }
-
-  const externalResult = await byExternal;
-  if (!externalResult.error && externalResult.data) {
-    if (clinicId && externalResult.data.clinic_id && String(externalResult.data.clinic_id) !== String(clinicId)) {
-      return { ok: false, error: "access_denied" };
-    }
-    return { ok: true, patient: externalResult.data };
-  }
-
-  return { ok: false, error: "patient_not_found" };
-}
-
 app.get("/api/procedures", (req, res) => {
   return res.json({
     ok: true,
@@ -7837,11 +7750,6 @@ app.post("/api/doctor/treatment-plans", async (req, res) => {
     const hasEncounterAccess = await doctorHasAccessToEncounter(encounter_id, v.decoded);
     if (!hasEncounterAccess) {
       return res.status(403).json({ ok: false, error: "forbidden" });
-    }
-    const encounter = encounterAccess.encounter;
-
-    if (!['ACTIVE', 'active'].includes(String(encounter.status || ''))) {
-      return res.status(400).json({ ok: false, error: "encounter_not_active" });
     }
 
     // Rule 3: Aynı encounter içinde aktif plan var mı kontrol et
@@ -12068,114 +11976,22 @@ app.get("/api/doctor/tasks", async (req, res) => {
     const formattedTasks = [...procedureTasks, ...treatmentItemTasks]
       .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
 
-    const doctorIds = doctors.map((doctor) => doctor.id).filter(Boolean);
-    if (doctorIds.length === 0) {
-      return res.json({ ok: true, date: selectedDay, doctors: [], tasks: [], unscheduled: [] });
-    }
-
-    const selectCandidates = [
-      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_name, procedure_code, status, priority, start_time, end_time, scheduled_date, due_date, scheduled_by, suggested_by_doctor, created_at, updated_at",
-      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_name, procedure_code, status, priority, scheduled_date, due_date, created_at, updated_at",
-      "id, doctor_id, patient_id, treatment_plan_id, title, procedure_code, status, scheduled_date, created_at, updated_at",
-    ];
-
-    let procedures = [];
-    let queryError = null;
-    for (const selectClause of selectCandidates) {
-      let query = supabase
-        .from("procedures")
-        .select(selectClause)
-        .in("doctor_id", doctorIds)
-        .order("created_at", { ascending: false });
-
-      if (doctorFilter) {
-        query = query.eq("doctor_id", doctorFilter);
-      }
-
-      const result = await query;
-      if (!result.error) {
-        procedures = Array.isArray(result.data) ? result.data : [];
-        queryError = null;
-        break;
-      }
-
-      queryError = result.error;
-      const code = String(result.error?.code || "");
-      if (!["42703", "PGRST204"].includes(code)) {
-        break;
-      }
-    }
-
-    if (queryError && procedures.length === 0) {
-      return res.status(500).json({ ok: false, error: "calendar_tasks_fetch_failed" });
-    }
-
-    console.log("[ADMIN CALENDAR DAY] procedures raw query result", {
-      count: procedures.length,
-      procedures,
+    console.log("[DOCTOR TASKS] Success:", {
+      doctorId,
+      taskCount: formattedTasks.length
     });
 
-    const patientIds = Array.from(new Set(procedures.map((item) => item?.patient_id).filter(Boolean)));
-    let patientMap = new Map();
-    if (patientIds.length > 0) {
-      const patientsRes = await supabase
-        .from("patients")
-        .select("id, name, full_name, first_name, last_name")
-        .in("id", patientIds);
-
-      const patients = Array.isArray(patientsRes.data) ? patientsRes.data : [];
-      patientMap = new Map(patients.map((patient) => [String(patient.id), patient]));
-    }
-
-    const tasks = [];
-    const unscheduled = [];
-
-    for (const procedure of procedures) {
-      const rawStart = toIsoOrNull(procedure?.start_time || procedure?.scheduled_date || procedure?.due_date);
-      const rawEnd = toIsoOrNull(procedure?.end_time) || (rawStart ? addMinutesIso(rawStart, 30) : null);
-
-      const patient = patientMap.get(String(procedure?.patient_id || ""));
-      const patientName =
-        String(patient?.full_name || "").trim() ||
-        `${String(patient?.first_name || "").trim()} ${String(patient?.last_name || "").trim()}`.trim() ||
-        String(patient?.name || "").trim() ||
-        "Unknown Patient";
-
-      const block = {
-        id: procedure.id,
-        doctorId: procedure.doctor_id,
-        patientId: procedure.patient_id || null,
-        patientName,
-        procedure: procedure.title || procedure.procedure_name || procedure.procedure_code || "Procedure",
-        status: normalizeCalendarStatus(procedure),
-        startTime: rawStart,
-        endTime: rawEnd,
-        priority: String(procedure?.priority || "").toUpperCase() || null,
-        scheduledBy: String(procedure?.scheduled_by || "").toUpperCase() || null,
-        suggestedByDoctor: procedure?.suggested_by_doctor === true,
-      };
-
-      if (!rawStart) {
-        unscheduled.push(block);
-        continue;
-      }
-
-      const startDate = new Date(rawStart);
-      if (startDate >= dayStart && startDate <= dayEnd) {
-        tasks.push(block);
-      }
-    }
-
-    return res.json({
+    safeJson(200, {
       ok: true,
-      date: selectedDay,
-      doctors,
-      tasks,
-      unscheduled,
+      tasks: formattedTasks
     });
-  } catch (error) {
-    console.error("[ADMIN CALENDAR DAY] error:", error);
-    return res.status(500).json({ ok: false, error: "internal_error" });
+
+  } catch (err) {
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[DOCTOR TASKS] Error:", err);
+    safeJson(500, { ok: false, error: "internal_error" });
+  } finally {
+    clearTimeout(hardDeadline);
   }
 });
 
@@ -12380,292 +12196,6 @@ app.patch("/api/doctor/calendar/tasks/:taskId/suggest", async (req, res) => {
   } catch (error) {
     console.error("[DOCTOR CALENDAR SUGGEST] error:", error);
     return res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
-/* ================= DOCTOR TASKS ================= */
-app.get("/api/doctor/tasks", async (req, res) => {
-  let completed = false;
-  const safeJson = (statusCode, payload) => {
-    if (completed || res.headersSent) return;
-    completed = true;
-    res.status(statusCode).json(payload);
-  };
-
-  const hardDeadline = setTimeout(() => {
-    console.warn("[DOCTOR TASKS] hard deadline reached, returning fallback empty tasks");
-    safeJson(200, { ok: true, tasks: [] });
-  }, 8500);
-
-  try {
-    const v = await verifyDoctorToken(req);
-    if (!v.ok) {
-      return safeJson(401, { ok: false, error: "missing_token" });
-    }
-
-    const { doctorId } = v.decoded;
-
-    const withTimeout = async (promise, ms, label) => {
-      let timeoutId;
-      try {
-        return await Promise.race([
-          promise,
-          new Promise((_, reject) => {
-            timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-      }
-    };
-
-    const procedureSelectCandidates = [
-      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_name, procedure_code, tooth_number, due_date, scheduled_date, status, priority, created_at, updated_at",
-      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_code, tooth_number, due_date, scheduled_date, status, priority, created_at, updated_at",
-      "id, treatment_plan_id, patient_id, doctor_id, title, procedure_code, tooth_id, scheduled_date, status, created_at, updated_at",
-      "id, treatment_plan_id, patient_id, doctor_id, title, status, scheduled_date, created_at, updated_at",
-    ];
-
-    let procedures = [];
-    let proceduresError = null;
-
-    for (const selectClause of procedureSelectCandidates) {
-      const result = await withTimeout(
-        supabase
-          .from("procedures")
-          .select(selectClause)
-          .eq("doctor_id", doctorId)
-          .in("status", ["PLANNED", "IN_PROGRESS", "planned", "in_progress"])
-          .order("created_at", { ascending: false }),
-        7000,
-        "procedures_query"
-      );
-
-      if (!result?.error) {
-        procedures = Array.isArray(result?.data) ? result.data : [];
-        proceduresError = null;
-        break;
-      }
-
-      proceduresError = result.error;
-      if (!["42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
-        break;
-      }
-    }
-
-    if (proceduresError && !["42703", "PGRST204", "PGRST205"].includes(String(proceduresError?.code || ""))) {
-      console.error("[DOCTOR TASKS] procedures query error:", proceduresError);
-      return safeJson(200, { ok: true, tasks: [] });
-    }
-
-    let treatmentItems = [];
-    if (procedures.length === 0) {
-      const treatmentItemsSelectCandidates = [
-        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, procedure_description, status, category, type, scheduled_at, scheduled_date, due_date, created_at, updated_at, treatment_plans!inner(id, created_by_doctor_id, assigned_doctor_id, patient_encounters!left(id, patient_id))",
-        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, status, scheduled_at, scheduled_date, due_date, created_at, updated_at, treatment_plans!inner(id, created_by_doctor_id, assigned_doctor_id, patient_encounters!left(id, patient_id))",
-        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, status, scheduled_at, due_date, created_at, treatment_plans!inner(id, created_by_doctor_id, patient_encounters!left(id, patient_id))",
-      ];
-
-      for (const selectClause of treatmentItemsSelectCandidates) {
-        const result = await withTimeout(
-          supabase
-            .from("treatment_items")
-            .select(selectClause)
-            .eq("treatment_plans.created_by_doctor_id", doctorId)
-            .in("status", ["PLANNED", "IN_PROGRESS", "planned", "in_progress"])
-            .order("created_at", { ascending: false }),
-          7000,
-          "treatment_items_query"
-        );
-
-        if (!result?.error) {
-          treatmentItems = Array.isArray(result?.data) ? result.data : [];
-          break;
-        }
-
-        if (!["42703", "PGRST204"].includes(String(result.error?.code || ""))) {
-          console.warn("[DOCTOR TASKS] treatment_items query error:", result.error);
-          break;
-        }
-      }
-    }
-
-    const patientIds = Array.from(
-      new Set(
-        [
-          ...procedures.map((p) => p?.patient_id),
-          ...treatmentItems.map((item) => item?.treatment_plans?.patient_encounters?.patient_id),
-        ].filter(Boolean)
-      )
-    );
-
-    let patientMap = new Map();
-    if (patientIds.length > 0) {
-      try {
-        const patientsResult = await withTimeout(
-          supabase
-            .from("patients")
-            .select("id, patient_id, name, full_name, first_name, last_name")
-            .in("id", patientIds),
-          5000,
-          "task_patients_query"
-        );
-
-        const patients = Array.isArray(patientsResult?.data) ? patientsResult.data : [];
-        patientMap = new Map(patients.map((p) => [String(p.id), p]));
-      } catch (patientError) {
-        console.warn("[DOCTOR TASKS] patient lookup timeout/failure:", patientError?.message || patientError);
-      }
-    }
-
-    const now = Date.now();
-    const sanitizeName = (value) => {
-      const text = String(value || "").trim();
-      if (!text) return "";
-
-      const normalized = text
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .replace(/[^a-zçğıöşü0-9 ]/gi, "")
-        .trim();
-
-      if (!normalized) return "";
-      if (["unknown", "unknown unknown", "null", "undefined", "n/a", "na", "-", "--"].includes(normalized)) {
-        return "";
-      }
-
-      return text;
-    };
-    const procedureTasks = procedures
-      .map((procedure) => {
-        const status = String(procedure?.status || "").toUpperCase();
-        if (!["PLANNED", "IN_PROGRESS"].includes(status)) {
-          return null;
-        }
-
-        const patient = patientMap.get(String(procedure?.patient_id || "")) || null;
-        const legacyName = sanitizeName(patient?.name);
-        const fullName = sanitizeName(patient?.full_name);
-        const firstName = sanitizeName(patient?.first_name);
-        const lastName = sanitizeName(patient?.last_name);
-        const mergedName = sanitizeName(`${firstName} ${lastName}`.trim());
-        const displayName = legacyName || fullName || mergedName || "Unknown Patient";
-
-        const dueDateRaw =
-          procedure?.due_date ||
-          procedure?.scheduled_date ||
-          procedure?.planned_date ||
-          null;
-        const dueDateTs = dueDateRaw ? new Date(dueDateRaw).getTime() : null;
-
-        const rawPriority = String(procedure?.priority || "").toUpperCase();
-        const isHighPriority = rawPriority === "HIGH" || rawPriority === "URGENT";
-
-        return {
-          id: procedure.id,
-          procedure_id: procedure.id,
-          assigned_doctor_id: procedure.doctor_id || doctorId,
-          treatment_plan_id: procedure.treatment_plan_id || null,
-          patient_id: procedure.patient_id || null,
-          tooth_number: procedure.tooth_number || procedure.tooth_fdi_code || procedure.tooth_id || null,
-          procedure_name:
-            procedure.title ||
-            procedure.procedure_name ||
-            procedure.procedure_code ||
-            "Procedure",
-          due_date: dueDateRaw,
-          status,
-          priority: rawPriority || null,
-          high_priority: isHighPriority,
-          overdue: !!dueDateTs && dueDateTs < now,
-          created_at: procedure.created_at || null,
-          updated_at: procedure.updated_at || null,
-          patient: {
-            id: patient?.id || procedure.patient_id || null,
-            patient_id: patient?.patient_id || null,
-            name: displayName,
-          },
-          task_source: "PROCEDURE",
-        };
-      })
-      .filter(Boolean);
-
-    const treatmentItemTasks = treatmentItems
-      .map((item) => {
-        const status = String(item?.status || "").toUpperCase();
-        if (!["PLANNED", "IN_PROGRESS"].includes(status)) {
-          return null;
-        }
-
-        const patientId = item?.treatment_plans?.patient_encounters?.patient_id || null;
-        const patient = patientMap.get(String(patientId || "")) || null;
-        const legacyName = sanitizeName(patient?.name);
-        const fullName = sanitizeName(patient?.full_name);
-        const firstName = sanitizeName(patient?.first_name);
-        const lastName = sanitizeName(patient?.last_name);
-        const mergedName = sanitizeName(`${firstName} ${lastName}`.trim());
-        const displayName = legacyName || fullName || mergedName || "Unknown Patient";
-
-        const dueDateRaw =
-          item?.scheduled_at ||
-          item?.scheduledAt ||
-          item?.scheduled_date ||
-          item?.due_date ||
-          null;
-        const dueDateTs = dueDateRaw ? new Date(dueDateRaw).getTime() : null;
-
-        return {
-          id: item.id,
-          treatment_item_id: item.id,
-          assigned_doctor_id:
-            item?.treatment_plans?.assigned_doctor_id ||
-            item?.treatment_plans?.created_by_doctor_id ||
-            doctorId,
-          treatment_plan_id: item.treatment_plan_id || item?.treatment_plans?.id || null,
-          patient_id: patientId,
-          tooth_number: item.tooth_fdi_code || null,
-          procedure_name:
-            item.procedure_description ||
-            item.procedure_name ||
-            item.procedure_code ||
-            "Procedure",
-          procedure_category: item.category || item.type || null,
-          due_date: dueDateRaw,
-          status,
-          priority: null,
-          high_priority: false,
-          overdue: !!dueDateTs && dueDateTs < now,
-          created_at: item.created_at || null,
-          updated_at: item.updated_at || null,
-          patient: {
-            id: patient?.id || patientId || null,
-            patient_id: patient?.patient_id || null,
-            name: displayName,
-          },
-          task_source: "TREATMENT_ITEM",
-        };
-      })
-      .filter(Boolean);
-
-    const formattedTasks = [...procedureTasks, ...treatmentItemTasks]
-      .sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
-
-    console.log("[DOCTOR TASKS] Success:", {
-      doctorId,
-      taskCount: formattedTasks.length
-    });
-
-    safeJson(200, {
-      ok: true,
-      tasks: formattedTasks
-    });
-
-  } catch (err) {
-    console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR TASKS] Error:", err);
-    safeJson(500, { ok: false, error: "internal_error" });
-  } finally {
-    clearTimeout(hardDeadline);
   }
 });
 
@@ -14624,20 +14154,23 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       .eq("id", encounterId)
       .maybeSingle();
 
+    if (encounterError || !encounter) {
+      return res.status(404).json({ ok: false, error: "encounter_not_found" });
+    }
+
+    const normalizedDiagnoses = diagnoses.map((item) => ({
+      tooth_number: item?.tooth_number ?? null,
+      icd10_code: String(item?.icd10_code || "").trim(),
+      icd10_description: item?.icd10_description != null ? String(item.icd10_description) : "",
+      is_primary: !!item?.is_primary,
+      notes: item?.notes != null ? String(item.notes) : "",
+    }));
+
     const invalidDiagnosis = normalizedDiagnoses.find((item) => !item.icd10_code);
     if (invalidDiagnosis) {
       console.error("[ENCOUNTER DIAGNOSES POST] Missing icd10_code in one or more diagnoses");
       return res.status(400).json({ ok: false, error: "icd10_code_required" });
     }
-
-    const ownerDoctorId = String(encounter?.created_by_doctor_id || doctorId || "").trim();
-
-    // ATOMIC TRANSACTION: Ensure single primary diagnosis
-    const { data: transactionResult, error: transactionError } = await supabase.rpc('save_diagnoses_atomic', {
-      p_encounter_id: encounterId,
-      p_doctor_id: ownerDoctorId,
-      p_diagnoses: diagnoses
-    });
 
     const toothNumbers = Array.from(
       new Set(
@@ -14999,20 +14532,10 @@ app.patch("/api/doctor/encounters/:id/status", async (req, res) => {
       return res.status(404).json({ ok: false, error: "encounter_not_found" });
     }
 
-    const ownerDoctorId = String(existingEncounter?.created_by_doctor_id || doctorId || "").trim();
-
-    // Update encounter status
-    const { data: updatedEncounter, error: updateError } = await supabase
-      .from("patient_encounters")
-      .update({
-        status: status,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", encounterId)
-      .select()
-      .single();
-
-    const statusCandidates = statusCandidatesByInput[normalizedStatus] || [String(status)];
+    const normalizedStatus = String(status || "").trim().toUpperCase();
+    const statusCandidates = [
+      ...new Set([normalizedStatus, normalizedStatus.toLowerCase(), String(status).trim()].filter(Boolean)),
+    ];
 
     let updatedEncounter = null;
     let updateError = null;
@@ -20617,6 +20140,8 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
       }));
     }
 
+    const schemaCodes = new Set(["42703", "PGRST204", "PGRST205"]);
+
     const readItemsFromTable = async (tableName) => {
       for (const selectClause of selectCandidates) {
         const result = await supabase
@@ -20659,7 +20184,7 @@ app.get("/api/treatment-plans/:id/items", async (req, res) => {
       });
     }
 
-    let items = [
+    items = [
       ...(Array.isArray(primaryRead.items) ? primaryRead.items : []),
       ...(Array.isArray(fallbackRead.items) ? fallbackRead.items : []),
     ];
