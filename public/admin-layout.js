@@ -1,22 +1,39 @@
 /**
  * admin-layout.js — Clinifly Admin Shared Layout
  * Injects sidebar + topbar, handles auth, active nav, clinic name.
+ * All labels are i18n-aware and update on language change.
  */
 (function () {
 
-  /* ── Navigation items ──────────────────────────────────────── */
+  /* ── Navigation items (key maps to dashboard.nav.{key}) ────── */
   const NAV = [
-    { href: '/admin.html',           i18nKey: 'nav.dashboard',  fallback: 'Dashboard', icon: iconGrid(),     key: 'dashboard' },
-    { href: '/admin-patients.html',  i18nKey: 'nav.patients',   fallback: 'Hastalar',  icon: iconUsers(),    key: 'patients',  badge: 'sbPatients' },
-    { href: '/admin-treatment.html', i18nKey: 'nav.treatments', fallback: 'Tedaviler', icon: iconTooth(),    key: 'treatment' },
-    { href: '/admin-schedule.html',  i18nKey: 'nav.schedule',   fallback: 'Takvim',    icon: iconCal(),      key: 'schedule' },
+    { href: '/admin.html', icon: iconGrid(),     key: 'dashboard' },
+    { href: '/admin-patients.html',  icon: iconUsers(),    key: 'patients',  badge: 'sbPatients' },
+    { href: '/admin-treatment.html', icon: iconTooth(),    key: 'treatment' },
+    { href: '/admin-schedule.html',  icon: iconCal(),      key: 'schedule' },
   ];
   const NAV2 = [
-    { href: '/admin-doctor-applications-v2.html', i18nKey: 'nav.doctors',  fallback: 'Doktorlar', icon: iconDoctor(), key: 'doctors', badge: 'sbDoctors' },
-    { href: '/admin-chat.html',     i18nKey: 'nav.messages', fallback: 'Mesajlar', icon: iconChat(),     key: 'chat',    badge: 'sbChat' },
-    { href: '/admin-referrals.html', i18nKey: 'nav.referrals', fallback: 'Referanslar', icon: iconReferrals(), key: 'referrals', badge: 'sbReferrals' },
-    { href: '/admin-settings.html', i18nKey: 'nav.settings', fallback: 'Ayarlar',  icon: iconSettings(), key: 'settings' },
+    { href: '/admin-doctor-applications-v2.html', icon: iconDoctor(), key: 'doctors', badge: 'sbDoctors' },
+    { href: '/admin-chat.html',     icon: iconChat(),     key: 'chat',    badge: 'sbChat' },
+    { href: '/admin-files.html',    icon: iconFiles(),    key: 'files' },
+    { href: '/admin-referrals.html', icon: iconReferrals(), key: 'referrals', badge: 'sbReferrals' },
+    { href: '/admin-settings.html', icon: iconSettings(), key: 'settings' },
   ];
+
+  /* ── i18n helper ─────────────────────────────────────────────── */
+  function tn(key) {
+    if (window.i18n && typeof window.i18n.t === 'function') return window.i18n.t(key);
+    // Fallbacks
+    const fallbacks = {
+      'dashboard.nav.dashboard': 'Dashboard', 'dashboard.nav.patients': 'Patients',
+      'dashboard.nav.treatment': 'Treatments', 'dashboard.nav.schedule': 'Calendar',
+      'dashboard.nav.doctors': 'Doctors', 'dashboard.nav.chat': 'Messages',
+      'dashboard.nav.files': 'Files', 'dashboard.nav.referrals': 'Referrals', 'dashboard.nav.settings': 'Settings',
+      'dashboard.sidebar.mainMenu': 'Main Menu', 'dashboard.sidebar.management': 'Management',
+      'dashboard.sidebar.logout': 'Logout', 'dashboard.sidebar.clinic': 'Clinic',
+    };
+    return fallbacks[key] || key.split('.').pop();
+  }
 
   /* ── SVG Icons ─────────────────────────────────────────────── */
   function svg(d, extra) {
@@ -29,25 +46,20 @@
   function iconDoctor()   { return svg('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'); }
   function iconChat()     { return svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'); }
   function iconSettings() { return svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'); }
-  function iconLogout()   { return svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'); }
-  function iconReferrals(){ return svg('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'); }
-
-  function getAdminJwt() {
-    for (const k of ['adminToken', 'admin_token', 'token']) {
-      const v = localStorage.getItem(k);
-      if (typeof v === 'string' && v.split('.').length === 3) return v;
-    }
-    return null;
+  function iconFiles()    { return svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'); }
+  /** Referrals / invite network */
+  function iconReferrals() {
+    return svg('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>');
   }
+  function iconLogout()   { return svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'); }
 
   /* ── Build nav item HTML ──────────────────────────────────── */
   function navItem(item, active) {
     const cls = active ? 'al-nav-item active' : 'al-nav-item';
     const badge = item.badge ? `<span class="al-nav-badge" id="${item.badge}"></span>` : '';
-    const label = (window.i18n && window.i18n.t) ? (window.i18n.t(item.i18nKey) || item.fallback) : item.fallback;
-    return `<a href="${item.href}" class="${cls}">
+    return `<a href="${item.href}" class="${cls}" data-nav-key="${item.key}">
       <span class="al-nav-icon">${item.icon}</span>
-      <span data-i18n="${item.i18nKey}">${label}</span>
+      <span class="al-nav-label">${tn('dashboard.nav.' + item.key)}</span>
       ${badge}
     </a>`;
   }
@@ -61,22 +73,40 @@
         <div class="al-logo-icon">🦷</div>
         <div>
           <div class="al-logo-brand">Clinifly</div>
-          <div class="al-logo-clinic" id="alClinicName">Klinik</div>
+          <div class="al-logo-clinic" id="alClinicName">${tn('dashboard.sidebar.clinic')}</div>
         </div>
       </a>
       <nav class="al-nav">
-        <div class="al-nav-section" data-i18n="nav.mainMenu">Ana Menü</div>
+        <div class="al-nav-section" id="alNavSection1">${tn('dashboard.sidebar.mainMenu')}</div>
         ${nav1}
-        <div class="al-nav-section" style="margin-top:14px;" data-i18n="nav.management">Yönetim</div>
+        <div class="al-nav-section" id="alNavSection2" style="margin-top:14px;">${tn('dashboard.sidebar.management')}</div>
         ${nav2}
       </nav>
       <div class="al-sidebar-footer">
-        <button class="al-logout-btn" onclick="window.__alLogout()">
+        <button class="al-logout-btn" id="alLogoutBtn" onclick="window.__alLogout()">
           <span class="al-nav-icon">${iconLogout()}</span>
-          <span data-i18n="nav.logout">Çıkış Yap</span>
+          <span id="alLogoutLabel">${tn('dashboard.sidebar.logout')}</span>
         </button>
       </div>
     `;
+  }
+
+  /* ── Update sidebar labels (called on language change) ───── */
+  function updateSidebarLabels() {
+    // Nav item labels
+    document.querySelectorAll('.al-nav-item[data-nav-key]').forEach(el => {
+      const key = el.getAttribute('data-nav-key');
+      const labelEl = el.querySelector('.al-nav-label');
+      if (labelEl) labelEl.textContent = tn('dashboard.nav.' + key);
+    });
+    // Section headers
+    const s1 = document.getElementById('alNavSection1');
+    if (s1) s1.textContent = tn('dashboard.sidebar.mainMenu');
+    const s2 = document.getElementById('alNavSection2');
+    if (s2) s2.textContent = tn('dashboard.sidebar.management');
+    // Logout
+    const logoutLabel = document.getElementById('alLogoutLabel');
+    if (logoutLabel) logoutLabel.textContent = tn('dashboard.sidebar.logout');
   }
 
   /* ── Build topbar HTML ───────────────────────────────────── */
@@ -87,39 +117,24 @@
       </div>
       <div class="al-topbar-right">
         <div class="al-lang" id="alLang">
-          <span id="lang-tr" onclick="switchLang('tr')">🇹🇷 TR</span>
-          <span id="lang-en" onclick="switchLang('en')">🇬🇧 EN</span>
-          <span id="lang-ru" onclick="switchLang('ru')">🇷🇺 RU</span>
-          <span id="lang-ka" onclick="switchLang('ka')">🇬🇪 KA</span>
+          <span id="lang-tr" onclick="if(window.onLanguageChange)window.onLanguageChange('tr')">TR</span>
+          <span id="lang-en" onclick="if(window.onLanguageChange)window.onLanguageChange('en')">EN</span>
+          <span id="lang-ru" onclick="if(window.onLanguageChange)window.onLanguageChange('ru')">RU</span>
+          <span id="lang-ka" onclick="if(window.onLanguageChange)window.onLanguageChange('ka')">KA</span>
         </div>
       </div>
     `;
   }
 
-  window.switchLang = function(lang) {
-    if (window.onLanguageChange) window.onLanguageChange(lang);
-    ['tr','en','ru','ka'].forEach(l => {
-      const el = document.getElementById('lang-' + l);
-      if (el) el.classList.toggle('active', l === lang);
-    });
-  };
-
   /* ── Inject layout ───────────────────────────────────────── */
   function inject() {
-    // Auth guard (login saves adminToken / admin_token / token)
-    const token = getAdminJwt();
-    const isLikelyJwt = !!token;
-    if (!token || !isLikelyJwt) {
-      if (!window.location.pathname.includes('login') && !window.location.pathname.includes('register')) {
-        try {
-          localStorage.removeItem('token');
-          localStorage.removeItem('adminToken');
-          localStorage.removeItem('admin_token');
-        } catch {}
-        window.location.href = '/admin-login.html';
-        return;
-      }
+    // Auth guard
+    const token = localStorage.getItem('adminToken');
+    if (!token && !window.location.pathname.includes('login') && !window.location.pathname.includes('register')) {
+      window.location.href = '/admin-login.html';
+      return;
     }
+
     // Already injected?
     if (document.getElementById('alSidebar')) return;
 
@@ -159,31 +174,28 @@
     // Load clinic name
     loadClinicName();
 
-    // Sync active lang button with saved language
-    const savedLang = localStorage.getItem('admin_lang') || 'tr';
-    ['tr','en','ru','ka'].forEach(l => {
-      const el = document.getElementById('lang-' + l);
-      if (el) el.classList.toggle('active', l === savedLang);
-    });
+    // Start unread badge polling
+    startBadgePolling();
 
-    // Apply i18n translations to sidebar after inject
-    // (handles the case where i18n initialized before layout was injected)
-    if (window.i18n && typeof window.i18n.updatePage === 'function') {
-      window.i18n.updatePage();
-    }
+    // Hook into i18n updates to refresh sidebar labels
+    const prevOnI18nUpdated = window.onI18nUpdated;
+    window.onI18nUpdated = function () {
+      updateSidebarLabels();
+      if (typeof prevOnI18nUpdated === 'function') prevOnI18nUpdated();
+    };
   }
 
   /* ── Load clinic name ────────────────────────────────────── */
   async function loadClinicName() {
     try {
-      const token = getAdminJwt();
+      const token = localStorage.getItem('adminToken');
       if (!token) return;
       const res = await fetch('/api/admin/clinic', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const d = await res.json();
-        const name = d.branding?.clinicName || d.name || 'Klinik';
+        const name = d.branding?.clinicName || d.name || tn('dashboard.sidebar.clinic');
         const el = document.getElementById('alClinicName');
         if (el) el.textContent = name;
       }
@@ -191,25 +203,126 @@
   }
 
   /* ── Logout ──────────────────────────────────────────────── */
-  /* ── Wrap onLanguageChange to keep topbar buttons in sync ── */
-  const _origOnLangChange = window.onLanguageChange;
-  window.onLanguageChange = function(lang) {
-    ['tr','en','ru','ka'].forEach(l => {
-      const el = document.getElementById('lang-' + l);
-      if (el) el.classList.toggle('active', l === lang);
-    });
-    if (typeof _origOnLangChange === 'function') _origOnLangChange(lang);
-  };
-  // switchLang is already global (defined above) and calls onLanguageChange
-
   window.__alLogout = function () {
-    try {
-      localStorage.removeItem('token');
-      localStorage.removeItem('adminToken');
-      localStorage.removeItem('admin_token');
-    } catch (_) {}
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('selected_patient_id');
     window.location.href = '/admin-login.html';
   };
+
+  /* ── Global 401 handler — call after any failing fetch ───── */
+  window.handle401 = function (status) {
+    if (status === 401) {
+      console.warn('[AUTH] 401 — token geçersiz veya süresi dolmuş, login sayfasına yönlendiriliyor.');
+      localStorage.removeItem('adminToken');
+      localStorage.removeItem('admin_token');
+      window.location.href = '/admin-login.html?reason=session_expired';
+      return true;
+    }
+    return false;
+  };
+
+  function adminApiBase() {
+    return window.location.hostname.includes('onrender.com')
+      ? 'https://cliniflow-admin.onrender.com'
+      : `http://${window.location.hostname}:10000`;
+  }
+
+  /* ── Unread chat badge polling ───────────────────────────── */
+  function updateChatBadge(count) {
+    const el = document.getElementById('sbChat');
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : String(count);
+      el.style.display = 'inline-flex';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  /** Bekleyen doktor başvuruları (Doktorlar menüsü — #sbDoctors) */
+  function updateDoctorsBadge(count) {
+    const el = document.getElementById('sbDoctors');
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : String(count);
+      el.style.display = 'inline-flex';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  function updateReferralsBadge(count) {
+    const el = document.getElementById('sbReferrals');
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : String(count);
+      el.style.display = 'inline-flex';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  async function pollUnreadCount() {
+    try {
+      const token = localStorage.getItem('adminToken');
+      if (!token) return;
+      const res = await fetch(`${adminApiBase()}/api/admin/messages/unread-counts?totalOnly=1`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+      const total = Number(data.total || 0);
+      updateChatBadge(total);
+    } catch (_) {}
+  }
+
+  async function pollPendingReferrals() {
+    try {
+      const token = localStorage.getItem('adminToken');
+      if (!token) return;
+      const res = await fetch(`${adminApiBase()}/api/admin/referrals?status=PENDING`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.referrals) ? data.referrals : []);
+      updateReferralsBadge(items.length);
+    } catch (_) {}
+  }
+
+  async function pollPendingDoctorApplications() {
+    try {
+      const token = localStorage.getItem('adminToken');
+      if (!token) return;
+      // admin-doctor-applications-v2.html ile aynı kaynak (clinic_code); /api/admin/doctors clinic_id kullanır, sayım sapabilir.
+      const res = await fetch(`${adminApiBase()}/admin/doctor-list`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+      const doctors = Array.isArray(data.doctors) ? data.doctors : [];
+      const pending = doctors.filter(function (d) {
+        return String(d.status || '').toUpperCase() === 'PENDING';
+      }).length;
+      updateDoctorsBadge(pending);
+    } catch (_) {}
+  }
+
+  function startBadgePolling() {
+    pollUnreadCount();
+    pollPendingDoctorApplications();
+    pollPendingReferrals();
+    setInterval(function () {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      pollUnreadCount();
+      pollPendingDoctorApplications();
+      pollPendingReferrals();
+    }, 45000);
+  }
 
   /* ── Run ─────────────────────────────────────────────────── */
   if (document.readyState === 'loading') {
@@ -217,5 +330,13 @@
   } else {
     inject();
   }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+      pollUnreadCount();
+      pollPendingDoctorApplications();
+      pollPendingReferrals();
+    }
+  });
 
 })();

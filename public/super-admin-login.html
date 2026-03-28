@@ -190,7 +190,7 @@
   </div>
 
 <script>
-  const API_BASE = window.location.origin;
+  const API = window.location.origin;
   
   function setMsg(msg, type = "ok") {
     const container = document.getElementById("alert-container");
@@ -221,7 +221,7 @@
     submitBtn.textContent = "Giriş yapılıyor...";
     
     try {
-      const res = await fetch(`${API_BASE}/api/super-admin/login`, {
+      const res = await fetch(`${API}/api/super-admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -268,7 +268,7 @@
   const existingToken = localStorage.getItem("super_admin_token");
   if (existingToken) {
     // Verify token by calling /api/super-admin/me
-    fetch(`${API_BASE}/api/super-admin/me`, {
+    fetch(`${API}/api/super-admin/me`, {
       headers: { "Authorization": `Bearer ${existingToken}` }
     })
     .then(res => {

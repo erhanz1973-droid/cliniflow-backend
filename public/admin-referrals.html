@@ -5,1002 +5,376 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Clinifly Admin – Referrals</title>
   <script>
-    // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("adminToken");
-      if (!token) {
-        window.location.href = "/admin-login.html";
-      }
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      if (!token) window.location.href = "/admin-login.html";
     })();
   </script>
   <script src="/admin-i18n.js"></script>
-  <link rel="stylesheet" href="/admin-layout.css?v=2" />
+  <link rel="stylesheet" href="/admin-layout.css" />
+  <script src="/admin-layout.js?v=20260322" defer></script>
   <style>
-    :root { 
-      --bg:#111827; 
-      --card:#1f2937; 
-      --b:#374151; 
-      --p:#2563eb; 
-      --g:#16a34a; 
-      --r:#dc2626;
-      --warn:#f59e0b;
-      --muted:#a7b2c8;
-    }
-    body{ 
-      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
-      margin:0; 
-      background:var(--bg); 
-      color:#e6eaf2; 
-    }
-    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
-    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
-    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
-    .card{ 
-      background:var(--card); 
-      border:0.5px solid rgba(55, 65, 81, 0.5); 
-      border-radius:16px; 
-      padding:24px; 
-      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
-      margin-bottom:16px;
-    }
-    .nav{
-      display:flex;
-      gap:12px;
-      margin-bottom:20px;
-      padding-bottom:16px;
-      border-bottom:1px solid #1f2937;
-      flex-wrap:wrap;
-    }
-    .nav a{
-      color:#6aa6ff;
-      text-decoration:none;
-      font-weight:600;
-      padding:8px 16px;
-      border-radius:8px;
-      border:1px solid #334155;
-      background:var(--card);
-      transition:all 0.2s;
-      font-size:14px;
-      position:relative;
-    }
-    .nav a:hover{
-      background:#1a2640;
-      border-color:#6aa6ff;
-      color:#8bb5ff;
-    }
-    .nav a.active{
-      background:#2563eb;
-      border-color:#2563eb;
-      color:#fff;
-    }
-    .nav-badge{
-      position:absolute;
-      top:-4px;
-      right:-4px;
-      background:var(--r);
-      color:#fff;
-      border-radius:10px;
-      min-width:18px;
-      height:18px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size:11px;
-      font-weight:700;
-      padding:0 4px;
-      border:2px solid var(--bg);
-    }
-    .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-    label{ font-size:12px; color:#e6eaf2; display:block; margin-bottom:6px; font-weight:600; }
-    input, select, button{
-      font-size:14px; padding:10px 12px; border-radius:8px; border:1px solid var(--b); background:#1f2937; color:#e6eaf2;
-    }
-    button{ 
-      cursor:pointer; 
-      border:none; 
-      background:var(--p); 
-      color:#fff; 
-      font-weight:600; 
-      transition:background 0.2s;
-    }
-    button:hover{ background:#1d4ed8; }
-    button.secondary{ background:#6b7280; }
-    button.secondary:hover{ background:#4b5563; }
-    button.success{ background:var(--g); }
-    button.success:hover{ background:#15803d; }
-    button.danger{ background:var(--r); }
-    button.danger:hover{ background:#b91c1c; }
-    .list{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
-    .item{ 
-      border:1px solid var(--b); 
-      border-radius:10px; 
-      padding:16px; 
-      display:flex; 
-      justify-content:space-between; 
-      gap:12px; 
-      align-items:start; 
-      background:#0b1220;
-      transition:background 0.2s;
-    }
-    .item:hover{
-      background:var(--bg);
-    }
-    .item-left{ flex:1; }
-    .item-title{ 
-      font-size:15px; 
-      font-weight:600; 
-      margin-bottom:8px;
-      color:#e6eaf2;
-    }
-    .item-meta{ 
-      color:var(--muted); 
-      font-size:13px; 
-      margin-top:4px;
-      line-height:1.6;
-    }
-    .status{ 
-      font-weight:700; 
-      font-size:11px; 
-      padding:4px 10px; 
-      border-radius:999px; 
-      border:1px solid var(--b);
-      text-transform:uppercase;
-      white-space:nowrap;
-    }
-    .status.pending{ background:#fef3c7; border-color:#fde68a; color:#92400e; }
-    .status.approved{ background:#dcfce7; border-color:#86efac; color:#166534; }
-    .status.rejected{ background:#fee2e2; border-color:#fecaca; color:#991b1b; }
-    .muted{ color:var(--muted); font-size:13px; }
-    .empty-state{
-      text-align:center;
-      padding:40px 20px;
-      color:#9ca3af;
-    }
-    .empty-state-icon{
-      font-size:48px;
-      margin-bottom:12px;
-    }
-    .loading{
-      text-align:center;
-      padding:20px;
-      color:var(--muted);
-    }
-    .err{ color:var(--r); font-weight:700; }
-    .okmsg{ color:var(--g); font-weight:700; }
-    .token-section{
-      background:#0b1220;
-      border:1px solid var(--b);
-      border-radius:8px;
-      padding:12px;
-      margin-bottom:16px;
-    }
-    .navbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 24px;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--b);
-      flex-wrap: wrap;
-    }
-    .navbar-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .navbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .navbar-logo img {
-      height: 32px;
-      width: auto;
-    }
-    .navbar-logo-text {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--p);
-      display: none; /* Hide text, show logo only */
-    }
-    .navbar-clinic-name {
-      font-size: 14px;
-      color: var(--muted);
-      font-weight: 500;
-    }
-    .navbar-center {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex: 1;
-      justify-content: center;
-    }
-    .navbar-right {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .nav-link {
-      color: var(--muted);
-      text-decoration: none;
-      font-weight: 500;
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      position: relative;
-      transition: all 0.2s;
-    }
-    .nav-link:hover {
-      background: rgba(37, 99, 235, 0.1);
-      color: var(--p);
-    }
-    .nav-link.active {
-      background: rgba(37, 99, 235, 0.2);
-      color: var(--p);
-    }
-    .nav-link.secondary {
-      color: var(--muted);
-    }
-    .lang-toggle {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .lang-toggle span.active {
-      color: var(--p);
-      font-weight: 600;
-    }
-    .nav-badge {
-      position: absolute;
-      top: -4px;
-      right: -4px;
-      background: var(--r);
-      color: #fff;
-      border-radius: 10px;
-      min-width: 18px;
-      height: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 0 4px;
-      border: 2px solid var(--bg);
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background: #111827; color: #e6eaf2; }
+    body.al-ready { background: #111827; color: #e6eaf2; }
+    body.al-ready .al-topbar { background: #1f2937; border-bottom-color: #374151; }
+    body.al-ready .al-topbar .al-page-title { color: #e5e7eb; }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .page-title { font-size: 22px; font-weight: 800; color: #f1f5f9; margin: 0; }
+
+    /* Stats row */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .stat-card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 18px 20px; }
+    .stat-label { font-size: 12px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
+    .stat-value { font-size: 28px; font-weight: 800; color: #f1f5f9; }
+
+    /* Table */
+    .card { background: #1f2937; border: 1px solid #374151; border-radius: 14px; overflow: hidden; }
+    .card-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #374151; flex-wrap: wrap; gap: 10px; }
+    .card-title { font-size: 15px; font-weight: 700; color: #f1f5f9; }
+    .refresh-btn { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .refresh-btn:hover { background: #1d4ed8; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; background: #111827; }
+    tbody tr { border-top: 1px solid #374151; transition: background .15s; }
+    tbody tr:hover { background: #0f172a; }
+    tbody td { padding: 14px 16px; font-size: 14px; color: #e2e8f0; }
+
+    .referrer-name { font-weight: 700; color: #f1f5f9; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .badge-invited    { background: #312e81; color: #a5b4fc; }
+    .badge-registered { background: #1e3a5f; color: #93c5fd; }
+    .badge-treated    { background: #14532d; color: #86efac; }
+    .badge-rewarded   { background: #713f12; color: #fcd34d; }
+
+    .count-cell { font-size: 18px; font-weight: 800; text-align: center; }
+    .count-invited    { color: #818cf8; }
+    .count-registered { color: #60a5fa; }
+    .count-treated    { color: #4ade80; }
+
+    .empty { text-align: center; padding: 48px 20px; color: #64748b; }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .loading-row td { text-align: center; padding: 32px; color: #64748b; }
+
+    /* Status filter */
+    .filter-row { display: flex; gap: 8px; align-items: center; }
+    select { background: #111827; border: 1px solid #374151; color: #e2e8f0; border-radius: 8px; padding: 7px 12px; font-size: 13px; }
+
+    .progress-bar { width: 100%; background: #374151; border-radius: 4px; height: 6px; margin-top: 4px; overflow: hidden; }
+    .progress-fill { height: 100%; background: #2563eb; border-radius: 4px; transition: width .3s; }
+
+    .actions-cell { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn-approve { background: #16a34a; color: #fff; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-approve:hover:not(:disabled) { background: #15803d; }
+    .btn-reject { background: transparent; color: #f87171; border: 1px solid #991b1b; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-reject:hover:not(:disabled) { background: rgba(153, 27, 27, 0.15); }
+    .btn-approve:disabled, .btn-reject:disabled { opacity: 0.45; cursor: not-allowed; }
+    .pending-code { font-family: ui-monospace, monospace; font-size: 12px; color: #94a3b8; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1 data-i18n="referrals.title">🎁 Clinifly Admin – Referrals</h1>
-    
-    <nav class="navbar">
-      <div class="navbar-left">
-        <div class="navbar-logo">
-          <img src="/logo.svg" alt="Clinifly" />
-          <span class="navbar-logo-text">Clinifly</span>
-        </div>
-        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
-      </div>
-      <div class="navbar-center">
-        <a href="/admin-dashboard.html" class="nav-link" data-i18n="dashboard.nav.dashboard">Dashboard</a>
-        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink" data-i18n="dashboard.nav.patients">
-          Patients
-          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
-        <a href="/admin-chat.html" class="nav-link" id="chatNavLink" data-i18n="dashboard.nav.chat">
-          Chat
-          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
-        </a>
-      </div>
-      <div class="navbar-right">
-        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
-          <span>|</span>
-          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
-        </div>
-        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
+    <div class="page-header">
+      <h1 class="page-title">🎁 Referral Activity</h1>
+      <button class="refresh-btn" onclick="load()">↻ Refresh</button>
     </div>
-    </nav>
 
+    <!-- Stats -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="stat-label">Total Referrers</div><div class="stat-value" id="statReferrers">—</div></div>
+      <div class="stat-card"><div class="stat-label">Total Invited</div><div class="stat-value" id="statInvited">—</div></div>
+      <div class="stat-card"><div class="stat-label">Registered</div><div class="stat-value" id="statRegistered">—</div></div>
+      <div class="stat-card"><div class="stat-label">Treated</div><div class="stat-value" id="statTreated">—</div></div>
+      <div class="stat-card"><div class="stat-label">Bekleyen onay</div><div class="stat-value" id="statPending">—</div></div>
+    </div>
+
+    <!-- Pending admin approval -->
+    <div class="card" id="pendingApprovalCard" style="margin-bottom: 24px;">
+      <div class="card-header">
+        <span class="card-title">Onay bekleyen referral'lar</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Davet eden</th>
+            <th>Davet edilen</th>
+            <th>Durum</th>
+            <th>Kod</th>
+            <th>Tarih</th>
+            <th style="min-width: 160px;">İşlem</th>
+          </tr>
+        </thead>
+        <tbody id="pendingBody">
+          <tr class="loading-row"><td colspan="6">Yükleniyor…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Table -->
     <div class="card">
-      <div class="row" style="justify-content:space-between;">
-        <h2 style="margin:0;" data-i18n="referrals.referrals">Referrals</h2>
-        <div class="row" style="margin:0;">
-          <select id="statusFilter">
-            <option value="" data-i18n="referrals.filterAll">Tümü</option>
-            <option value="PENDING" data-i18n="referrals.status.PENDING">Pending</option>
-            <option value="APPROVED" data-i18n="referrals.status.APPROVED">Approved</option>
-            <option value="REJECTED" data-i18n="referrals.status.REJECTED">Rejected</option>
+      <div class="card-header">
+        <span class="card-title">Referrer Summary</span>
+        <div class="filter-row">
+          <select id="statusFilter" onchange="load()">
+            <option value="">All statuses</option>
+            <option value="registered">Registered</option>
+            <option value="treated">Treated</option>
+            <option value="rewarded">Rewarded</option>
           </select>
-          <button onclick="loadReferrals()" data-i18n="referrals.refresh">Yenile</button>
         </div>
       </div>
-      <div id="msg" class="muted" style="margin-top:8px;"></div>
-      <div id="referralsList" class="loading" data-i18n="referrals.loading">Yükleniyor...</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Referrer</th>
+            <th style="text-align:center;">Invited</th>
+            <th style="text-align:center;">Registered</th>
+            <th style="text-align:center;">Treated</th>
+            <th>Invited Patients</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr class="loading-row"><td colspan="5">Loading…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
 <script>
-  // Nav: if a patient is selected, make top-nav Travel link carry patientId.
-  (function bindNavTravelLink() {
-    try {
-      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
-      if (!pid) return;
-      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
-      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
-    } catch {}
-  })();
+  const API = window.location.hostname.includes("onrender.com") ? "" : `http://${window.location.hostname}:10000`;
 
-  const API = "https://cliniflow-admin.onrender.com";
+  function token() {
+    return (localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "").trim();
+  }
 
-  function getAdminToken(){
-    // localStorage'dan al
-    const savedToken = localStorage.getItem('adminToken');
-    if (savedToken && savedToken.trim()) {
-      return savedToken.trim();
+  function headers() {
+    const t = token();
+    return { Authorization: t.startsWith("Bearer ") ? t : `Bearer ${t}`, "Content-Type": "application/json" };
+  }
+
+  function statusClass(s) {
+    const v = String(s || "").toLowerCase();
+    if (v === "treated")    return "badge-treated";
+    if (v === "registered") return "badge-registered";
+    if (v === "rewarded")   return "badge-rewarded";
+    return "badge-invited";
+  }
+
+  function statusLabel(s) {
+    const v = String(s || "").toLowerCase();
+    if (v === "treated")    return "Treated";
+    if (v === "registered") return "Registered";
+    if (v === "rewarded")   return "Rewarded";
+    if (v === "approved")   return "Registered";
+    return "Invited";
+  }
+
+  function normalizeStatus(s) {
+    const v = String(s || "").toLowerCase();
+    if (["treated", "completed"].includes(v)) return "treated";
+    if (["registered", "approved", "pending", "created"].includes(v)) return "registered";
+    if (v === "rewarded") return "rewarded";
+    return "invited";
+  }
+
+  /** Backend PENDING / INVITED / REGISTERED map to legacy "PENDING" — admin can still approve/reject. */
+  function needsAdminApproval(item) {
+    const s = String(item.status || "").toUpperCase();
+    return s === "PENDING";
+  }
+
+  function formatReferralDate(createdAt) {
+    if (createdAt == null || createdAt === "") return "—";
+    const n = typeof createdAt === "number" ? createdAt : Date.parse(createdAt);
+    if (Number.isNaN(n)) return "—";
+    return new Date(n).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" });
+  }
+
+  async function patchReferralAction(id, action) {
+    const path = action === "approve" ? "approve" : "reject";
+    const r = await fetch(`${API}/api/admin/referrals/${encodeURIComponent(id)}/${path}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: "{}",
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const rawErr = json.error;
+      const msg =
+        json.message ||
+        (rawErr === "Default discount percentages must be entered in Clinic Settings page"
+          ? "Klinik ayarlarında referral indirim yüzdeleri tanımlanmalı (Clinic Settings)."
+          : rawErr) ||
+        r.statusText;
+      throw new Error(String(msg || "İstek başarısız"));
     }
-    return '';
-  }
-  function logout() {
-    try {
-      localStorage.removeItem("adminToken");
-      console.log("[LOGOUT] Admin token cleared");
-    } catch (e) {
-      console.error("[LOGOUT] Error clearing token:", e);
-    }
-    window.location.href = "/admin-login.html";
+    return json;
   }
 
-  function setMsg(text, kind="muted"){
-    const el = document.getElementById('msg');
-    el.className = kind === "ok" ? "okmsg" : (kind==="err" ? "err" : "muted");
-    el.textContent = text || "";
-  }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  function adminHeaders(extra = {}) {
-    const token = getAdminToken();
-    return {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...extra,
-    };
-  }
-
-  let defaultInviterPercent = null;
-  let defaultInvitedPercent = null;
-
-  async function loadReferralDefaults() {
-    const adminToken = getAdminToken();
-    if (!adminToken) {
-      console.warn("No admin token found for loading referral defaults");
+  function renderPendingRows(items, pendingBody, sessionExpired) {
+    if (sessionExpired) {
+      pendingBody.innerHTML =
+        '<tr class="loading-row"><td colspan="6" style="color:#f87171;">Oturum süresi doldu. Lütfen tekrar giriş yapın.</td></tr>';
       return;
     }
-    try {
-      const headers = {};
-      headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
-      console.log("Loading clinic data from:", `${API}/api/admin/clinic`);
-      const res = await fetch(`${API}/api/admin/clinic`, { headers });
-      if (!res.ok) {
-        console.error("Failed to load clinic data:", res.status, res.statusText);
-        return;
-      }
-      const clinic = await res.json();
-      console.log("Clinic data from API:", clinic); // Debug: Log the full clinic structure
-      
-      // Parse settings if it's a string (as shown in Supabase data)
-      let parsedSettings = clinic.settings;
-      if (typeof clinic.settings === 'string') {
-        try {
-          parsedSettings = JSON.parse(clinic.settings);
-          console.log("Parsed clinic.settings:", parsedSettings);
-        } catch (e) {
-          console.warn("Failed to parse clinic.settings as JSON:", e);
-          parsedSettings = {};
-        }
-      }
-      
-      // Debug: Explore all possible paths for referral settings
-      console.log("Checking all possible referral paths:");
-      console.log("parsedSettings:", parsedSettings);
-      console.log("parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
-      console.log("parsedSettings?.referralLevels:", parsedSettings?.referralLevels);
-      console.log("clinic.referralLevels:", clinic.referralLevels);
-      console.log("clinic.defaultInviterDiscountPercent:", clinic.defaultInviterDiscountPercent);
-      console.log("clinic.defaultInvitedDiscountPercent:", clinic.defaultInvitedDiscountPercent);
-      
-      // Log ALL properties in settings to find referral data
-      console.log("All settings properties:");
-      Object.keys(clinic.settings || {}).forEach(key => {
-        console.log(`  ${key}:`, clinic.settings[key]);
-        if (key.toLowerCase().includes('referral') || key.toLowerCase().includes('discount')) {
-          console.log(`    ^ Found referral/discount related property: ${key}`);
-        }
-      });
-      
-      // Also check ALL clinic properties for referral data
-      console.log("All clinic properties:");
-      Object.keys(clinic || {}).forEach(key => {
-        if (key.toLowerCase().includes('referral') || key.toLowerCase().includes('discount')) {
-          console.log(`  Found clinic property: ${key}:`, clinic[key]);
-        }
-      });
-      
-      // Check if settings is a string that needs parsing
-      if (typeof clinic.settings === 'string') {
-        try {
-          const parsedSettings = JSON.parse(clinic.settings);
-          console.log("Parsed clinic.settings:", parsedSettings);
-          console.log("Parsed settings referral paths:");
-          console.log("parsedSettings.referralLevel1Percent:", parsedSettings.referralLevel1Percent);
-          console.log("parsedSettings.referralLevels:", parsedSettings.referralLevels);
-        } catch (e) {
-          console.warn("Failed to parse clinic.settings as JSON:", e);
-        }
-      }
-      const toNumOrNull = (v) => {
-        if (v === "" || v === undefined || v === null) return null;
-        const n = Number(v);
-        return Number.isFinite(n) ? n : null;
-      };
-
-      // Supabase clinic config is stored in settings.referralLevels / settings.referralLevel1Percent.
-      // File-based clinics may still have defaultInviterDiscountPercent/defaultInvitedDiscountPercent.
-      // Backend API returns default_inviter_discount_percent and default_invited_discount_percent directly.
-      // Settings may be a JSON string that needs parsing.
-      
-      // Debug each path specifically
-      console.log("Debugging extraction paths:");
-      console.log("1. parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
-      console.log("2. parsedSettings?.referralLevels?.level1:", parsedSettings?.referralLevels?.level1);
-      console.log("3. clinic?.referralLevels?.level1:", clinic?.referralLevels?.level1);
-      console.log("4. clinic?.default_inviter_discount_percent:", clinic?.default_inviter_discount_percent);
-      
-      const level1Raw =
-        parsedSettings?.referralLevel1Percent ??
-        parsedSettings?.referralLevels?.level1 ??
-        clinic?.referralLevels?.level1 ??
-        clinic?.default_inviter_discount_percent ??
-        null;
-      const inviter = toNumOrNull(level1Raw);
-      
-      // For invited discount, check the same paths first, then fallback to invited-specific fields
-      console.log("Debugging invited extraction paths:");
-      console.log("1. parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
-      console.log("2. parsedSettings?.referralLevels?.level1:", parsedSettings?.referralLevels?.level1);
-      console.log("3. clinic?.referralLevels?.level1:", clinic?.referralLevels?.level1);
-      console.log("4. clinic?.default_invited_discount_percent:", clinic?.default_invited_discount_percent);
-      
-      const invitedLevel1Raw =
-        parsedSettings?.referralLevel1Percent ??
-        parsedSettings?.referralLevels?.level1 ??
-        clinic?.referralLevels?.level1 ??
-        clinic?.default_invited_discount_percent ??
-        null;
-      const invited = toNumOrNull(invitedLevel1Raw) ?? inviter;
-
-      defaultInviterPercent = inviter;
-      defaultInvitedPercent = invited;
-      
-      // Debug: Log the extracted values
-      console.log("Extracted referral defaults:", {
-        level1Raw,
-        invitedLevel1Raw,
-        inviter,
-        invited,
-        defaultInviterPercent,
-        defaultInvitedPercent
-      });
-      
-      if (defaultInviterPercent != null || defaultInvitedPercent != null) {
-        const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent ?? 0, invited: defaultInvitedPercent ?? 0 }) : `Varsayılan indirimler: Davet Eden %${defaultInviterPercent ?? 0}, Davet Edilen %${defaultInvitedPercent ?? 0}`;
-        setMsg(msg, "ok");
-      } else {
-        // Fallback: if no discount data found, use values that comply with backend validation (0-50)
-        console.warn("No discount data found in clinic settings, using fallback values");
-        defaultInviterPercent = 25; // Within 0-50 range as required by backend
-        defaultInvitedPercent = 25; // Same as inviter for now
-        const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent, invited: defaultInvitedPercent }) : `Varsayılan indirimler (fallback): Davet Eden %${defaultInviterPercent}, Davet Edilen %${defaultInvitedPercent}`;
-        setMsg(msg, "ok");
-      }
-    } catch (e) {
-      console.warn("Load referral defaults error:", e);
-    }
-  }
-
-  async function loadReferrals() {
-    const adminToken = getAdminToken();
-    if (!adminToken) {
-      const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "⚠️ Admin token bulunamadı. Lütfen admin olarak giriş yapın.";
-      setMsg(msg, "err");
+    const pending = items.filter(needsAdminApproval).filter((r) => r.id);
+    document.getElementById("statPending").textContent = String(pending.length);
+    if (pending.length === 0) {
+      pendingBody.innerHTML =
+        '<tr><td colspan="6"><div class="empty" style="padding:24px;"><div>Bekleyen onay yok.</div></div></td></tr>';
       return;
     }
+    pending.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    pendingBody.innerHTML = pending
+      .map((ref) => {
+        const id = String(ref.id);
+        const inviter = escHtml(ref.inviterPatientName || ref.inviterPatientId || "—");
+        const invited = escHtml(ref.invitedPatientName || ref.invitedPatientId || "—");
+        const code = ref.referralCode ? `<span class="pending-code">${escHtml(String(ref.referralCode))}</span>` : "—";
+        return `<tr data-pending-row="${escHtml(id)}">
+        <td>${inviter}</td>
+        <td>${invited}</td>
+        <td><span class="badge badge-registered">Onay bekliyor</span></td>
+        <td>${code}</td>
+        <td>${escHtml(formatReferralDate(ref.createdAt))}</td>
+        <td class="actions-cell">
+          <button type="button" class="btn-approve" data-ref-action="approve" data-ref-id="${escHtml(id)}">Onayla</button>
+          <button type="button" class="btn-reject" data-ref-action="reject" data-ref-id="${escHtml(id)}">Reddet</button>
+        </td>
+      </tr>`;
+      })
+      .join("");
+  }
 
-    const listEl = document.getElementById('referralsList');
-    listEl.className = "loading";
-    const loadingText = window.i18n ? window.i18n.t('referrals.loading') : "Yükleniyor...";
-    listEl.textContent = loadingText;
-
+  document.getElementById("pendingApprovalCard").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-ref-action]");
+    if (!btn || btn.disabled) return;
+    const id = btn.getAttribute("data-ref-id");
+    const action = btn.getAttribute("data-ref-action");
+    if (!id || !action) return;
+    const row = btn.closest("tr[data-pending-row]");
+    const rowButtons = row ? row.querySelectorAll("button[data-ref-action]") : [];
+    rowButtons.forEach((b) => {
+      b.disabled = true;
+    });
     try {
-      const statusRaw = document.getElementById('statusFilter').value;
-      const status = statusRaw ? String(statusRaw).toUpperCase() : "";
-      const url = status
-        ? `${API}/api/admin/referrals?status=${encodeURIComponent(status)}`
-        : `${API}/api/admin/referrals`;
-      
-      const headers = {
-        "Content-Type": "application/json"
-      };
-      
-      if (adminToken.startsWith("Bearer ")) {
-        headers["Authorization"] = adminToken;
-      } else {
-        headers["Authorization"] = `Bearer ${adminToken}`;
-      }
+      await patchReferralAction(id, action);
+      await load();
+    } catch (err) {
+      alert(String(err.message || err));
+      rowButtons.forEach((b) => {
+        b.disabled = false;
+      });
+    }
+  });
 
-      const r = await fetch(url, { headers, cache: "no-store" });
-      
+  async function load() {
+    const tbody = document.getElementById("tableBody");
+    const pendingBody = document.getElementById("pendingBody");
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
+    pendingBody.innerHTML = '<tr class="loading-row"><td colspan="6">Yükleniyor…</td></tr>';
+
+    const statusFilter = document.getElementById("statusFilter").value.toLowerCase();
+
+    let items = [];
+    let sessionExpired = false;
+    try {
+      const r = await fetch(`${API}/api/admin/referrals`, { headers: headers(), cache: "no-store" });
       if (r.status === 401) {
-        const msg = window.i18n ? window.i18n.t('referrals.errors.invalidToken') : "❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.";
-        setMsg(msg, "err");
-        listEl.className = "empty-state";
-        const authError = window.i18n ? window.i18n.t('referrals.errors.invalidToken') : "Yetkilendirme hatası";
-        listEl.innerHTML = `<div style="color:var(--r);">${authError}</div>`;
+        sessionExpired = true;
+        tbody.innerHTML = '<tr class="loading-row"><td colspan="5" style="color:#f87171;">Session expired. Please log in again.</td></tr>';
+        renderPendingRows([], pendingBody, true);
+        document.getElementById("statPending").textContent = "—";
         return;
       }
-
-      if (!r.ok) {
-        throw new Error(`HTTP ${r.status}`);
-      }
-
-      const data = await r.json();
-      const items = data.items || [];
-
-      if (items.length === 0) {
-        listEl.className = "empty-state";
-        const noReferralsText = window.i18n ? window.i18n.t('referrals.noReferrals') : "Referral bulunamadı.";
-        listEl.innerHTML = `
-          <div class="empty-state-icon">📭</div>
-          <div>${noReferralsText}</div>
-        `;
-        setMsg("", "muted");
-        return;
-      }
-
-      // Load patient names if not already in referral data
-      let patientNamesMap = {};
-      const allPatientIds = new Set();
-      items.forEach(ref => {
-        if (ref.inviterPatientId) allPatientIds.add(ref.inviterPatientId);
-        if (ref.invitedPatientId) allPatientIds.add(ref.invitedPatientId);
-      });
-
-      // If patient names are not in referral data, fetch them
-      if (allPatientIds.size > 0 && (!items[0]?.inviterPatientName || !items[0]?.invitedPatientName)) {
-        try {
-          const patientsRes = await fetch(`${API}/api/admin/patients`, {
-            headers: adminHeaders({ Accept: "application/json" }),
-          });
-          if (patientsRes.ok) {
-            const patientsData = await patientsRes.json();
-            if (patientsData.ok) {
-              const patients = Array.isArray(patientsData.patients) ? patientsData.patients : (Array.isArray(patientsData.list) ? patientsData.list : []);
-              patients.forEach(p => {
-                const displayName = p.fullName || p.name || "";
-                const keys = [
-                  p.id,            // UUID (common in Supabase)
-                  p.patient_id,    // legacy id column (p_xxx)
-                  p.patientId,     // normalized field from API
-                ].filter(Boolean);
-                keys.forEach((k) => {
-                  const key = String(k);
-                  patientNamesMap[key] = displayName ? String(displayName) : key;
-                });
-              });
-            }
-          }
-        } catch (e) {
-          console.warn("Failed to load patient names:", e);
-        }
-      }
-
-      listEl.className = "list";
-      const currentLang = window.i18n ? window.i18n.getLang() : 'tr';
-      const locale = currentLang === 'en' ? 'en-US' : 'tr-TR';
-      
-      // Sort referrals by approval date (approved_at) or creation date (createdAt) - newest first
-      items.sort((a, b) => {
-        // Use approved_at for approved referrals, createdAt for others
-        const dateA = a.approvedAt ? new Date(a.approvedAt) : new Date(a.createdAt || 0);
-        const dateB = b.approvedAt ? new Date(b.approvedAt) : new Date(b.createdAt || 0);
-        return dateB.getTime() - dateA.getTime(); // Newest first
-      });
-      
-      listEl.innerHTML = items.map(ref => {
-        const statusClass = (ref.status || "PENDING").toLowerCase();
-        const statusKey = (ref.status || "PENDING").toUpperCase();
-        const statusText = window.i18n ? window.i18n.t(`referrals.status.${statusKey}`) : statusKey;
-        const createdAt = ref.createdAt ? new Date(ref.createdAt).toLocaleString(locale) : "—";
-        
-        // Get patient names
-        const inviterId = ref.inviterPatientId ? String(ref.inviterPatientId) : "";
-        const invitedId = ref.invitedPatientId ? String(ref.invitedPatientId) : "";
-        const inviterName = ref.inviterPatientName || patientNamesMap[inviterId] || inviterId || "—";
-        const invitedName = ref.invitedPatientName || patientNamesMap[invitedId] || invitedId || "—";
-        // Show names directly; fall back to id only if no name available.
-        const inviterDisplay = inviterId ? String(inviterName || inviterId) : "—";
-        const invitedDisplay = invitedId ? String(invitedName || invitedId) : "—";
-        
-        // Get translations
-        const inviterLabel = window.i18n ? window.i18n.t('referrals.inviter') : 'Inviter';
-        const invitedLabel = window.i18n ? window.i18n.t('referrals.invited') : 'Invited';
-        const createdAtLabel = window.i18n ? window.i18n.t('referrals.createdAt') : 'Oluşturulma';
-        const inviterDiscountLabel = window.i18n ? window.i18n.t('referrals.inviterDiscount') : 'Inviter İndirim';
-        const invitedDiscountLabel = window.i18n ? window.i18n.t('referrals.invitedDiscount') : 'Invited İndirim';
-        const discountLabel = window.i18n ? window.i18n.t('referrals.discount') : 'İndirim';
-        const approveText = window.i18n ? window.i18n.t('referrals.approve') : 'Onayla';
-        const rejectText = window.i18n ? window.i18n.t('referrals.reject') : 'Reddet';
-        
-        return `
-          <div class="item">
-            <div class="item-left">
-              <div class="item-title">
-                ${inviterLabel}: ${escapeHtml(inviterDisplay)} → ${invitedLabel}: ${escapeHtml(invitedDisplay)}
-              </div>
-              <div class="item-meta">
-                ${createdAtLabel}: ${createdAt}<br>
-                ${ref.inviterDiscountPercent != null ? `${inviterDiscountLabel}: %${ref.inviterDiscountPercent} • ` : ""}
-                ${ref.invitedDiscountPercent != null ? `${invitedDiscountLabel}: %${ref.invitedDiscountPercent} • ` : ""}
-                ${ref.discountPercent != null ? `${discountLabel}: %${ref.discountPercent}` : ""}
-              </div>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
-              <span class="status ${statusClass}">${statusText}</span>
-              ${ref.status === "PENDING" ? `
-                <div style="display:flex; gap:6px;">
-                  <button class="success" onclick="approveReferral('${ref.id}')" style="font-size:12px; padding:6px 12px;">${approveText}</button>
-                  <button class="danger" onclick="rejectReferral('${ref.id}')" style="font-size:12px; padding:6px 12px;">${rejectText}</button>
-                </div>
-              ` : ""}
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      const foundMsg = window.i18n ? window.i18n.t('referrals.found', { count: items.length }) : `${items.length} referral bulundu.`;
-      setMsg(foundMsg, "ok");
-
-    } catch (error) {
-      console.error("Load referrals error:", error);
-      listEl.className = "empty-state";
-      const errorLabel = window.i18n ? window.i18n.t('common.error') : 'Hata';
-      const loadFailedMsg = window.i18n ? window.i18n.t('referrals.errors.loadFailed') : "Referrals yüklenemedi.";
-      listEl.innerHTML = `
-        <div style="color:var(--r);">
-          <strong>${errorLabel}:</strong> ${error.message || loadFailedMsg}
-        </div>
-      `;
-      setMsg(loadFailedMsg, "err");
-    }
-  }
-
-  async function approveReferral(id) {
-    const adminToken = getAdminToken();
-    console.log("[APPROVE] Admin token found:", !!adminToken);
-    console.log("[APPROVE] Token length:", adminToken?.length);
-    console.log("[APPROVE] Token starts with Bearer:", adminToken?.startsWith("Bearer "));
-    
-    if (!adminToken) {
-      const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "❌ Admin token bulunamadı.";
-      setMsg(msg, "err");
-      return;
-    }
-
-    if (defaultInviterPercent == null && defaultInvitedPercent == null) {
-      const msg = window.i18n ? window.i18n.t('referrals.defaultDiscountsRequired') : "⚠️ Varsayılan indirim yüzdeleri Clinic Settings sayfasında girilmelidir.";
-      setMsg(msg, "err");
-      return;
-    }
-
-    const confirmMsg = window.i18n ? window.i18n.t('referrals.approveConfirm') : 'Bu referral\'ı onaylamak istediğinize emin misiniz?';
-    if (!confirm(confirmMsg)) {
-      return;
-    }
-
-    try {
-      const headers = {
-        "Content-Type": "application/json"
-      };
-      
-      if (adminToken.startsWith("Bearer ")) {
-        headers["Authorization"] = adminToken;
-      } else {
-        headers["Authorization"] = `Bearer ${adminToken}`;
-      }
-
-      const body = {
-        inviterDiscountPercent: defaultInviterPercent,
-        invitedDiscountPercent: defaultInvitedPercent,
-      };
-      
-      console.log("[APPROVE] Sending request to:", `${API}/api/admin/referrals/${id}/approve`);
-      console.log("[APPROVE] Request headers:", headers);
-      console.log("[APPROVE] Request body:", body);
-      
-      const r = await fetch(`${API}/api/admin/referrals/${id}/approve`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify(body)
-      });
-
-      if (!r.ok) {
-        const data = await r.json();
-        throw new Error(data.error || `HTTP ${r.status}`);
-      }
-
-      const successMsg = window.i18n ? window.i18n.t('referrals.approved') : "Referral onaylandı ✅";
-      setMsg(successMsg, "ok");
-      loadReferrals();
-    } catch (error) {
-      console.error("Approve referral error:", error);
-      const errorMsg = window.i18n ? window.i18n.t('referrals.errors.approveFailed', { error: error.message }) : `Onaylama hatası: ${error.message}`;
-      setMsg(errorMsg, "err");
-    }
-  }
-
-  async function rejectReferral(id) {
-    const adminToken = getAdminToken();
-    console.log("[REJECT] Admin token found:", !!adminToken);
-    console.log("[REJECT] Token length:", adminToken?.length);
-    console.log("[REJECT] Token starts with Bearer:", adminToken?.startsWith("Bearer "));
-    
-    if (!adminToken) {
-      const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "❌ Admin token bulunamadı.";
-      setMsg(msg, "err");
-      return;
-    }
-
-    const confirmMsg = window.i18n ? window.i18n.t('referrals.rejectConfirm') : 'Bu referral\'ı reddetmek istediğinize emin misiniz?';
-    if (!confirm(confirmMsg)) {
-      return;
-    }
-
-    try {
-      const headers = {
-        "Content-Type": "application/json"
-      };
-      
-      if (adminToken.startsWith("Bearer ")) {
-        headers["Authorization"] = adminToken;
-      } else {
-        headers["Authorization"] = `Bearer ${adminToken}`;
-      }
-
-      console.log("[REJECT] Sending request to:", `${API}/api/admin/referrals/${id}/reject`);
-      console.log("[REJECT] Request headers:", headers);
-      
-      const r = await fetch(`${API}/api/admin/referrals/${id}/reject`, {
-        method: "PATCH",
-        headers
-      });
-
-      if (!r.ok) {
-        const data = await r.json();
-        throw new Error(data.error || `HTTP ${r.status}`);
-      }
-
-      const successMsg = window.i18n ? window.i18n.t('referrals.rejected') : "Referral reddedildi ✅";
-      setMsg(successMsg, "ok");
-      loadReferrals();
-    } catch (error) {
-      console.error("Reject referral error:", error);
-      const errorMsg = window.i18n ? window.i18n.t('referrals.errors.rejectFailed', { error: error.message }) : `Reddetme hatası: ${error.message}`;
-      setMsg(errorMsg, "err");
-    }
-  }
-
-  // Status filter değiştiğinde listeyi yenile
-  document.getElementById('statusFilter').addEventListener('change', loadReferrals);
-
-  // Badge loading functions (adminHeaders already defined above)
-  function adminHeaders(extra = {}) {
-    const token = getAdminToken();
-    return {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...extra,
-    };
-  }
-
-  let previousUnreadCount = 0;
-  let previousPendingPatients = 0;
-  let previousPendingReferrals = 0;
-
-  function playNotificationSound() {
-    try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.3);
+      const json = await r.json();
+      items = json.items || [];
     } catch (e) {
-      console.warn("Could not play notification sound:", e);
+      tbody.innerHTML = `<tr class="loading-row"><td colspan="5" style="color:#f87171;">Error: ${e.message}</td></tr>`;
+      pendingBody.innerHTML = `<tr class="loading-row"><td colspan="6" style="color:#f87171;">Hata: ${escHtml(e.message)}</td></tr>`;
+      document.getElementById("statPending").textContent = "—";
+      return;
     }
+
+    // Normalize statuses
+    items = items.map(r => ({ ...r, _status: normalizeStatus(r.status) }));
+    renderPendingRows(items, pendingBody, false);
+
+    // Filter by status if selected
+    const filtered = statusFilter ? items.filter(r => r._status === statusFilter) : items;
+
+    // Group by referrer name
+    const referrerMap = {};
+    for (const ref of filtered) {
+      const key = ref.inviterPatientName || ref.inviterPatientId || "Unknown";
+      if (!referrerMap[key]) referrerMap[key] = { name: key, items: [] };
+      referrerMap[key].items.push(ref);
+    }
+
+    // Update stats (always from full items, not filtered)
+    const allReferrers = new Set(items.map(r => r.inviterPatientName || r.inviterPatientId || "Unknown"));
+    document.getElementById("statReferrers").textContent  = allReferrers.size;
+    document.getElementById("statInvited").textContent    = items.length;
+    document.getElementById("statRegistered").textContent = items.filter(r => ["registered", "treated", "rewarded"].includes(r._status)).length;
+    document.getElementById("statTreated").textContent    = items.filter(r => r._status === "treated").length;
+
+    const rows = Object.values(referrerMap);
+    if (rows.length === 0) {
+      tbody.innerHTML = `
+        <tr><td colspan="5">
+          <div class="empty">
+            <div class="empty-icon">📭</div>
+            <div>No referral activity found.</div>
+          </div>
+        </td></tr>`;
+      return;
+    }
+
+    // Sort by total invited descending
+    rows.sort((a, b) => b.items.length - a.items.length);
+
+    tbody.innerHTML = rows.map(row => {
+      const total      = row.items.length;
+      const registered = row.items.filter(r => ["registered", "treated", "rewarded"].includes(r._status)).length;
+      const treated    = row.items.filter(r => r._status === "treated").length;
+
+      const registrationRate = total > 0 ? Math.round((registered / total) * 100) : 0;
+
+      const invitedHtml = row.items.slice(0, 5).map(ref => {
+        const name = ref.invitedPatientName || "—";
+        return `<span class="badge ${statusClass(ref._status)}" title="${name}">
+          ${escHtml(name.length > 14 ? name.slice(0, 13) + "…" : name)}
+          <span style="opacity:.7;font-size:10px;">${statusLabel(ref._status)}</span>
+        </span>`;
+      }).join(" ");
+      const moreCount = row.items.length > 5 ? `<span style="color:#64748b;font-size:12px;">+${row.items.length - 5} more</span>` : "";
+
+      return `<tr>
+        <td>
+          <div class="referrer-name">${escHtml(row.name)}</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${registrationRate}%"></div></div>
+          <div style="font-size:11px;color:#64748b;margin-top:3px;">${registrationRate}% registration rate</div>
+        </td>
+        <td class="count-cell count-invited">${total}</td>
+        <td class="count-cell count-registered">${registered}</td>
+        <td class="count-cell count-treated">${treated}</td>
+        <td style="max-width:280px;">
+          <div style="display:flex;flex-wrap:wrap;gap:5px;">${invitedHtml}${moreCount}</div>
+        </td>
+      </tr>`;
+    }).join("");
   }
 
-  async function loadUnreadMessageCount() {
-    const token = getAdminToken();
-    if (!token) return;
-    try {
-      let lastSeenTimestamp = 0;
-      try {
-        const stored = localStorage.getItem('chat_last_seen_timestamp');
-        if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
-      } catch (e) {}
-      const patientsRes = await fetch(`${API}/api/admin/patients`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-      });
-      if (!patientsRes.ok) return;
-      const patientsData = await patientsRes.json();
-      if (!patientsData.ok) return;
-      const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
-      let totalUnread = 0;
-      for (const patient of patients) {
-        const patientId = patient.patientId || patient.id;
-        if (!patientId) continue;
-        try {
-          const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
-            headers: adminHeaders({ Accept: "application/json" }),
-          });
-          if (!messagesRes.ok) continue;
-          const messagesData = await messagesRes.json();
-          if (!messagesData.ok) continue;
-          const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
-          const unread = messages.filter((m) => {
-            if (m.from !== "PATIENT") return false;
-            if (m.createdAt) {
-              const msgTimestamp = new Date(m.createdAt).getTime();
-              return msgTimestamp > lastSeenTimestamp;
-            }
-            return true;
-          }).length;
-          totalUnread += unread;
-        } catch (e) { continue; }
-      }
-      if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
-        playNotificationSound();
-      }
-      previousUnreadCount = totalUnread;
-      const badgeEl = document.getElementById("chatBadge");
-      if (badgeEl) {
-        if (totalUnread > 0) {
-          badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
-          badgeEl.style.display = "flex";
-        } else {
-          badgeEl.style.display = "none";
-        }
-      }
-    } catch (error) {
-      console.error("Load unread count error:", error);
-    }
+  function escHtml(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
   }
 
-  async function loadPendingPatientsCount() {
-    const token = getAdminToken();
-    if (!token) return;
-    try {
-      const res = await fetch(`${API}/api/admin/patients`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data.ok) return;
-      const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
-      const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
-      if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
-        playNotificationSound();
-      }
-      previousPendingPatients = pendingCount;
-      const badgeEl = document.getElementById("patientsBadge");
-      if (badgeEl) {
-        if (pendingCount > 0) {
-          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
-          badgeEl.style.display = "flex";
-        } else {
-          badgeEl.style.display = "none";
-        }
-      }
-    } catch (error) {
-      console.error("Load pending patients count error:", error);
-    }
-  }
-
-  async function loadPendingReferralsCount() {
-    const token = getAdminToken();
-    if (!token) return;
-    try {
-      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const items = Array.isArray(data.items) ? data.items : [];
-      const pendingCount = items.length;
-      if (pendingCount > previousPendingReferrals && previousPendingReferrals > 0) {
-        playNotificationSound();
-      }
-      previousPendingReferrals = pendingCount;
-      const badgeEl = document.getElementById("referralsBadge");
-      if (badgeEl) {
-        if (pendingCount > 0) {
-          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
-          badgeEl.style.display = "flex";
-        } else {
-          badgeEl.style.display = "none";
-        }
-      }
-    } catch (error) {
-      console.error("Load pending referrals count error:", error);
-    }
-  }
-
-  async function loadAllBadges() {
-    await Promise.all([
-      loadUnreadMessageCount(),
-      loadPendingPatientsCount(),
-      loadPendingReferralsCount()
-    ]);
-  }
-
-  // Update UI when language changes
-  window.onI18nUpdated = function(lang) {
-    // Update status filter options
-    const statusFilter = document.getElementById('statusFilter');
-    if (statusFilter && window.i18n) {
-      const allOption = statusFilter.querySelector('option[value=""]');
-      const pendingOption = statusFilter.querySelector('option[value="PENDING"]');
-      const approvedOption = statusFilter.querySelector('option[value="APPROVED"]');
-      const rejectedOption = statusFilter.querySelector('option[value="REJECTED"]');
-      if (allOption) allOption.textContent = window.i18n.t('referrals.filterAll');
-      if (pendingOption) pendingOption.textContent = window.i18n.t('referrals.status.PENDING');
-      if (approvedOption) approvedOption.textContent = window.i18n.t('referrals.status.APPROVED');
-      if (rejectedOption) rejectedOption.textContent = window.i18n.t('referrals.status.REJECTED');
-    }
-    
-    // Re-render referrals with new language
-    const savedToken = localStorage.getItem('adminToken');
-    if (savedToken && savedToken.trim()) {
-      loadReferrals();
-    }
-  };
-
-  // Sayfa yüklendiğinde referral'ları yükle
-  const savedToken = localStorage.getItem('adminToken');
-  if (savedToken && savedToken.trim()) {
-    loadReferralDefaults();
-    setTimeout(() => loadReferrals(), 300);
-    loadAllBadges();
-  }
-
-  // Auto-refresh badges every 30 seconds
-  setInterval(loadAllBadges, 30000);
+  load();
 </script>
-<script src="/admin-layout.js?v=2" defer></script>
 </body>
 </html>
-

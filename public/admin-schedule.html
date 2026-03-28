@@ -3,21 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Admin Randevular</title>
-  <link rel="stylesheet" href="/admin-layout.css?v=2" />
+  <title>Takvim - Clinifly Admin</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; background:#f8fafc; color:#0f172a; }
-    .topbar { display:flex; gap:12px; align-items:center; padding:16px 20px; background:#fff; border-bottom:1px solid #e2e8f0; }
-    .topbar a { color:#334155; text-decoration:none; font-weight:600; }
-    .topbar a.active { color:#2563eb; }
-    .container { max-width:1280px; margin:20px auto; padding:0 16px; }
-    .controls { display:grid; grid-template-columns:auto auto auto 240px 180px 1fr; gap:12px; align-items:end; margin-bottom:16px; }
-    label { display:block; font-size:12px; color:#475569; margin-bottom:6px; }
-    select, button { width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; }
-    button { cursor:pointer; font-weight:600; }
-    .muted { color:#64748b; font-size:13px; }
+    /* Calendar-specific overrides */
+    .cal-page { padding: 24px; }
 
-    #calendar-container { background:#fff; border:1px solid #e2e8f0; border-radius:12px; min-height:360px; overflow:auto; }
+    label { display:block; font-size:12px; color:#475569; margin-bottom:4px; font-weight:600; }
+    select {
+      padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--card); font-size: 13px; color: var(--text);
+      cursor: pointer; outline: none;
+    }
+    select:focus { border-color: var(--blue); }
+    button {
+      padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--card); font-size: 13px; font-weight: 600; cursor: pointer;
+      color: var(--text-2); transition: all .15s;
+    }
+    button:hover { background: var(--page-bg); }
+    .muted { color: var(--text-m); font-size: 13px; }
+
+    #calendar-container {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); min-height: 400px; overflow: auto;
+      box-shadow: var(--shadow);
+    }
     .calendar-grid { min-width:1160px; }
     .grid-head, .grid-row { display:grid; border-bottom:1px solid #f1f5f9; }
     .grid-head { position:sticky; top:0; background:#f8fafc; z-index:2; }
@@ -30,25 +41,63 @@
     .time-cell { font-size:12px; color:#475569; background:#fcfdff; font-weight:600; }
     .slot-cell { padding:4px; }
 
-    .appt-card { border:1px solid #e2e8f0; border-radius:8px; padding:6px; margin-bottom:4px; background:#fff; font-size:12px; }
+    .appt-card {
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+      margin-bottom: 4px; background: var(--card); font-size: 12px;
+      transition: box-shadow .15s;
+    }
+    .appt-card:hover { box-shadow: var(--shadow-md); }
     .appt-card:last-child { margin-bottom:0; }
     .appt-patient { font-weight:700; color:#0f172a; }
     .appt-meta { color:#64748b; margin-top:2px; }
     .status-badge { display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; margin-top:4px; }
-    .status-proposed { background:#fef3c7; color:#92400e; }
+    .status-proposed  { background:#fef3c7; color:#92400e; }
     .status-confirmed { background:#dcfce7; color:#166534; }
-    .status-other { background:#e2e8f0; color:#334155; }
+    .status-other     { background:#e2e8f0; color:#334155; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <a href="/admin.html">Dashboard</a>
-    <a href="/admin-treatment.html">Treatment</a>
-    <a href="/admin-schedule.html" class="active">📅 Randevular</a>
-  </div>
 
-  <div class="container">
-    <h1 style="margin:0 0 16px 0;">Randevu Takvimi (Haftalık)</h1>
+  <div class="cal-page">
+
+    <!-- Page Header -->
+    <div class="page-hdr">
+      <div class="page-hdr-left">
+        <h1 class="pg-title">Randevu Takvimi</h1>
+        <p class="pg-sub" id="weekRange">—</p>
+      </div>
+      <div class="page-hdr-actions">
+        <button id="prevWeekBtn">← Önceki</button>
+        <button id="todayBtn">Bugün</button>
+        <button id="nextWeekBtn">Sonraki →</button>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body" style="padding:12px 18px;">
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label for="doctorSelect" style="margin:0;white-space:nowrap;">Doktor</label>
+            <select id="doctorSelect" style="min-width:180px;">
+              <option value="">Tüm Doktorlar</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label for="chairSelect" style="margin:0;white-space:nowrap;">Koltuk</label>
+            <select id="chairSelect" style="min-width:140px;">
+              <option value="">Tüm Koltuklar</option>
+            </select>
+          </div>
+          <span class="muted" id="summaryText" style="margin-left:auto;"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendar-container">
+      <div id="calendarGrid" class="calendar-grid"></div>
+    </div>
+  </div>
 
     <div class="controls">
       <div>
@@ -399,6 +448,40 @@
         .trim();
     }
 
+    /** API'deki "Burhan" ile randevuda yazılan "Burhan abi" gibi takma adlı kayıtları aynı doktora bağla. */
+    function doctorNormMatches(filterNorm, itemNorm) {
+      const f = String(filterNorm || '').trim();
+      const n = String(itemNorm || '').trim();
+      if (!f || !n) return false;
+      if (f === n) return true;
+      if (n.startsWith(f + ' ')) return true;
+      if (f.startsWith(n + ' ')) return true;
+      const tf = f.split(/\s+/).filter(Boolean)[0] || '';
+      const tn = n.split(/\s+/).filter(Boolean)[0] || '';
+      if (tf && tn && tf === tn) return true;
+      return false;
+    }
+
+    function normalizeToothLabel(rawItem) {
+      if (!rawItem || typeof rawItem !== 'object') return '';
+      const v =
+        rawItem.tooth_number ??
+        rawItem.toothNumber ??
+        rawItem.tooth_fdi_code ??
+        rawItem.fdiTooth ??
+        rawItem.fdi_tooth ??
+        rawItem.tooth ??
+        rawItem.toothId ??
+        rawItem.tooth_id ??
+        rawItem.toothID;
+      if (v == null || v === '') return '';
+      const s = String(v).trim();
+      const digits = s.replace(/\D/g, '');
+      const n = digits.length >= 2 ? Number.parseInt(digits.slice(0, 2), 10) : NaN;
+      if (Number.isFinite(n) && n >= 11 && n <= 48) return String(n);
+      return s;
+    }
+
     function normalizeIncomingAppointment(rawItem) {
       const startRaw = rawItem?.startAt || rawItem?.start_at || (rawItem?.date ? `${rawItem.date}T${String(rawItem.time || '00:00')}:00` : null);
       const endRaw = rawItem?.endAt || rawItem?.end_at || null;
@@ -411,11 +494,13 @@
       const treatment = String(rawItem?.treatment || rawItem?.procedure || rawItem?.procedure_code || rawItem?.procedure_name || rawItem?.eventType || rawItem?.type || '').trim();
       const type = String(rawItem?.type || rawItem?.eventType || rawItem?.procedure_code || '').trim();
       const eventType = String(rawItem?.eventType || rawItem?.type || '').trim();
+      const tooth = normalizeToothLabel(rawItem);
 
       return {
         doctor,
         patient,
         chair,
+        tooth,
         startAt: Number.isFinite(startTs) ? new Date(startTs).toISOString() : null,
         endAt: Number.isFinite(endTs) ? new Date(endTs).toISOString() : null,
         status: String(rawItem?.status || 'PROPOSED').toUpperCase(),
@@ -533,7 +618,10 @@
       const normalizedChairFilter = normalizeChairText(chairFilter);
 
       const byDoctor = normalizedDoctorFilter
-        ? items.filter((i) => (i?._doctorNorm || normalizeDoctorName(i?.doctor)) === normalizedDoctorFilter)
+        ? items.filter((i) => {
+            const itemNorm = i?._doctorNorm || normalizeDoctorName(i?.doctor);
+            return doctorNormMatches(normalizedDoctorFilter, itemNorm);
+          })
         : items;
       const filtered = normalizedChairFilter
         ? byDoctor.filter((i) => (i?._chairNorm || normalizeChairText(i?.chair)) === normalizedChairFilter)
@@ -579,7 +667,7 @@
             return `
             <div class="appt-card">
               <div class="appt-patient">${item.patient || '-'}</div>
-              <div class="appt-meta">${doctorFilter ? '' : `${item.doctor || '-'} • `}${normalizeChairText(item.chair) || '-'} • ${fmtTime(item.startAt, item.endAt)}${item.treatment ? ` • ${item.treatment}` : ''}</div>
+              <div class="appt-meta">${doctorFilter ? '' : `${item.doctor || '-'} • `}${item.tooth ? `🦷 ${item.tooth} • ` : ''}${normalizeChairText(item.chair) || '-'} • ${fmtTime(item.startAt, item.endAt)}${item.treatment ? ` • ${item.treatment}` : ''}</div>
               <div><span class="status-badge ${statusClass(item.status)}">${item.status || 'UNKNOWN'}</span></div>
             </div>
           `;
@@ -669,6 +757,7 @@
           doctor: String(evt?.doctor || evt?.doctorName || ''),
           patient: String(evt?.patientName || evt?.patient || evt?.patientId || ''),
           chair: String(evt?.chair || evt?.chairName || ''),
+          tooth: normalizeToothLabel(evt),
           startAt,
           endAt: evt?.endAt || evt?.end_at || null,
           status: String(evt?.status || 'PROPOSED').toUpperCase(),
@@ -711,6 +800,7 @@
         if (itemBreak <= 0 && currentBreak > 0) merged.break_minutes = currentBreak;
         if (!item?.treatment && current?.treatment) merged.treatment = current.treatment;
         if (!item?.endAt && current?.endAt) merged.endAt = current.endAt;
+        if (!merged.tooth && (current?.tooth || item?.tooth)) merged.tooth = current?.tooth || item?.tooth;
 
         map.set(key, merged);
       });
@@ -812,6 +902,6 @@
 
     bootstrapSchedule();
   </script>
-<script src="/admin-layout.js?v=2" defer></script>
+  <script src="/admin-layout.js?v=20260322"></script>
 </body>
 </html>

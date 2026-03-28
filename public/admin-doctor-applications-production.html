@@ -206,7 +206,7 @@
           </div>
         </div>
         <div class="navbar-links">
-          <a href="/admin-dashboard.html" class="navbar-link">Dashboard</a>
+          <a href="/admin.html" class="navbar-link">Dashboard</a>
           <a href="/admin-patients.html" class="navbar-link">Patients</a>
           <a href="/admin-doctor-applications.html" class="navbar-link active">Doctor Applications</a>
           <a href="#" onclick="logout()" class="navbar-link">Logout</a>
@@ -258,7 +258,7 @@
   <script>
     // Token check
     (function() {
-      const token = localStorage.getItem("adminToken");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -490,6 +490,7 @@ Doctor ID: ${doctor.doctor_id}
 
     function logout() {
       localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
       window.location.href = "/admin-login.html";
     }
 

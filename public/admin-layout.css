@@ -204,12 +204,10 @@ body.al-ready {
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
 }
 .al-lang span {
-  padding: 5px 8px; cursor: pointer;
+  padding: 5px 10px; cursor: pointer;
   font-size: 11px; font-weight: 700; color: var(--text-m);
-  transition: all .15s; white-space: nowrap;
-  user-select: none;
+  transition: all .15s;
 }
-.al-lang span:hover { color: var(--text); background: rgba(0,0,0,.04); }
 .al-lang span.active { background: var(--blue); color: #fff; }
 
 /* Page Content */
@@ -442,11 +440,4 @@ body.al-ready {
   .al-main      { margin-left: 0; }
   .stats-row    { grid-template-columns: 1fr; }
   .al-content   { padding: 16px; }
-}
-
-/* Hide legacy horizontal nav when shared layout (sidebar) is active */
-body.al-ready nav.navbar,
-body.al-ready .wrap > div.navbar,
-body.al-ready .al-main > .topbar {
-  display: none !important;
 }

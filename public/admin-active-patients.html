@@ -7,14 +7,13 @@
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
     })();
   </script>
   <script src="/admin-i18n.js"></script>
-  <link rel="stylesheet" href="/admin-layout.css?v=2" />
   <style>
     :root {
       --bg:#111827;
@@ -131,7 +130,7 @@
           </div>
         </div>
         <div class="navbar-links">
-          <a href="/admin-dashboard.html" class="navbar-link">Dashboard</a>
+          <a href="/admin.html" class="navbar-link">Dashboard</a>
           <a href="/admin-patients.html" class="navbar-link active">Patients</a>
           <a href="/admin-doctor-applications.html" class="navbar-link">Doctor Applications</a>
           <a href="#" onclick="logout()" class="navbar-link">Logout</a>
@@ -184,7 +183,7 @@
     let clinics = new Set();
 
     async function loadPatients() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       const loadingContainer = document.getElementById("loading-container");
       const errorContainer = document.getElementById("error-container");
       const patientsContainer = document.getElementById("patients-container");
@@ -328,6 +327,7 @@
     }
 
     function logout() {
+      localStorage.removeItem("adminToken");
       localStorage.removeItem("admin_token");
       window.location.href = "/admin-login.html";
     }
@@ -339,6 +339,5 @@
     // Load on page load
     document.addEventListener("DOMContentLoaded", loadPatients);
   </script>
-<script src="/admin-layout.js?v=2" defer></script>
 </body>
 </html>

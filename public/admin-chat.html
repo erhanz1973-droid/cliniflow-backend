@@ -4,11 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Chat - Clinifly Admin</title>
-  <link rel="stylesheet" href="/admin-layout.css?v=2" />
   <script>
     // Token check - redirect to login if not authenticated
     (function() {
-      const token = localStorage.getItem("adminToken");
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
       if (!token) {
         window.location.href = "/admin-login.html";
       }
@@ -196,7 +195,7 @@
         <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
       </div>
       <div class="navbar-center">
-        <a href="/admin-dashboard.html" class="nav-link">Dashboard</a>
+        <a href="/admin.html" class="nav-link">Dashboard</a>
         <a href="/admin-patients.html" class="nav-link" id="patientsNavLink">
           Patients
           <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
@@ -209,11 +208,6 @@
       </div>
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
-        <div class="lang-toggle">
-          <span class="active">TR</span>
-          <span>|</span>
-          <span>EN</span>
-        </div>
         <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
       </div>
     </nav>
@@ -273,18 +267,22 @@
       } catch {}
     })();
 
-    const API_BASE = "https://cliniflow-admin.onrender.com";
+    const API_BASE =
+      window.location.protocol === "http:" || window.location.protocol === "https:"
+        ? window.location.origin.replace(/\/$/, "")
+        : "";
     let selectedPatientId = null;
     let selectedPatientName = null;
     let clinicName = null;
     let refreshInterval = null;
     
     function getAdminToken() {
-      return localStorage.getItem('adminToken') || '';
+      return localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
     }
     function logout() {
       try {
         localStorage.removeItem("adminToken");
+        localStorage.removeItem("admin_token");
         console.log("[LOGOUT] Admin token cleared");
       } catch (e) {
         console.error("[LOGOUT] Error clearing token:", e);
@@ -340,33 +338,20 @@
           
           if (patientId) {
             try {
-              let lastSeenTimestamp = 0;
-              try {
-                const stored = localStorage.getItem('chat_last_seen_timestamp');
-                if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
-              } catch (e) {}
-              
               const messagesRes = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/messages`, {
                 headers: {
                   'Authorization': `Bearer ${token}`,
                   'Accept': 'application/json'
                 }
               });
-              
+
               if (messagesRes.ok) {
                 const messagesData = await messagesRes.json();
                 if (messagesData.ok && Array.isArray(messagesData.messages)) {
                   messages = messagesData.messages;
-                  
-                  // Count unread messages (from PATIENT) that were created AFTER last seen timestamp
-                  unreadCount = messages.filter((m) => {
-                    if (m.from !== "PATIENT") return false;
-                    if (m.createdAt) {
-                      const msgTimestamp = new Date(m.createdAt).getTime();
-                      return msgTimestamp > lastSeenTimestamp;
-                    }
-                    return true;
-                  }).length;
+
+                  // Count unread patient messages (server-side read_at tracking)
+                  unreadCount = messages.filter((m) => m.from === "PATIENT" && !m.readAt).length;
                   
                   // Find last message time (most recent message timestamp)
                   if (messages.length > 0) {
@@ -381,9 +366,12 @@
                     
                     // Get last message preview
                     const lastMsg = messages[messages.length - 1];
-                    if (lastMsg.text) {
-                      lastMessagePreview = lastMsg.text.substring(0, 50);
-                      if (lastMsg.text.length > 50) lastMessagePreview += '...';
+                    const lastBody = String(
+                      lastMsg.text || lastMsg.message || lastMsg.content || ''
+                    ).trim();
+                    if (lastBody) {
+                      lastMessagePreview = lastBody.substring(0, 50);
+                      if (lastBody.length > 50) lastMessagePreview += '...';
                     } else if (lastMsg.attachment) {
                       if (lastMsg.attachment.fileType === 'image') {
                         lastMessagePreview = '📷 Photo';
@@ -545,10 +533,43 @@
 
         const messages = Array.isArray(json.messages) ? json.messages : [];
         renderMessages(messages, forceScroll);
+        // Mark patient messages as read (server-side)
+        markMessagesRead(selectedPatientId);
       } catch (error) {
         console.error('Load messages error:', error);
         showError('❌ Mesajlar yüklenemedi: ' + error.message);
       }
+    }
+
+    async function markMessagesRead(patientId) {
+      if (!patientId) return;
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const readBase = `${API_BASE}/api/patient/${encodeURIComponent(patientId)}/messages/read`;
+        const readAdmin = `${API_BASE}/api/admin/patient/${encodeURIComponent(patientId)}/messages/read`;
+        let res = await fetch(readBase, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+        });
+        if (res.status === 404) {
+          res = await fetch(readAdmin, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+          });
+        }
+        if (res.status === 404) {
+          res = await fetch(`${API_BASE}/api/messages/read`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ patientId })
+          });
+        }
+      } catch (e) { /* silent fail */ }
     }
 
     function renderMessages(messages, forceScroll = false) {
@@ -572,7 +593,11 @@
 
       container.innerHTML = messages.map((msg, index) => {
         const from = msg.from || 'CLINIC';
-        const text = msg.text || '';
+        const text = String(
+          msg.text != null && msg.text !== ''
+            ? msg.text
+            : (msg.message != null ? msg.message : (msg.content != null ? msg.content : ''))
+        ).trim();
         const time = msg.createdAt ? new Date(msg.createdAt).toLocaleString('tr-TR') : '';
         const attachment = msg.attachment || null;
         const type = String(msg.type || (attachment?.fileType || "text")).toLowerCase();
@@ -969,7 +994,7 @@
     }
 
     // Badge loading functions
-    const API = "https://cliniflow-admin.onrender.com";
+    const API = API_BASE;
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
@@ -1004,41 +1029,13 @@
       const token = getAdminToken();
       if (!token) return;
       try {
-        let lastSeenTimestamp = 0;
-        try {
-          const stored = localStorage.getItem('chat_last_seen_timestamp');
-          if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
-        } catch (e) {}
-        const patientsRes = await fetch(`${API}/api/admin/patients`, {
+        const res = await fetch(`${API}/api/admin/messages/unread-counts?totalOnly=1`, {
           headers: adminHeaders({ Accept: "application/json" }),
         });
-        if (!patientsRes.ok) return;
-        const patientsData = await patientsRes.json();
-        if (!patientsData.ok) return;
-        const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
-        let totalUnread = 0;
-        for (const patient of patients) {
-          const patientId = patient.patientId || patient.id;
-          if (!patientId) continue;
-          try {
-            const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
-              headers: adminHeaders({ Accept: "application/json" }),
-            });
-            if (!messagesRes.ok) continue;
-            const messagesData = await messagesRes.json();
-            if (!messagesData.ok) continue;
-            const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
-            const unread = messages.filter((m) => {
-              if (m.from !== "PATIENT") return false;
-              if (m.createdAt) {
-                const msgTimestamp = new Date(m.createdAt).getTime();
-                return msgTimestamp > lastSeenTimestamp;
-              }
-              return true;
-            }).length;
-            totalUnread += unread;
-          } catch (e) { continue; }
-        }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+        const totalUnread = Number(data.total || 0);
         if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
           playNotificationSound();
         }
@@ -1052,9 +1049,6 @@
             badgeEl.style.display = "none";
           }
         }
-        
-        // Reload patients list to update badges and sorting only if we're on chat page
-        // (to avoid infinite loop)
         if (window.location.pathname.includes('chat')) {
           loadPatients().catch(e => console.warn('Failed to reload patients:', e));
         }
@@ -1186,7 +1180,6 @@
       }
     });
   </script>
-<script src="/admin-layout.js?v=2" defer></script>
 </body>
 </html>
 
