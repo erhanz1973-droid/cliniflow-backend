@@ -2,9 +2,9 @@
   "name": "cliniflow-server",
   "version": "1.0.0",
   "type": "commonjs",
-  "main": "cliniflow-admin/index.cjs",
+  "main": "index.cjs",
   "scripts": {
-    "start": "node cliniflow-admin/index.cjs"
+    "start": "node index.cjs"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
