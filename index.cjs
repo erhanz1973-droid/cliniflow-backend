@@ -80,6 +80,25 @@ function normalizeOtpRowFromStore(raw) {
   if (Array.isArray(raw)) return raw.length > 0 ? raw[0] : null;
   return raw;
 }
+
+/** Normalize otp.registration_data (flat or nested) for verify + OTP resend merge. */
+function flattenRegistrationPayload(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const inner = raw.registration_data && typeof raw.registration_data === "object" ? raw.registration_data : {};
+  return {
+    ...inner,
+    name: raw.name ?? inner.name,
+    phone: raw.phone ?? inner.phone ?? "",
+    address: raw.address ?? inner.address ?? "",
+    website: raw.website ?? inner.website ?? "",
+    email: raw.email ?? inner.email ?? "",
+    password_hash: raw.password_hash ?? inner.password_hash,
+    password: raw.password ?? inner.password,
+    clinic_code: raw.clinic_code ?? inner.clinic_code ?? raw.clinicCode ?? inner.clinicCode,
+    plan: raw.plan ?? inner.plan,
+    max_patients: raw.max_patients ?? inner.max_patients,
+  };
+}
 const ALLOW_FILE_FALLBACK = String(process.env.ALLOW_FILE_FALLBACK || "").toLowerCase() === "true";
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1689,36 +1708,55 @@ async function getOTPsForEmail(email) {
  */
 async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   const emailKey = email.toLowerCase().trim();
-  
 
+  let nextPayload = flattenRegistrationPayload(registrationData || {});
+  if (clinicCode != null && String(clinicCode).trim() !== "") {
+    const cc = String(clinicCode).trim().toUpperCase();
+    if (!nextPayload.clinic_code) nextPayload.clinic_code = cc;
+  }
 
-  
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
+      const { data: prevRows, error: prevErr } = await supabase
+        .from("otps")
+        .select("registration_data")
+        .eq("email", emailKey)
+        .eq("used", false)
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-      
-      // First, delete any existing unverified OTPs for this email (prevent overwrite)
-      await supabase
-        .from('otps')
-        .delete()
-        .eq('email', emailKey)
-        .eq('verified', false);
-      
-      // Then insert new OTP
-      const { data, error } = await supabase
-        .from('otps')
-        .insert({
-          email: emailKey,
-          otp_hash: otpHash,  // Use otp_hash instead of hashedOTP
-          expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
-          attempts: 0,
-          verified: false,
-          used: false,
-          registration_data: registrationData
-        })
-        .select()
-        .single();
+      if (!prevErr && prevRows?.[0]?.registration_data) {
+        const prev = flattenRegistrationPayload(prevRows[0].registration_data);
+        nextPayload = {
+          ...prev,
+          ...nextPayload,
+          password_hash: nextPayload.password_hash || prev.password_hash,
+          password: nextPayload.password || prev.password,
+          name: String(nextPayload.name || "").trim() ? nextPayload.name : prev.name,
+          email: String(nextPayload.email || "").trim() ? nextPayload.email : prev.email || emailKey,
+          phone: String(nextPayload.phone || "").trim() ? nextPayload.phone : prev.phone,
+          address: String(nextPayload.address || "").trim() ? nextPayload.address : prev.address,
+          website: String(nextPayload.website || "").trim() ? nextPayload.website : prev.website,
+          clinic_code:
+            String(nextPayload.clinic_code || "").trim() ||
+            String(prev.clinic_code || "").trim() ||
+            (clinicCode != null ? String(clinicCode).trim().toUpperCase() : ""),
+        };
+      }
+
+      // Delete unverified OTP rows for this email, then insert fresh row (merged payload keeps password_hash on resend)
+      await supabase.from("otps").delete().eq("email", emailKey).eq("verified", false);
+
+      const { data, error } = await supabase.from("otps").insert({
+        email: emailKey,
+        otp_hash: otpHash,
+        expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
+        attempts: 0,
+        verified: false,
+        used: false,
+        registration_data: nextPayload,
+      }).select().single();
       
       if (error) {
 
@@ -1737,13 +1775,24 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   
   // FILE-BASED FALLBACK
   const otps = readJson(OTP_FILE, {});
+  const existing = otps[emailKey];
+  if (existing?.registration_data) {
+    const prev = flattenRegistrationPayload(existing.registration_data);
+    nextPayload = {
+      ...prev,
+      ...nextPayload,
+      password_hash: nextPayload.password_hash || prev.password_hash,
+      name: String(nextPayload.name || "").trim() ? nextPayload.name : prev.name,
+      email: String(nextPayload.email || "").trim() ? nextPayload.email : prev.email || emailKey,
+    };
+  }
   otps[emailKey] = {
     hashedOTP: otpHash,
     created_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
     attempts: 0,
     verified: false,
-    registration_data: registrationData
+    registration_data: nextPayload,
   };
   writeJson(OTP_FILE, otps);
 
@@ -21870,23 +21919,23 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "otp_already_verified", message: "OTP already verified" });
     }
     
-    // Check expiration
-    const now = Date.now();
-    const createdAt = new Date(latestOTP.created_at).getTime();
-    const expiresAt = latestOTP.expires_at ? new Date(latestOTP.expires_at).getTime() : createdAt + (5 * 60 * 1000); // 5 minutes default
-    
-
-
-
-
-
-    
-    if (now > expiresAt) {
-
-      return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP has expired" });
+    const nowMs = Date.now();
+    let expiresAtMs = latestOTP.expires_at ? new Date(latestOTP.expires_at).getTime() : NaN;
+    if (!Number.isFinite(expiresAtMs)) {
+      const createdMs = new Date(latestOTP.created_at).getTime();
+      expiresAtMs = Number.isFinite(createdMs) ? createdMs + OTP_EXPIRY_MS : nowMs + OTP_EXPIRY_MS;
     }
     
-    // Verify OTP
+
+
+
+
+
+    
+    if (nowMs > expiresAtMs) {
+      return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP has expired" });
+    }
+
     const isValidOTP = await bcrypt.compare(String(otp), latestOTP.hashedOTP || latestOTP.otp_hash);
     if (!isValidOTP) {
 
@@ -21899,24 +21948,12 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
 
 
     
-    // Get registration data (storeOTPForEmail may nest payload under registration_data)
     const rawReg = latestOTP.registration_data;
     if (!rawReg || typeof rawReg !== "object") {
       return res.status(400).json({ ok: false, error: "registration_data_missing", message: "Registration data not found" });
     }
-    const inner = rawReg.registration_data && typeof rawReg.registration_data === "object" ? rawReg.registration_data : {};
-    const registrationData = {
-      ...inner,
-      name: rawReg.name ?? inner.name,
-      phone: rawReg.phone ?? inner.phone ?? "",
-      address: rawReg.address ?? inner.address ?? "",
-      website: rawReg.website ?? inner.website ?? "",
-      email: rawReg.email ?? inner.email ?? emailLower,
-      password_hash: rawReg.password_hash ?? inner.password_hash,
-      clinic_code: rawReg.clinic_code ?? inner.clinic_code ?? rawReg.clinicCode ?? inner.clinicCode,
-      plan: rawReg.plan ?? inner.plan,
-      max_patients: rawReg.max_patients ?? inner.max_patients,
-    };
+    const flatReg = flattenRegistrationPayload(rawReg);
+    const registrationData = { ...flatReg, email: flatReg.email || emailLower };
 
     const resolvedClinicCode =
       clinicCodeTrimmed ||
@@ -21938,9 +21975,10 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "name_required", message: "Clinic name is missing from registration" });
     }
 
-    const pwdHashRaw = registrationData.password_hash && String(registrationData.password_hash).trim();
+    const pwdHashRaw =
+      registrationData.password_hash != null ? String(registrationData.password_hash).trim() : "";
     const pwdHash =
-      pwdHashRaw && pwdHashRaw.startsWith("$2")
+      pwdHashRaw && /^\$2[aby]\$/.test(pwdHashRaw)
         ? pwdHashRaw
         : registrationData.password && String(registrationData.password).length >= 6
           ? await bcrypt.hash(String(registrationData.password), 10)
@@ -21981,7 +22019,18 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       return res.status(500).json({ ok: false, error: "clinic_creation_failed", message: "Failed to create clinic" });
     }
 
-    await markOTPUsed(latestOTP.id);
+    if (isSupabaseEnabled()) {
+      if (latestOTP.id) {
+        await markOTPUsed(latestOTP.id);
+      } else {
+        const hid = latestOTP.otp_hash || latestOTP.hashedOTP;
+        if (hid) {
+          await supabase.from("otps").update({ used: true }).eq("email", emailLower).eq("otp_hash", hid);
+        }
+      }
+    } else {
+      await markOTPVerified(emailLower);
+    }
 
     const token = jwt.sign(
       {
@@ -22050,11 +22099,12 @@ app.post("/api/admin/resend-otp", async (req, res) => {
     // Store OTP with registration data
     await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
       name: String(clinicName).trim(),
-      phone: '',
-      address: '',
-      website: '',
+      phone: "",
+      address: "",
+      website: "",
       email: emailLower,
-      clinicCode: clinicCodeTrimmed
+      clinic_code: clinicCodeTrimmed,
+      clinicCode: clinicCodeTrimmed,
     });
     
 
