@@ -367,10 +367,6 @@ const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 const TRAVEL_DIR = path.join(DATA_DIR, "travel");
 const TREATMENT_ITEM_OVERRIDES_DIR = path.join(DATA_DIR, "treatment-item-overrides");
 
-const PUBLIC_DIR = path.join(__dirname, "public");
-
-app.use(express.static(PUBLIC_DIR));
-
 /* ================= HELPER FUNCTIONS ================= */
 
 // Hasta isminden patient ID oluştur
@@ -462,7 +458,7 @@ function generateReferralCode() {
 
 /* ================= HELPERS ================= */
 function ensureDirs() {
-  [DATA_DIR, PATIENTS_DIR, TREATMENTS_DIR, TRAVEL_DIR, TREATMENT_ITEM_OVERRIDES_DIR, PUBLIC_DIR].forEach((d) => {
+  [DATA_DIR, PATIENTS_DIR, TREATMENTS_DIR, TRAVEL_DIR, TREATMENT_ITEM_OVERRIDES_DIR].forEach((d) => {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   });
 }
@@ -3474,6 +3470,49 @@ app.get("/api/admin/clinic", adminAuth, async (req, res) => {
       console.error("REGISTER_DOCTOR_ERROR:", err);
     console.error("Get clinic error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= ADMIN MESSAGES UNREAD COUNTS (sidebar badge) ================= */
+app.get("/api/admin/messages/unread-counts", adminAuth, async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "private, no-cache, must-revalidate");
+    const clinicId = req.admin?.clinicId;
+    const clinicCode = String(req.admin?.clinicCode || "").trim().toUpperCase();
+    const totalOnly = String(req.query.totalOnly || req.query.summary || "").trim() === "1";
+    if (!clinicId && !clinicCode) {
+      return res.json({ ok: true, total: 0, counts: {} });
+    }
+    if (!totalOnly) {
+      return res.json({ ok: true, total: 0, counts: {} });
+    }
+    for (const [field, value] of [
+      ["clinic_code", clinicCode],
+      ["clinic_id", clinicId],
+    ]) {
+      if (!value) continue;
+      for (const unreadOnly of [true, false]) {
+        let q = supabase
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("from_patient", true)
+          .eq(field, value);
+        if (unreadOnly) q = q.is("read_at", null);
+        const r = await q;
+        if (!r.error) {
+          return res.json({ ok: true, total: r.count || 0, counts: {} });
+        }
+        const code = String(r.error?.code || "");
+        const msg = String(r.error?.message || "").toLowerCase();
+        if (unreadOnly && (msg.includes("read_at") || msg.includes("column"))) continue;
+        if (["42P01", "42703", "PGRST204", "PGRST205"].includes(code)) continue;
+        break;
+      }
+    }
+    return res.json({ ok: true, total: 0, counts: {} });
+  } catch (e) {
+    console.error("[UNREAD COUNTS]", e?.message || e);
+    return res.json({ ok: true, total: 0, counts: {} });
   }
 });
 
@@ -15131,6 +15170,7 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
       .from("doctors")
       .select(`
         id,
+        doctor_id,
         name,
         full_name,
         email,
@@ -15143,7 +15183,7 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
         updated_at
       `)
       .eq("clinic_id", req.admin.clinicId)
-      .eq("role", "DOCTOR") // 🔥 CRITICAL: Only DOCTOR role
+      // List all clinic doctors for assignment (legacy rows may have role NULL; primary_doctor_id FK still points here)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -15176,6 +15216,7 @@ app.get("/api/admin/doctors", adminAuth, async (req, res) => {
 
       return {
         id: doctor.id,
+        doctor_id: doctor.doctor_id || null,
         name: preferredName,
         email: doctor.email,
         phone: doctor.phone,
