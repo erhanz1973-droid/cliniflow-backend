@@ -95,7 +95,14 @@ const corsOptions = {
   origin: true,
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept", "x-actor"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "x-actor",
+    "Cache-Control",
+    "Pragma",
+  ],
 };
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
