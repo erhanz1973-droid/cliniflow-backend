@@ -82,24 +82,6 @@ app.get("/api/doctor/dashboard", async (req, res) => {
   }
 });
 
-// admin-dashboard.html route - force canonical dashboard file (MUST be before static middleware)
-app.get("/admin-dashboard.html", (req, res) => {
-  try {
-    console.log("[ROUTE] /admin-dashboard.html requested - serving canonical /public/admin.html");
-    const filePath = path.join(__dirname, "public/admin.html");
-    
-    // Add cache-busting headers
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error("[ROUTE] Error serving admin-dashboard.html:", error);
-    res.status(500).send("Internal server error");
-  }
-});
-
 const cors = require("cors");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
@@ -118,32 +100,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increase limit for logo uploads (base64)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// GET /admin.html — register before most routes; multi-path for Render / monorepo
-app.get("/admin.html", (req, res) => {
-  try {
-    const candidates = [
-      path.join(__dirname, "public", "admin.html"),
-      path.join(__dirname, "cliniflow-admin", "public", "admin.html"),
-      path.join(process.cwd(), "public", "admin.html"),
-      path.join(process.cwd(), "cliniflow-admin", "public", "admin.html"),
-    ];
-    const filePath = candidates.find((p) => fs.existsSync(p));
-    if (!filePath) {
-      return res
-        .status(404)
-        .type("text/plain")
-        .send(
-          "admin.html not found. Deploy must include repo public/ or cliniflow-admin/public/."
-        );
-    }
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    return res.sendFile(path.resolve(filePath));
-  } catch (err) {
-    console.error("[ROUTE] /admin.html:", err);
-    return res.status(500).send(String(err?.message || err));
-  }
-});
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -412,11 +368,8 @@ const TRAVEL_DIR = path.join(DATA_DIR, "travel");
 const TREATMENT_ITEM_OVERRIDES_DIR = path.join(DATA_DIR, "treatment-item-overrides");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
-const ADMIN_PUBLIC_DIR = path.join(__dirname, "cliniflow-admin", "public");
-const ROOT_PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 app.use(express.static(PUBLIC_DIR));
-app.use(express.static(ADMIN_PUBLIC_DIR));
 
 /* ================= HELPER FUNCTIONS ================= */
 
@@ -506,188 +459,6 @@ function generateReferralCode() {
   }
   return code;
 }
-
-app.get("/admin-travel.html", (req, res) => {
-  try {
-    console.log("[ROUTE] /admin-travel.html requested");
-    const filePath = path.join(PUBLIC_DIR, "admin-travel.html");
-    console.log("[ROUTE] Looking for file at:", filePath);
-    console.log("[ROUTE] PUBLIC_DIR:", PUBLIC_DIR);
-    console.log("[ROUTE] __dirname:", __dirname);
-    
-    if (!fs.existsSync(filePath)) {
-      console.error("[ROUTE] File not found:", filePath);
-      return res.status(404).send(`
-        <html>
-          <head><title>Admin Travel - Not Found</title></head>
-          <body style="font-family: system-ui; padding: 40px; text-align: center;">
-            <h1>Admin Travel Sayfası Bulunamadı</h1>
-            <p>admin-travel.html dosyası bulunamadı.</p>
-            <p>File path: ${filePath}</p>
-            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
-            <p>__dirname: ${__dirname}</p>
-          </body>
-        </html>
-      `);
-    }
-    console.log("[ROUTE] File found, sending:", filePath);
-    const absolutePath = path.resolve(filePath);
-    console.log("[ROUTE] Absolute path:", absolutePath);
-    res.sendFile(absolutePath);
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-travel.html:", err);
-    res.status(500).send(`Error: ${err.message}`);
-  }
-});
-
-app.get("/admin-patients.html", (req, res) => {
-  try {
-    const filePath = path.join(ADMIN_PUBLIC_DIR, "admin-patients.html");
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send(`
-        <html>
-          <head><title>Admin Patients - Not Found</title></head>
-          <body style="font-family: system-ui; padding: 40px; text-align: center;">
-            <h1>Admin Patients Sayfası Bulunamadı</h1>
-            <p>cliniflow-admin/public/admin-patients.html dosyası bulunamadı.</p>
-          </body>
-        </html>
-      `);
-    }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-patients.html:", err);
-    res.status(500).send(`Error: ${err.message}`);
-  }
-});
-
-app.get("/admin-treatment-create.html", (req, res) => {
-  try {
-    const filePath = path.join(PUBLIC_DIR, "admin-treatment-create.html");
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send(`
-        <html>
-          <head><title>404 - Admin Treatment Create Bulunamadı</title></head>
-          <body>
-            <h1>Admin Treatment Create Sayfası Bulunamadı</h1>
-            <p>admin-treatment-create.html dosyası bulunamadı.</p>
-            <p>File path: ${filePath}</p>
-            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
-            <p>__dirname: ${__dirname}</p>
-          </body>
-        </html>
-      `);
-    }
-    
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error("[ROUTE] Error serving admin-treatment-create.html:", error);
-    res.status(500).send("Internal Server Error");
-  }
-});
-
-app.get("/admin-treatment.html", (req, res) => {
-  try {
-    const primaryPath = path.join(ROOT_PUBLIC_DIR, "admin-treatment.html");
-    const fallbackPath = path.join(PUBLIC_DIR, "admin-treatment.html");
-
-    if (fs.existsSync(primaryPath)) {
-      return res.sendFile(path.resolve(primaryPath));
-    }
-
-    if (fs.existsSync(fallbackPath)) {
-      return res.sendFile(path.resolve(fallbackPath));
-    }
-
-    if (!fs.existsSync(primaryPath) && !fs.existsSync(fallbackPath)) {
-      return res.status(404).send(`
-        <html>
-          <head><title>Admin Treatment Sayfası Bulunamadı</title></head>
-          <body>
-            <h1>Admin Treatment Sayfası Bulunamadı</h1>
-            <p>admin-treatment.html dosyası bulunamadı.</p>
-            <p>Primary path: ${primaryPath}</p>
-            <p>Fallback path: ${fallbackPath}</p>
-            <p>PUBLIC_DIR: ${PUBLIC_DIR}</p>
-            <p>ROOT_PUBLIC_DIR: ${ROOT_PUBLIC_DIR}</p>
-            <p>__dirname: ${__dirname}</p>
-          </body>
-        </html>
-      `);
-    }
-
-    res.status(404).send("admin-treatment.html not found");
-  } catch (error) {
-    console.error("[ROUTE] Error serving admin-treatment.html:", error);
-    res.status(500).send("Internal Server Error");
-  }
-});
-
-app.get("/admin-schedule.html", (req, res) => {
-  try {
-    const primaryPath = path.join(ROOT_PUBLIC_DIR, "admin-schedule.html");
-    const fallbackPath = path.join(PUBLIC_DIR, "admin-schedule.html");
-
-    if (fs.existsSync(primaryPath)) {
-      return res.sendFile(path.resolve(primaryPath));
-    }
-
-    if (fs.existsSync(fallbackPath)) {
-      return res.sendFile(path.resolve(fallbackPath));
-    }
-
-    return res.status(404).send("admin-schedule.html not found");
-  } catch (error) {
-    console.error("[ROUTE] Error serving admin-schedule.html:", error);
-    return res.status(500).send("Internal Server Error");
-  }
-});
-
-app.get("/admin-register.html", (req, res) => {
-  try {
-    const filePath = path.join(PUBLIC_DIR, "admin-register.html");
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send(`
-        <html>
-          <head><title>Admin Register - Not Found</title></head>
-          <body style="font-family: system-ui; padding: 40px; text-align: center;">
-            <h1>Admin Register Sayfası Bulunamadı</h1>
-            <p>admin-register.html dosyası bulunamadı.</p>
-          </body>
-        </html>
-      `);
-    }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-register.html:", err);
-    res.status(500).send(`Error: ${err.message}`);
-  }
-});
-
-app.get("/admin-referrals.html", (req, res) => {
-  try {
-    const filePath = path.join(PUBLIC_DIR, "admin-referrals.html");
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send(`
-        <html>
-          <head><title>Admin Referrals - Not Found</title></head>
-          <body style="font-family: system-ui; padding: 40px; text-align: center;">
-            <h1>Admin Referrals Sayfası Bulunamadı</h1>
-            <p>admin-referrals.html dosyası bulunamadı.</p>
-          </body>
-        </html>
-      `);
-    }
-    res.sendFile(path.resolve(filePath));
-  } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[ROUTE] Error serving admin-referrals.html:", err);
-    res.status(500).send(`Error: ${err.message}`);
-  }
-});
 
 /* ================= HELPERS ================= */
 function ensureDirs() {
@@ -783,10 +554,6 @@ function listPatientsFromFiles() {
     .map((p) => ({ id: String(p.id || "").trim(), name: p.name || p.id }))
     .filter((p) => p.id);
 }
-
-/* ================= ADMIN PAGES ================= */
-// admin.html route'u yukarıda tanımlandı (static serving'den önce)
-
 
 /* ================= PATIENTS ================= */
 app.get("/api/patients", (req, res) => {
