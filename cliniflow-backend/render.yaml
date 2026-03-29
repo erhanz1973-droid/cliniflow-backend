@@ -1,5 +1,6 @@
-# Prefer repository root `/render.yaml`. If you use this file alone, set Render
-# Root Directory to the monorepo root (parent of cliniflow-backend/), not this folder.
+# Monorepo: rootDir `.` = run build/start from repo root. Required so `npm install`
+# installs root dependencies (express, @supabase/supabase-js, …) for index.cjs.
+# If Render "Root Directory" is set to `cliniflow-backend` only, move it to `.` (repo root).
 services:
   - type: web
     name: cliniflow-backend
