@@ -14540,9 +14540,41 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       inserted: diagnosesToInsert.length
     });
 
+    /** RPC yalnızca insert döner; update-only yolda diagnoses [] olur — mobil istemci boş diziyi hata sayar. */
+    const toothNumbersForResponse = Array.from(
+      new Set(
+        normalizedDiagnoses
+          .map((d) => d.tooth_number)
+          .filter((t) => t != null && String(t).trim() !== "")
+      )
+    );
+
+    let responseDiagnoses = Array.isArray(transactionResult?.diagnoses)
+      ? transactionResult.diagnoses
+      : [];
+
+    if (responseDiagnoses.length === 0 && toothNumbersForResponse.length > 0) {
+      const { data: refreshed, error: refreshErr } = await supabase
+        .from("encounter_diagnoses")
+        .select(
+          "id, encounter_id, tooth_number, icd10_code, icd10_description, is_primary, notes, created_at, created_by_doctor_id"
+        )
+        .eq("encounter_id", encounterId)
+        .eq("created_by_doctor_id", dbDoctorId)
+        .in("tooth_number", toothNumbersForResponse)
+        .order("created_at", { ascending: false });
+
+      if (refreshErr) {
+        console.warn("[ENCOUNTER DIAGNOSES POST] Refresh after save:", refreshErr.message);
+      } else {
+        responseDiagnoses = refreshed || [];
+      }
+    }
+
     return res.json({
       ok: true,
-      diagnoses: transactionResult?.diagnoses || [],
+      encounterId,
+      diagnoses: responseDiagnoses,
       message: "Diagnoses saved successfully"
     });
 
