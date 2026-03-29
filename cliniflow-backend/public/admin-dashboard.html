@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard - Clinifly Admin</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      background: rgba(55, 65, 81, 0.2);
+      border: 1px solid var(--b);
+    }
+    .nav-link.secondary:hover {
+      background: rgba(55, 65, 81, 0.3);
+      border-color: var(--b);
+    }
+    .nav-badge {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: var(--r);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 4px;
+      border-radius: 999px;
+      min-width: 16px;
+      text-align: center;
+    }
+    .lang-toggle {
+      display: flex;
+      background: rgba(55, 65, 81, 0.2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .lang-toggle span {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      background: var(--p);
+      color: white;
+    }
+
+    /* Dashboard Styles */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .stat-card:hover {
+      border-color: var(--p);
+      transform: translateY(-2px);
+    }
+    .stat-card h3 {
+      font-size: 14px;
+      color: var(--muted);
+      margin: 0 0 12px 0;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-card p {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--p);
+      margin: 0;
+    }
+    #monthlyStatsTable {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    #monthlyStatsTable th,
+    #monthlyStatsTable td {
+      padding: 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--b);
+    }
+    #monthlyStatsTable th {
+      background: rgba(55, 65, 81, 0.5);
+      font-weight: 600;
+      color: #e6eaf2;
+    }
+    #monthlyStatsTable tbody tr:hover {
+      background: rgba(55, 65, 81, 0.2);
+    }
+    #monthlyStatsTable tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Timeline Styles */
+    .timeline {
+      margin-top: 30px;
+    }
+    .timeline-item {
+      padding: 16px;
+      border-left: 3px solid #3b82f6;
+      margin-bottom: 20px;
+      background: #111827;
+      border-radius: 8px;
+    }
+    .timeline-date {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+    .timeline-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-top: 5px;
+    }
+    .timeline-meta {
+      font-size: 13px;
+      margin-top: 4px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 data-i18n="dashboard.title">Admin Dashboard</h1>
+      <div id="usageBadge" style="display:none; padding:6px 10px; border:1px solid #334155; border-radius:999px; background:#0b1220; color:#e6eaf2; font-size:12px; font-weight:800; margin-top:12px;"></div>
+    </header>
+
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+    </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin-dashboard.html" class="nav-link active" data-i18n="dashboard.nav.dashboard">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink">
+          <span data-i18n="dashboard.nav.patients">Patients</span>
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-doctor-applications-v2.html" class="nav-link" id="doctorApplicationsNavLink">
+          <span>Doctor Applications</span>
+          <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" id="chatNavLink">
+          <span data-i18n="dashboard.nav.chat">Chat</span>
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
+          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container">
+      <h1>Dashboard</h1>
+
+      <div id="treatmentTimeline" class="timeline"></div>
+    </div>
+  </div>
+
+  <script>
+    // Dashboard functionality
+    const API =
+      window.location.hostname === "localhost"
+        ? "http://localhost:5050"
+        : "https://cliniflow-backend-dg8a.onrender.com";
+
+    async function loadTimeline() {
+      try {
+        const token = localStorage.getItem("adminToken");
+        if (!token) {
+          window.location.href = "/admin-login.html";
+          return;
+        }
+
+        // 🔥 CRITICAL: Use new timeline endpoint
+        const res = await fetch(`${API}/api/admin/timeline`, {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+          }
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const response = await res.json();
+        console.log("Timeline data:", response);
+
+        // 🔥 CRITICAL: Check if response has events array
+        const events = response.events || [];
+        const container = document.getElementById("treatmentTimeline");
+        container.innerHTML = "";
+
+        if (events.length === 0) {
+          container.innerHTML = '<div class="timeline-item">No timeline events yet</div>';
+          return;
+        }
+
+        events.forEach(event => {
+          const item = document.createElement("div");
+          item.className = "timeline-item";
+
+          // 🔥 CRITICAL: Use new timeline event structure
+          item.innerHTML = `
+            <div class="timeline-date">${event.relative_time || new Date(event.created_at).toLocaleString()}</div>
+            <div class="timeline-title">${event.icon || '📝'} ${event.title || 'System Event'}</div>
+            <div class="timeline-meta">
+              ${event.subtitle || event.message || 'No details'}
+            </div>
+          `;
+
+          container.appendChild(item);
+        });
+      } catch (error) {
+        console.error("Failed to load timeline:", error);
+        const container = document.getElementById("treatmentTimeline");
+        container.innerHTML = '<div class="timeline-item">Failed to load treatments</div>';
+      }
+    }
+
+    // Load clinic name
+    async function loadClinicName() {
+      try {
+        const token = localStorage.getItem("adminToken");
+        if (!token) return;
+
+        const response = await fetch(`${API}/api/admin/clinic`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const clinic = await response.json();
+          const name = clinic.branding?.clinicName || clinic.name || "Clinic";
+          
+          const navbarClinicName = document.getElementById("navbarClinicName");
+          if (navbarClinicName) {
+            navbarClinicName.textContent = name;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load clinic name:', error);
+        const navbarClinicName = document.getElementById("navbarClinicName");
+        if (navbarClinicName) {
+          navbarClinicName.textContent = "Clinic";
+        }
+      }
+    }
+
+    // Initialize
+    document.addEventListener("DOMContentLoaded", () => {
+      loadTimeline();
+      loadClinicName();
+      
+      // Initialize i18n
+      if (window.i18n) {
+        window.i18n.updatePage();
+      }
+    });
+  </script>
+</body>
+</html>

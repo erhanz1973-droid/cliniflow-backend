@@ -1,0 +1,30 @@
+{
+  "patientId": "p_c89ce875d16d",
+  "messages": [
+    {
+      "id": "msg_1767649776026_1784b360",
+      "text": "ghgh",
+      "from": "CLINIC",
+      "createdAt": 1767649776028
+    },
+    {
+      "id": "msg_1767649787012_ce82182f",
+      "text": "kjkj",
+      "from": "CLINIC",
+      "createdAt": 1767649787012
+    },
+    {
+      "id": "msg_1767649793544_d570fcf9",
+      "text": "kjkjkjkkjhk",
+      "from": "CLINIC",
+      "createdAt": 1767649793544
+    },
+    {
+      "id": "msg_1767649816993_405f84fb",
+      "text": "kkkk",
+      "from": "CLINIC",
+      "createdAt": 1767649816993
+    }
+  ],
+  "updatedAt": 1767649816993
+}

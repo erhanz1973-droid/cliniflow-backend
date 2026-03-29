@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767640999300,
+  "patientId": "p_d5f838408ff5",
+  "teeth": [
+    {
+      "toothId": "27",
+      "procedures": [
+        {
+          "id": "p_d5f838408ff5-27-1767640999300",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "scheduledAt": 1767644580000,
+          "createdAt": 1767640999300
+        }
+      ]
+    }
+  ]
+}
