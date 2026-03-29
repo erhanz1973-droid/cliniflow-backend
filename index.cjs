@@ -5456,42 +5456,35 @@ app.get("/api/patient/me", async (req, res) => {
 });
 
 /* ================= DOCTOR AUTH MIDDLEWARE ================= */
+const DOCTOR_AUTH_DEBUG = String(process.env.DOCTOR_AUTH_DEBUG || "").trim() === "1";
+
 function verifyDoctorToken(req) {
-  console.log("=== VERIFY DOCTOR DEBUG ===");
-  console.log("Authorization header:", req.headers.authorization);
-  console.log("JWT_SECRET used for verify:", JWT_SECRET);
-
   const authHeader = req.headers.authorization;
-  console.log("[VERIFY DOCTOR] Raw Authorization header:", authHeader);
-
   const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-  console.log("[VERIFY DOCTOR] Extracted token:", token ? "EXISTS" : "MISSING");
-  console.log("[VERIFY DOCTOR] Token length:", token?.length || 0);
 
   if (!token) {
-    console.log("[VERIFY DOCTOR] Missing token");
+    if (DOCTOR_AUTH_DEBUG) console.log("[VERIFY DOCTOR] missing_token");
     return { ok: false, code: "missing_token" };
   }
 
   try {
-    console.log("[VERIFY DOCTOR] Using JWT_SECRET:", JWT_SECRET ? "EXISTS" : "MISSING");
-    console.log("[VERIFY DOCTOR] JWT_SECRET length:", JWT_SECRET?.length || 0);
-
     const decoded = jwt.verify(token, JWT_SECRET);
-    console.log("[VERIFY DOCTOR] Decoded payload:", decoded);
-    
+    if (DOCTOR_AUTH_DEBUG) {
+      console.log("[VERIFY DOCTOR] decoded role:", decoded?.role, "doctorId:", decoded?.doctorId);
+    }
+
     // Check if user has DOCTOR role (JWT may use mixed case or legacy fields)
     const roleNorm = String(decoded.role || decoded.roleType || "").toUpperCase();
     const isDoctor =
       roleNorm === "DOCTOR" ||
       String(decoded.userType || decoded.type || "").toLowerCase() === "doctor";
     if (!isDoctor) {
-      console.log("[VERIFY DOCTOR] Role mismatch:", decoded.role);
+      if (DOCTOR_AUTH_DEBUG) console.log("[VERIFY DOCTOR] insufficient_permissions role:", decoded.role);
       return { ok: false, code: "insufficient_permissions" };
     }
 
-    return { 
-      ok: true, 
+    return {
+      ok: true,
       decoded: {
         doctorId: decoded.doctorId,
         patientId: decoded.doctorId, // For compatibility with existing code
@@ -5506,13 +5499,11 @@ function verifyDoctorToken(req) {
         experience_years: decoded.experience_years,
         languages: decoded.languages,
         specialties: decoded.specialties,
-        license_number: decoded.license_number
-      }
+        license_number: decoded.license_number,
+      },
     };
   } catch (err) {
-    console.error("[VERIFY DOCTOR] JWT verification error:", err);
-    console.error("[VERIFY DOCTOR] Error name:", err.name);
-    console.error("[VERIFY DOCTOR] Error message:", err.message);
+    console.error("[VERIFY DOCTOR] invalid_token:", err?.name || "Error", err?.message || err);
     return { ok: false, code: "invalid_token" };
   }
 }
