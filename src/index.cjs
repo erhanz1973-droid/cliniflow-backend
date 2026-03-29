@@ -278,6 +278,88 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+/* ================= PATIENT EMAIL OTP (Brevo + Supabase otps) ================= */
+const PATIENT_OTP_EXPIRY_MS = 5 * 60 * 1000;
+const PATIENT_OTP_MAX_ATTEMPTS = 3;
+
+function generatePatientEmailOtpCode() {
+  let otp = "";
+  for (let i = 0; i < 6; i++) otp += String(Math.floor(Math.random() * 10));
+  return otp;
+}
+
+function normalizePatientOtpRow(row) {
+  if (!row || typeof row !== "object") return null;
+  return {
+    ...row,
+    otp_hash: row.otp_hash || row.hashedOTP,
+    attempts: row.attempts ?? 0,
+  };
+}
+
+async function storePatientEmailOtp(email, otpHash, registrationData) {
+  const emailKey = String(email || "").trim().toLowerCase();
+  await supabase.from("otps").delete().eq("email", emailKey).eq("verified", false);
+  const { error } = await supabase.from("otps").insert({
+    email: emailKey,
+    otp_hash: otpHash,
+    expires_at: new Date(Date.now() + PATIENT_OTP_EXPIRY_MS).toISOString(),
+    attempts: 0,
+    verified: false,
+    used: false,
+    registration_data: registrationData || {},
+  });
+  if (error) {
+    console.error("[PATIENT OTP] storePatientEmailOtp failed:", error);
+    throw error;
+  }
+}
+
+async function sendPatientOtpEmailBrevo(email, otpCode, lang = "tr") {
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = String(process.env.SMTP_FROM || process.env.BREVO_FROM_EMAIL || "").trim();
+  const fromName = process.env.BREVO_FROM_NAME || "Clinifly";
+  if (!apiKey) {
+    console.error("[PATIENT OTP] BREVO_API_KEY not set — email cannot be sent");
+    throw new Error("email_not_configured");
+  }
+  if (!fromEmail) {
+    console.error("[PATIENT OTP] SMTP_FROM or BREVO_FROM_EMAIL not set");
+    throw new Error("smtp_from_not_set");
+  }
+  const safeLang = lang === "en" ? "en" : "tr";
+  const subject =
+    safeLang === "tr" ? "Clinifly – Doğrulama Kodunuz" : "Clinifly – Your verification code";
+  const htmlContent =
+    safeLang === "tr"
+      ? `<div style="font-family:Arial,sans-serif"><h2>Clinifly Doğrulama Kodu</h2><p>Hesabınızı doğrulamak için kod:</p><h1 style="letter-spacing:4px">${otpCode}</h1><p>Bu kod 5 dakika geçerlidir.</p></div>`
+      : `<div style="font-family:Arial,sans-serif"><h2>Clinifly Verification Code</h2><p>Use the code below:</p><h1 style="letter-spacing:4px">${otpCode}</h1><p>This code is valid for 5 minutes.</p></div>`;
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "api-key": apiKey },
+    body: JSON.stringify({
+      sender: { email: fromEmail, name: fromName },
+      to: [{ email: String(email).trim() }],
+      subject,
+      htmlContent,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("[PATIENT OTP] Brevo API error:", response.status, text);
+    throw new Error(`Brevo API error ${response.status}: ${text}`);
+  }
+  return response.json();
+}
+
+if (process.env.NODE_ENV === "production") {
+  if (!process.env.BREVO_API_KEY || !String(process.env.SMTP_FROM || process.env.BREVO_FROM_EMAIL || "").trim()) {
+    console.warn(
+      "[PATIENT OTP] Production: set BREVO_API_KEY and SMTP_FROM (or BREVO_FROM_EMAIL) for hasta OTP e-postaları."
+    );
+  }
+}
+
 /* ================= PATHS ================= */
 const DATA_DIR = path.join(__dirname, "data");
 const PATIENTS_DIR = path.join(DATA_DIR, "patients");
@@ -4619,7 +4701,7 @@ app.post("/api/register/patient", async (req, res) => {
       phone,
       patientName,
       email,
-      userType = "PATIENT", // Force to PATIENT
+      userType = "PATIENT",
       inviterReferralCode,
     } = req.body || {};
 
@@ -4627,17 +4709,26 @@ app.post("/api/register/patient", async (req, res) => {
       clinicCode,
       phone,
       patientName,
-      email,
+      email: email ? "***" : "",
       userType,
       inviterReferralCode,
     });
 
-    // Validation
     if (!clinicCode || !phone || !patientName) {
       return res.status(400).json({ ok: false, error: "missing_required_fields" });
     }
 
-    // Check clinic
+    const emailTrimmed = String(email || "").trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailTrimmed || !emailRegex.test(emailTrimmed.toLowerCase())) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_required",
+        message: "E-posta zorunludur; doğrulama kodu bu adrese gönderilir.",
+      });
+    }
+    const emailNormalized = emailTrimmed.toLowerCase();
+
     const { data: clinic, error: clinicError } = await supabase
       .from("clinics")
       .select("*")
@@ -4648,10 +4739,9 @@ app.post("/api/register/patient", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_clinic_code" });
     }
 
-    // Check clinic limits
     const { data: existingPatients, error: countError } = await supabase
       .from("patients")
-      .select("patient_id")
+      .select("patient_id, phone")
       .eq("clinic_id", clinic.id);
 
     if (countError) {
@@ -4666,22 +4756,47 @@ app.post("/api/register/patient", async (req, res) => {
       return res.status(400).json({ ok: false, error: "clinic_full" });
     }
 
-    // Generate patient ID
-    const patient_id = generatePatientIdFromName(patientName);
+    const phoneExists = existingPatients?.some((p) => p.phone === phone.trim());
+    if (phoneExists) {
+      return res.status(400).json({
+        ok: false,
+        error: "phone_already_exists",
+        message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır.",
+      });
+    }
+
+    const { data: emailDup, error: emailDupErr } = await supabase
+      .from("patients")
+      .select("patient_id")
+      .eq("email", emailNormalized)
+      .maybeSingle();
+    if (emailDupErr && emailDupErr.code !== "PGRST116") {
+      console.error("[PATIENT REGISTER] Email check error:", emailDupErr);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+    if (emailDup) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_already_exists",
+        message: "Bu e-posta adresi ile zaten bir kayıt bulunmaktadır.",
+      });
+    }
+
+    const patient_id = await generatePatientIdFromName(patientName);
     const referral_code = generateReferralCode();
 
-    // Create patient with ACTIVE status
     const newPatient = {
       patient_id,
       name: patientName,
       phone: phone.trim(),
-      email: email?.trim() || null,
+      email: emailNormalized,
       clinic_id: clinic.id,
       clinic_code: clinicCode.trim(),
       referral_code,
-      status: "ACTIVE", // Patients are immediately ACTIVE
-      role: "PATIENT", // Explicitly PATIENT
+      status: "PENDING",
+      role: "PATIENT",
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { data: insertedPatient, error: insertError } = await supabase
@@ -4692,10 +4807,26 @@ app.post("/api/register/patient", async (req, res) => {
 
     if (insertError) {
       console.error("[PATIENT REGISTER] Insert error:", insertError);
+      if (insertError.code === "23505") {
+        const msg = String(insertError.message || "");
+        if (msg.includes("email") || msg.includes("patients_email")) {
+          return res.status(400).json({
+            ok: false,
+            error: "email_already_exists",
+            message: "Bu e-posta adresi ile zaten bir kayıt bulunmaktadır.",
+          });
+        }
+        if (msg.includes("phone") || msg.includes("patients_phone")) {
+          return res.status(400).json({
+            ok: false,
+            error: "phone_already_exists",
+            message: "Bu telefon numarası ile zaten bir kayıt bulunmaktadır.",
+          });
+        }
+      }
       return res.status(500).json({ ok: false, error: "registration_failed" });
     }
 
-    // Handle referrals
     if (inviterReferralCode) {
       try {
         const { data: referrer } = await supabase
@@ -4717,37 +4848,69 @@ app.post("/api/register/patient", async (req, res) => {
       }
     }
 
-    // Create JWT token for patient
-    const patientToken = jwt.sign(
-      { 
-        patientId: patient_id, 
-        clinicId: clinic.id,
-        clinicCode: clinicCode.trim(),
-        role: "PATIENT",
-        roleType: "PATIENT"
-      },
-      JWT_SECRET,
-      { expiresIn: "30d" }
-    );
+    const patientLang = String((req.body || {}).language || "")
+      .toLowerCase()
+      .startsWith("en")
+      ? "en"
+      : "tr";
 
-    console.log("[PATIENT REGISTER] Patient registered successfully:", {
-      patient_id,
-      name: patientName,
-      role: "PATIENT",
-      status: "ACTIVE"
-    });
+    const allowDevOtpSurface =
+      process.env.NODE_ENV !== "production" || process.env.OTP_DEV_RETURN === "1";
+    let otpCodeForDev = null;
+
+    try {
+      const otpCode = generatePatientEmailOtpCode();
+      otpCodeForDev = otpCode;
+      const otpHash = await bcrypt.hash(otpCode, 10);
+      await storePatientEmailOtp(emailNormalized, otpHash, {
+        type: "patient_registration",
+        patient_id,
+        clinic_id: clinic.id,
+        clinic_code: clinicCode.trim(),
+        phone: phone.trim(),
+        name: patientName,
+        language: patientLang,
+      });
+
+      sendPatientOtpEmailBrevo(emailNormalized, otpCode, patientLang).catch((e) => {
+        console.error("[PATIENT REGISTER] Brevo send failed:", e?.message || e);
+        if (allowDevOtpSurface) {
+          console.log(
+            `[PATIENT REGISTER] E-posta gönderilemedi — yerel/test OTP: ${otpCode} → ${emailNormalized}`
+          );
+        }
+      });
+
+      if (allowDevOtpSurface) {
+        console.log(`[PATIENT REGISTER] devOtp (yerel/test): ${emailNormalized} → ${otpCode}`);
+      }
+    } catch (otpErr) {
+      console.error("[PATIENT REGISTER] OTP store error:", otpErr);
+      try {
+        await supabase.from("patients").delete().eq("patient_id", patient_id);
+      } catch (delErr) {
+        console.error("[PATIENT REGISTER] Rollback patient failed:", delErr);
+      }
+      return res.status(500).json({
+        ok: false,
+        error: "otp_setup_failed",
+        message:
+          "Doğrulama kodu oluşturulamadı. Supabase `otps` tablosunu ve .env (Brevo) ayarlarını kontrol edin.",
+      });
+    }
 
     res.json({
       ok: true,
-      message: "Patient registration successful.",
+      message: "Kayıt alındı. E-postanıza gönderilen doğrulama kodunu girin.",
       patientId: patient_id,
       referralCode: referral_code,
       name: patientName,
-      phone: phone,
-      email: email,
-      status: "ACTIVE",
+      phone: phone.trim(),
+      email: emailNormalized,
+      status: "PENDING",
       role: "PATIENT",
-      token: patientToken,
+      requiresOTP: true,
+      ...(allowDevOtpSurface && otpCodeForDev ? { devOtp: otpCodeForDev } : {}),
     });
   } catch (error) {
     console.error("[PATIENT REGISTER] Error:", error);
@@ -6703,7 +6866,7 @@ function checkOtpRateLimit(email) {
 }
 
 /* ================= OTP SEND ================= */
-app.post("/auth/send-otp", async (req, res) => {
+app.post(["/auth/send-otp", "/api/auth/send-otp"], async (req, res) => {
   try {
     const { phone, email, role } = req.body || {};
 
@@ -6713,7 +6876,6 @@ app.post("/auth/send-otp", async (req, res) => {
       role
     });
 
-    // Validation
     if (!phone) {
       return res.status(400).json({ 
         ok: false, 
@@ -6722,18 +6884,16 @@ app.post("/auth/send-otp", async (req, res) => {
       });
     }
 
-    // Normalize phone number (remove +, spaces, etc.)
     const normalizedPhone = phone.replace(/[^\d]/g, '').trim();
     console.log("[OTP SEND] Normalized phone:", { original: phone, normalized: normalizedPhone });
 
-    // DEV bypass for OTP
     if (process.env.NODE_ENV !== "production") {
       const otp = "123456";
       console.log("[OTP SEND] DEV OTP:", otp);
       return res.json({
         ok: true,
         message: "OTP sent successfully",
-        otp: otp, // Only for dev
+        otp: otp,
         patientId: role === "DOCTOR" ? "DEV_DOCTOR" : "DEV_PATIENT",
         doctorId: role === "DOCTOR" ? "DEV_DOCTOR" : undefined,
         phone: phone.trim(),
@@ -6741,30 +6901,12 @@ app.post("/auth/send-otp", async (req, res) => {
       });
     }
 
-    // Check rate limit
-    if (email) {
-      try {
-        checkOtpRateLimit(email);
-      } catch (rateError) {
-        return res.status(429).json({ 
-          ok: false, 
-          error: "rate_limit_exceeded",
-          message: rateError.message 
-        });
-      }
-    }
-
-    let user = null;
-    let userType = "";
-
-    // Try to find user by role
     if (role === "DOCTOR") {
-      // Find doctor by phone
       const { data: doctor, error: doctorError } = await supabase
         .from("doctors")
         .select("*")
         .eq("phone", normalizedPhone)
-        .single();
+        .maybeSingle();
 
       if (doctorError || !doctor) {
         return res.status(404).json({ 
@@ -6774,47 +6916,101 @@ app.post("/auth/send-otp", async (req, res) => {
         });
       }
 
-      user = doctor;
-      userType = "doctor";
-    } else {
-      // Default to PATIENT
-      // Find patient by phone
-      const { data: patient, error: patientError } = await supabase
-        .from("patients")
-        .select("*")
-        .eq("phone", normalizedPhone)
-        .single();
-
-      if (patientError || !patient) {
-        return res.status(404).json({ 
-          ok: false, 
-          error: "patient_not_found",
-          message: "Patient not found" 
-        });
+      if (email) {
+        try {
+          checkOtpRateLimit(email);
+        } catch (rateError) {
+          return res.status(429).json({ 
+            ok: false, 
+            error: "rate_limit_exceeded",
+            message: rateError.message 
+          });
+        }
       }
 
-      user = patient;
-      userType = "patient";
+      const otp = "123456";
+      return res.json({
+        ok: true,
+        message: "OTP sent successfully",
+        otp: otp,
+        doctorId: doctor.doctor_id || doctor.id,
+        phone: phone.trim(),
+        role: role || "DOCTOR"
+      });
     }
 
-    // For demo purposes, simulate OTP sending
-    const otp = "123456"; // Fixed OTP for demo
-    
-    console.log("[OTP SEND] OTP sent (demo):", {
-      phone: phone.trim(),
-      otp: otp,
-      userId: userType === "doctor" ? user.doctor_id : user.patient_id,
-      role: role || user.role
-    });
+    const { data: patient, error: patientError } = await supabase
+      .from("patients")
+      .select("*")
+      .eq("phone", normalizedPhone)
+      .maybeSingle();
+
+    if (patientError || !patient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found",
+        message: "Patient not found" 
+      });
+    }
+
+    const patientEmail = String(patient.email || "").trim().toLowerCase();
+    if (!patientEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_missing_on_account",
+        message: "Bu hesapta e-posta yok; kod gönderilemez.",
+      });
+    }
+
+    try {
+      checkOtpRateLimit(patientEmail);
+    } catch (rateError) {
+      return res.status(429).json({ 
+        ok: false, 
+        error: "rate_limit_exceeded",
+        message: rateError.message 
+      });
+    }
+
+    const patientLang = String(patient.language || "").toLowerCase().startsWith("en") ? "en" : "tr";
+    const allowDevOtpSurface =
+      process.env.NODE_ENV !== "production" || process.env.OTP_DEV_RETURN === "1";
+
+    try {
+      const otpCode = generatePatientEmailOtpCode();
+      const otpHash = await bcrypt.hash(otpCode, 10);
+      await storePatientEmailOtp(patientEmail, otpHash, {
+        type: "patient_registration",
+        patient_id: patient.patient_id,
+        clinic_id: patient.clinic_id,
+        clinic_code: patient.clinic_code,
+        phone: normalizedPhone,
+        name: patient.name,
+        language: patientLang,
+      });
+      sendPatientOtpEmailBrevo(patientEmail, otpCode, patientLang).catch((e) => {
+        console.error("[OTP SEND] Brevo send failed:", e?.message || e);
+        if (allowDevOtpSurface) {
+          console.log(`[OTP SEND] E-posta yok — OTP: ${otpCode} → ${patientEmail}`);
+        }
+      });
+      if (allowDevOtpSurface) {
+        console.log(`[OTP SEND] devOtp: ${patientEmail} → ${otpCode}`);
+      }
+    } catch (e) {
+      console.error("[OTP SEND] Resend failed:", e);
+      return res.status(500).json({
+        ok: false,
+        error: "otp_send_failed",
+        message: "Kod gönderilemedi. Lütfen tekrar deneyin.",
+      });
+    }
 
     res.json({
       ok: true,
       message: "OTP sent successfully",
-      otp: otp, // Only for demo purposes
-      patientId: userType === "patient" ? user.patient_id : undefined,
-      doctorId: userType === "doctor" ? user.doctor_id : undefined,
+      patientId: patient.patient_id,
       phone: phone.trim(),
-      role: role || user.role
     });
 
   } catch (error) {
@@ -7122,19 +7318,107 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     // 🔥 TYPE-BASED USER LOOKUP AND RESPONSE
     if (type === "patient") {
-      // Find patient by phone
+      const emailNorm = String(email || "").trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailNorm || !emailRegex.test(emailNorm)) {
+        return res.status(400).json({
+          ok: false,
+          error: "email_required",
+          message: "E-posta gereklidir (doğrulama kodu e-posta ile gönderilir).",
+        });
+      }
+
+      const { data: otpRows, error: otpFetchErr } = await supabase
+        .from("otps")
+        .select("*")
+        .eq("email", emailNorm)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (otpFetchErr) {
+        console.error("[OTP VERIFY] otps fetch:", otpFetchErr);
+        return res.status(500).json({ ok: false, error: "internal_error" });
+      }
+      const otpRow = normalizePatientOtpRow(otpRows?.[0]);
+      if (!otpRow) {
+        return res.status(404).json({
+          ok: false,
+          error: "otp_not_found",
+          message: "OTP bulunamadı veya süresi doldu. Yeni kod isteyin.",
+        });
+      }
+      if (otpRow.used || otpRow.verified) {
+        return res.status(400).json({
+          ok: false,
+          error: "otp_already_used",
+          message: "Bu kod zaten kullanıldı. Yeni kod isteyin.",
+        });
+      }
+      const expMs = otpRow.expires_at ? new Date(otpRow.expires_at).getTime() : 0;
+      if (!expMs || Date.now() > expMs) {
+        return res.status(400).json({
+          ok: false,
+          error: "otp_expired",
+          message: "OTP süresi dolmuş.",
+        });
+      }
+      if ((otpRow.attempts || 0) >= PATIENT_OTP_MAX_ATTEMPTS) {
+        return res.status(400).json({
+          ok: false,
+          error: "otp_max_attempts",
+          message: "Çok fazla hatalı deneme.",
+        });
+      }
+      const otpOk = await bcrypt.compare(String(otp).trim(), otpRow.otp_hash || "");
+      if (!otpOk) {
+        if (otpRow.id) {
+          await supabase
+            .from("otps")
+            .update({ attempts: (otpRow.attempts || 0) + 1 })
+            .eq("id", otpRow.id);
+        }
+        return res.status(401).json({
+          ok: false,
+          error: "invalid_otp",
+          message: "Geçersiz OTP.",
+        });
+      }
+
       const { data: patient, error: patientError } = await supabase
         .from("patients")
         .select("*")
         .eq("phone", normalizedPhone)
-        .single();
+        .maybeSingle();
 
       if (patientError || !patient) {
-        return res.status(404).json({ 
-          ok: false, 
+        return res.status(404).json({
+          ok: false,
           error: "patient_not_found",
-          message: "Patient not found" 
+          message: "Hasta bulunamadı.",
         });
+      }
+      const pEmail = String(patient.email || "").trim().toLowerCase();
+      if (pEmail !== emailNorm) {
+        return res.status(400).json({
+          ok: false,
+          error: "email_mismatch",
+          message: "E-posta kayıtla eşleşmiyor.",
+        });
+      }
+
+      if (otpRow.id) {
+        await supabase
+          .from("otps")
+          .update({ used: true, verified: true })
+          .eq("id", otpRow.id);
+      }
+
+      let nextStatus = patient.status;
+      if (String(patient.status || "").toUpperCase() === "PENDING") {
+        await supabase
+          .from("patients")
+          .update({ status: "ACTIVE", updated_at: new Date().toISOString() })
+          .eq("patient_id", patient.patient_id);
+        nextStatus = "ACTIVE";
       }
 
       const token = jwt.sign(
@@ -7144,7 +7428,7 @@ app.post("/auth/verify-otp", async (req, res) => {
           clinicCode: patient.clinic_code,
           role: patient.role,
           type: "patient",
-          status: patient.status
+          status: nextStatus || patient.status,
         },
         JWT_SECRET,
         { expiresIn: "30d" }
@@ -7153,7 +7437,7 @@ app.post("/auth/verify-otp", async (req, res) => {
       console.log("[OTP VERIFY] Patient Success:", {
         patientId: patient.patient_id,
         phone: phone,
-        role: patient.role
+        role: patient.role,
       });
 
       return res.json({
@@ -7162,7 +7446,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         patientId: patient.patient_id,
         type: "patient",
         role: "PATIENT",
-        status: patient.status
+        status: nextStatus || patient.status,
       });
     } else if (type === "doctor") {
       // Find doctor by phone
