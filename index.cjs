@@ -4270,6 +4270,26 @@ const PROCEDURE_TYPES_COMPAT = [
   { type: "IMPLANT", label: "İmplant", category: "IMPLANT" },
 ];
 
+/** Mobil `apiGet('/api/doctor/procedures')` ve `secureGet('/api/procedures')` için (admin ile aynı şekil). */
+function buildProceduresCatalogPayload() {
+  const list = PROCEDURE_TYPES_COMPAT.map((t) => ({
+    id: t.type,
+    name: t.label,
+    type: t.type,
+    label: t.label,
+    category: t.category,
+  }));
+  return {
+    ok: true,
+    procedures: list,
+    data: list,
+    types: PROCEDURE_TYPES_COMPAT,
+    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
+    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
+    extractionTypes: ["EXTRACTION", "SURGICAL_EXTRACTION"],
+  };
+}
+
 function normalizeTreatmentEventList(rawEvents) {
   if (!Array.isArray(rawEvents)) return [];
   return rawEvents
@@ -4320,13 +4340,7 @@ async function resolvePatientForAdminTreatmentPage(patientIdOrUuid, clinicId) {
 }
 
 app.get("/api/procedures", (req, res) => {
-  return res.json({
-    ok: true,
-    types: PROCEDURE_TYPES_COMPAT,
-    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
-    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
-    extractionTypes: ["EXTRACTION", "SURGICAL_EXTRACTION"],
-  });
+  return res.json(buildProceduresCatalogPayload());
 });
 
 app.get("/api/admin/treatment-prices", adminAuth, async (req, res) => {
@@ -6250,13 +6264,7 @@ setInterval(() => {
 }, 24 * 60 * 60 * 1000);
 
 app.get("/api/procedures", (req, res) => {
-  return res.json({
-    ok: true,
-    types: PROCEDURE_TYPES_COMPAT,
-    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
-    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
-    extractionTypes: ["EXTRACTION", "SURGICAL_EXTRACTION"],
-  });
+  return res.json(buildProceduresCatalogPayload());
 });
 
 app.get("/api/admin/treatment-prices", getUserFromToken, requireAdmin, async (req, res) => {
@@ -7022,6 +7030,21 @@ app.get("/api/doctors/:id/dashboard", async (req, res) => {
     });
   } catch (error) {
     console.error("[DOCTOR DASHBOARD AGGREGATED] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/* ================= DOCTOR PROCEDURES CATALOG ================= */
+app.get("/api/doctor/procedures", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      const status = v.code === "missing_token" || v.code === "invalid_token" ? 401 : 403;
+      return res.status(status).json({ ok: false, error: v.code || "unauthorized" });
+    }
+    return res.json(buildProceduresCatalogPayload());
+  } catch (err) {
+    console.error("[DOCTOR PROCEDURES]", err);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
