@@ -7216,14 +7216,30 @@ async function resolveAdminPatientInternalId(patientId, clinicId) {
   return null;
 }
 
-/** patient_encounters.patient_id may be UUID or legacy p_… — match all aliases */
+/** True if value is safe for Postgres uuid columns (never pass p_… prefix strings). */
+function isPostgresUuidString(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || "").trim());
+}
+
+/** UUID variants from a patient_id string (plain uuid, or p_<uuid> → inner uuid). */
+function uuidVariantsFromPatientIdString(pidStr) {
+  const s = String(pidStr || "").trim();
+  if (!s) return [];
+  const out = [];
+  if (isPostgresUuidString(s)) out.push(s);
+  const m = /^p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(s);
+  if (m) out.push(m[1]);
+  return out;
+}
+
+/** patient_encounters.patient_id is uuid — only pass valid UUIDs, not p_… literals */
 async function encounterPatientIdMatchSet(internalPatientUuid, rawParamFromRequest) {
   const set = new Set();
   const raw = String(rawParamFromRequest || "").trim();
-  if (internalPatientUuid) set.add(String(internalPatientUuid));
-  if (raw) set.add(raw);
-  const m = /^p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(raw);
-  if (m) set.add(m[1]);
+  if (internalPatientUuid && isPostgresUuidString(internalPatientUuid)) {
+    set.add(String(internalPatientUuid));
+  }
+  for (const v of uuidVariantsFromPatientIdString(raw)) set.add(v);
   if (internalPatientUuid) {
     try {
       const { data } = await supabase
@@ -7231,7 +7247,10 @@ async function encounterPatientIdMatchSet(internalPatientUuid, rawParamFromReque
         .select("patient_id")
         .eq("id", internalPatientUuid)
         .maybeSingle();
-      if (data?.patient_id) set.add(String(data.patient_id).trim());
+      const pid = data?.patient_id != null ? String(data.patient_id).trim() : "";
+      if (pid) {
+        for (const v of uuidVariantsFromPatientIdString(pid)) set.add(v);
+      }
     } catch (_) {}
   }
   return Array.from(set).filter(Boolean);
