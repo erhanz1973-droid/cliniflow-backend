@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "type": "commonjs",
   "main": "index.cjs",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "start": "node index.cjs"
+    "start": "node cliniflow-backend/run.cjs"
   },
   "dependencies": {
+    "@cliniflow/procedures": "*",
     "@prisma/client": "^6.5.0",
     "@supabase/supabase-js": "^2.39.0",
     "bcrypt": "^6.0.0",

@@ -1,11 +1,13 @@
 // Admin Authentication Middleware
-const { createClient } = require('@supabase/supabase-js');
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || 'https://swxinrwbylygoqbwbtwbt.supabase.co',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN3eGlucndieWx5Z29xZGNid2J0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzczMDQxNCwiZXhwIjoyMDgzMzA2NDE0fQ.hDrpZu7aaUKP0u3itxAP8SgqhH0ObqsHWn4Rjr3kxko'
-);
+function getAdminJwtSecret() {
+  const a = process.env.ADMIN_JWT_SECRET;
+  const j = process.env.JWT_SECRET;
+  const fromAdmin = a != null && String(a).trim() !== "" ? String(a).trim() : "";
+  const fromJwt = j != null && String(j).trim() !== "" ? String(j).trim() : "";
+  return fromAdmin || fromJwt;
+}
 
 function verifyAdminToken(req) {
   const authHeader = req.headers.authorization;
@@ -19,23 +21,22 @@ function verifyAdminToken(req) {
   }
 
   try {
-    // Use JWT_SECRET for all tokens (admin, doctor, patient)
-    const adminSecret = process.env.JWT_SECRET;
-    
+    const adminSecret = getAdminJwtSecret();
+
     if (!adminSecret) {
-      console.error("[ADMIN] No JWT_SECRET found in environment");
+      console.error(
+        "[ADMIN] No JWT secret: set JWT_SECRET or ADMIN_JWT_SECRET in the environment."
+      );
       return { ok: false, error: "server_config_error" };
     }
 
     const decoded = jwt.verify(token, adminSecret);
     console.log("[ADMIN DEBUG] Decoded token:", decoded);
-    
-    // Validate admin token structure
-    if (!decoded || typeof decoded !== 'object') {
+
+    if (!decoded || typeof decoded !== "object") {
       return { ok: false, error: "invalid_token" };
     }
 
-    // Accept both new and legacy admin role formats
     const normalizedRole = String(decoded.role || "").trim().toUpperCase();
     const hasClinicScope = !!(decoded.clinicId || decoded.clinicCode);
     const isLegacyAdminToken = hasClinicScope && !decoded.patientId;
@@ -45,20 +46,19 @@ function verifyAdminToken(req) {
       return { ok: false, error: "invalid_role" };
     }
 
-    // Accept adminId, fallback to userId/clinicId for legacy tokens
     const effectiveAdminId = decoded.adminId || decoded.userId || decoded.clinicId || decoded.clinicCode;
     if (!effectiveAdminId) {
       return { ok: false, error: "invalid_admin_token" };
     }
 
     console.log("[ADMIN] Token verified successfully for adminId:", decoded.adminId);
-    
+
     return {
       ok: true,
       adminId: effectiveAdminId,
       role: normalizedRole || "ADMIN",
       clinicCode: decoded.clinicCode,
-      clinicId: decoded.clinicId // Remove fallback, use actual value
+      clinicId: decoded.clinicId,
     };
   } catch (error) {
     console.error("[ADMIN] Token verification error:", error);
@@ -66,28 +66,26 @@ function verifyAdminToken(req) {
   }
 }
 
-// Admin authentication middleware
 function adminAuth(req, res, next) {
   console.log("[ADMIN MIDDLEWARE] Request received for:", req.path);
-  
+
   const verification = verifyAdminToken(req);
-  
+
   console.log("[ADMIN MIDDLEWARE] Verification result:", verification);
-  
+
   if (!verification.ok) {
     console.log("[ADMIN] Authentication failed:", verification.error);
     return res.status(401).json({
       ok: false,
-      error: verification.error
+      error: verification.error,
     });
   }
 
-  // Add admin info to request
   req.admin = {
     adminId: verification.adminId,
     role: verification.role,
     clinicCode: verification.clinicCode,
-    clinicId: verification.clinicId // Remove fallback, use actual value
+    clinicId: verification.clinicId,
   };
 
   console.log("[ADMIN MIDDLEWARE] Success, admin:", req.admin);

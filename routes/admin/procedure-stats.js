@@ -1,8 +1,10 @@
 // Backend API for monthly procedure aggregation for admin dashboard
+const path = require('path');
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../../supabase');
-const { adminAuth } = require('../../server/middleware/auth');
+const { appPath } = require(path.join(__dirname, '..', '..', 'lib', 'appRoot.cjs'));
+const { supabase } = require(appPath('supabase.js'));
+const { adminAuth } = require(appPath('server', 'middleware', 'auth'));
 
 // GET /api/admin/procedure-stats?year=YYYY
 router.get('/procedure-stats', adminAuth, async (req, res) => {

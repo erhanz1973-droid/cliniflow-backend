@@ -1,3 +1,4 @@
+-- Deploy: Supabase SQL Editor — replaces save_diagnoses_atomic for idx_encounter_diagnoses_one_primary_true (one primary per encounter).
 -- ATOMIC DIAGNOSIS SAVING STORED PROCEDURE
 -- This ensures single primary diagnosis per encounter with transaction safety
 

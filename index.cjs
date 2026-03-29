@@ -1,29 +1,48 @@
 console.log("### CLINIFLOW SERVER BOOT ###", new Date().toISOString());
 
-// Load environment variables from .env file (for local development)
-try {
-  require("dotenv").config();
-} catch (e) {
-  // dotenv not installed, that's okay - use environment variables directly
+// Render: use dashboard env only. Local: optional .env via dotenv when not production.
+if (process.env.NODE_ENV !== "production") {
+  try {
+    require("dotenv").config();
+  } catch (_) {
+    /* dotenv optional */
+  }
+}
+
+console.log("Starting backend...");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("SUPABASE_URL exists:", !!process.env.SUPABASE_URL);
+console.log("SERVICE_KEY exists:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+function envTrim(name) {
+  const v = process.env[name];
+  return v != null && String(v).trim() !== "" ? String(v).trim() : "";
+}
+
+const _missingEnv = [];
+if (!envTrim("SUPABASE_URL")) _missingEnv.push("SUPABASE_URL");
+if (!envTrim("SUPABASE_SERVICE_ROLE_KEY")) _missingEnv.push("SUPABASE_SERVICE_ROLE_KEY");
+if (!envTrim("JWT_SECRET")) _missingEnv.push("JWT_SECRET");
+if (_missingEnv.length > 0) {
+  console.error(
+    "[FATAL] Missing required environment variables (non-empty):",
+    _missingEnv.join(", ")
+  );
+  console.error(
+    "  Set them in Render → Environment, or use a local .env when NODE_ENV is not production."
+  );
+  process.exit(1);
 }
 
 // ================= SERVER STARTUP ================= */
 console.log("[INIT] Server starting up");
 console.log("[INIT] Node version:", process.version);
-console.log("[INIT] Environment:", process.env.NODE_ENV || "development");
-console.log("[INIT] Working directory:", __dirname);
+console.log("[INIT] __dirname:", __dirname);
 console.log("[INIT] Process cwd:", process.cwd());
 
-// JWT_SECRET validation
-if (!process.env.JWT_SECRET) {
-  console.error("FATAL: JWT_SECRET is not defined in environment variables");
-  process.exit(1);
-}
-
-console.log("[INIT] JWT_SECRET: ✅ Defined");
-
-const express = require('express');
-const path = require('path');
+const express = require("express");
+const path = require("path");
+const { appPath } = require(path.join(__dirname, "lib", "appRoot.cjs"));
 
 const app = express();
 app.set("etag", false);
@@ -36,7 +55,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 
-const { verifyAdminToken, adminAuth } = require('./admin-auth-middleware.js');
+const { verifyAdminToken, adminAuth } = require(appPath("admin-auth-middleware.js"));
 const corsOptions = {
   origin: true,
   credentials: true,
@@ -219,30 +238,38 @@ const doctorPhotoUpload = multer({
 });
 
 /* ================= SUPABASE CLIENT ================= */
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "patient-files"; // Default: patient-files
+const SUPABASE_URL = envTrim("SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = envTrim("SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_STORAGE_BUCKET = envTrim("SUPABASE_STORAGE_BUCKET") || "patient-files";
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("❌ SUPABASE_URL ve SUPABASE_SERVICE_ROLE_KEY environment variables gerekli!");
+let supabase;
+try {
+  supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+} catch (e) {
+  console.error("[FATAL] Supabase createClient failed:", e && e.message ? e.message : e);
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false
-  }
-});
-
-console.log("✅ Supabase client initialized");
+console.log("[INIT] Supabase client initialized (service role, bucket:", SUPABASE_STORAGE_BUCKET + ")");
 
 const {
   resolveDoctorUUID,
   isDoctorUuidResolveError,
   sendDoctorUuidResolveError,
-} = require("./lib/resolveDoctorUUID");
-const { buildProceduresCatalogPayload } = require("./lib/procedures");
+} = require(appPath("lib", "resolveDoctorUUID"));
+const {
+  normalizeAtMostOnePrimaryDiagnosis,
+  clearEncounterDiagnosisPrimaryFlags,
+} = require(appPath("lib", "normalizeEncounterDiagnosesPrimary"));
+const {
+  buildProceduresCatalogPayload,
+  trySendProceduresCatalog304,
+} = require("@cliniflow/procedures");
 
 /* ================= SUPABASE HELPERS ================= */
 function isMissingColumnError(error) {
@@ -4264,7 +4291,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
 });
 
 /* ================= TREATMENT PAGE COMPAT ENDPOINTS ================= */
-/** Procedure catalog: `lib/procedures.js` → buildProceduresCatalogPayload(lang) */
+/** Procedure catalog: `@cliniflow/procedures` → buildProceduresCatalogPayload(lang) */
 
 function normalizeTreatmentEventList(rawEvents) {
   if (!Array.isArray(rawEvents)) return [];
@@ -4316,7 +4343,10 @@ async function resolvePatientForAdminTreatmentPage(patientIdOrUuid, clinicId) {
 }
 
 app.get("/api/procedures", (req, res) => {
-  return res.json(buildProceduresCatalogPayload(req.query.lang));
+  const payload = buildProceduresCatalogPayload(req.query.lang);
+  res.set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  if (trySendProceduresCatalog304(req, res, payload)) return;
+  return res.json(payload);
 });
 
 app.get("/api/admin/treatment-prices", adminAuth, async (req, res) => {
@@ -7045,7 +7075,10 @@ app.get("/api/doctor/procedures", async (req, res) => {
       const status = v.code === "missing_token" || v.code === "invalid_token" ? 401 : 403;
       return res.status(status).json({ ok: false, error: v.code || "unauthorized" });
     }
-    return res.json(buildProceduresCatalogPayload(req.query.lang));
+    const payload = buildProceduresCatalogPayload(req.query.lang);
+    res.set("Cache-Control", "private, max-age=3600, stale-while-revalidate=86400");
+    if (trySendProceduresCatalog304(req, res, payload)) return;
+    return res.json(payload);
   } catch (err) {
     console.error("[DOCTOR PROCEDURES]", err);
     return res.status(500).json({ ok: false, error: "internal_error" });
@@ -14450,13 +14483,14 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       return res.status(404).json({ ok: false, error: "encounter_not_found" });
     }
 
-    const normalizedDiagnoses = diagnoses.map((item) => ({
+    let normalizedDiagnoses = diagnoses.map((item) => ({
       tooth_number: item?.tooth_number ?? null,
       icd10_code: String(item?.icd10_code || "").trim(),
       icd10_description: item?.icd10_description != null ? String(item.icd10_description) : "",
       is_primary: !!item?.is_primary,
       notes: item?.notes != null ? String(item.notes) : "",
     }));
+    normalizedDiagnoses = normalizeAtMostOnePrimaryDiagnosis(normalizedDiagnoses);
 
     const invalidDiagnosis = normalizedDiagnoses.find((item) => !item.icd10_code);
     if (invalidDiagnosis) {
@@ -14507,13 +14541,12 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
     }
 
     for (const updateItem of diagnosesToUpdate) {
-      if (updateItem.is_primary && updateItem.tooth_number) {
+      // One primary per encounter (idx_encounter_diagnoses_one_primary_true), not per tooth.
+      if (updateItem.is_primary) {
         const { error: clearPrimaryError } = await supabase
           .from("encounter_diagnoses")
           .update({ is_primary: false })
           .eq("encounter_id", encounterId)
-          .eq("created_by_doctor_id", dbDoctorId)
-          .eq("tooth_number", updateItem.tooth_number)
           .neq("id", updateItem.id);
 
         if (clearPrimaryError) {
@@ -14543,6 +14576,15 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
 
     let transactionResult = null;
     if (diagnosesToInsert.length > 0) {
+      if (diagnosesToInsert.some((d) => d.is_primary)) {
+        const { error: clearInsPrimaryErr } = await clearEncounterDiagnosisPrimaryFlags(
+          supabase,
+          encounterId
+        );
+        if (clearInsPrimaryErr) {
+          console.warn("[ENCOUNTER DIAGNOSES POST] Pre-insert primary clear:", clearInsPrimaryErr.message);
+        }
+      }
       const rpcResponse = await supabase.rpc('save_diagnoses_atomic', {
         p_encounter_id: encounterId,
         p_doctor_id: dbDoctorId,
@@ -19462,19 +19504,19 @@ async function updateHairGraftsSummary(patientUuid) {
 // app.use('/api/treatment-groups', treatmentGroupsRoutes);
 
 // Patient Group Assignments routes (Admin only)
-const patientGroupAssignmentsRoutes = require('./server/routes/patient-group-assignments');
+const patientGroupAssignmentsRoutes = require(appPath("server", "routes", "patient-group-assignments"));
 app.use('/api/patient-group-assignments', patientGroupAssignmentsRoutes);
 
 // Patients routes (Admin only)
-const patientsRoutes = require('./server/routes/patients');
+const patientsRoutes = require(appPath("server", "routes", "patients"));
 app.use('/api/patients', patientsRoutes);
 
 // Treatment routes - MUST come before doctor routes to avoid conflicts
-const treatmentRoutes = require('./server/routes/treatment');
+const treatmentRoutes = require(appPath("server", "routes", "treatment"));
 app.use('/api/treatment', treatmentRoutes);
 
 // Doctor treatments routes
-const doctorTreatmentRoutes = require('./routes/doctor/treatments');
+const doctorTreatmentRoutes = require(appPath("routes", "doctor", "treatments"));
 app.use('/api/doctor', doctorTreatmentRoutes);
 
 // Fix treatment_groups status constraint
@@ -20736,8 +20778,8 @@ app.use((err, req, res, next) => {
 // Force deployment - Mon Feb  9 17:31:41 +04 2026
 // Fresh deployment - Mon Feb  9 21:21:31 +04 2026
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on port", PORT);
+  console.log("[INIT] Server listening on port", PORT, "(set PORT in env or default 10000)");
 });

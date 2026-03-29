@@ -1,11 +1,13 @@
+const path = require('path');
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../../supabase');
-const { authenticateToken } = require('../../server/middleware/auth');
+const { appPath } = require(path.join(__dirname, '..', '..', 'lib', 'appRoot.cjs'));
+const { supabase } = require(appPath('supabase.js'));
+const { authenticateToken } = require(appPath('server', 'middleware', 'auth'));
 const {
   resolveDoctorUUID,
   sendDoctorUuidResolveError,
-} = require('../../lib/resolveDoctorUUID');
+} = require(appPath('lib', 'resolveDoctorUUID'));
 
 // GET /api/doctor/dashboard
 router.get('/dashboard', authenticateToken, async (req, res) => {

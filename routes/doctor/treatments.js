@@ -1,12 +1,15 @@
+const path = require('path');
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../../supabase');
-const { authenticateToken } = require('../../server/middleware/auth');
-const { getProcedureLabel } = require('../../lib/procedures');
+const { appPath } = require(path.join(__dirname, '..', '..', 'lib', 'appRoot.cjs'));
+const { supabase } = require(appPath('supabase.js'));
+const { authenticateToken } = require(appPath('server', 'middleware', 'auth'));
+const { getProcedureLabel } = require('@cliniflow/procedures');
 const {
   resolveDoctorUUID,
   sendDoctorUuidResolveError,
-} = require('../../lib/resolveDoctorUUID');
+} = require(appPath('lib', 'resolveDoctorUUID'));
+const { procedureIdForEncounterTreatmentColumn } = require(appPath('lib', 'procedureIdForEncounterTreatment'));
 
 console.log("DOCTOR TREATMENTS ROUTES LOADED");
 
@@ -112,7 +115,14 @@ router.get('/encounters/:id/treatments', authenticateToken, async (req, res) => 
       };
     });
 
-    return res.json({ ok: true, treatments });
+    return res.json({
+      ok: true,
+      treatments,
+      deprecations: {
+        procedure_id_on_encounter_treatments:
+          "Prefer procedure_type for catalog alignment; procedure_id is legacy and will be removed in a future API version.",
+      },
+    });
   } catch (err) {
     console.error('[GET TREATMENTS CRASH]', err);
     return res.status(500).json({ ok: false });
@@ -215,9 +225,11 @@ router.post('/encounters/:id/treatments', authenticateToken, async (req, res) =>
       status: String(body.status || 'planned').toLowerCase(),
       created_by_doctor_id: createdByUuid,
     };
-    if (body.procedure_id != null && String(body.procedure_id).trim()) {
-      insert.procedure_id = String(body.procedure_id).trim();
-    }
+    // procedure_id in DB is UUID (FK). Clients often send catalog codes here by mistake — only persist real UUIDs.
+    const procedureIdCol = procedureIdForEncounterTreatmentColumn(
+      body.procedure_id ?? body.procedureId
+    );
+    if (procedureIdCol) insert.procedure_id = procedureIdCol;
     if (body.chair != null && String(body.chair).trim()) insert.chair = String(body.chair).trim();
     if (body.scheduled_at != null && String(body.scheduled_at).trim()) {
       insert.scheduled_at = String(body.scheduled_at).trim();

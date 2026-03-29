@@ -2,13 +2,15 @@
 // Mounted at: app.use('/api/admin', adminTasksRouter)
 // Covers: POST /api/admin/tasks
 
+const path = require('path');
 const express = require('express');
-const { supabase } = require('../../supabase');
-const { adminAuth } = require('../../admin-auth-middleware');
+const { appPath } = require(path.join(__dirname, '..', '..', 'lib', 'appRoot.cjs'));
+const { supabase } = require(appPath('supabase.js'));
+const { adminAuth } = require(appPath('admin-auth-middleware.js'));
 const {
   resolveDoctorUUID,
   sendDoctorUuidResolveError,
-} = require('../../lib/resolveDoctorUUID');
+} = require(appPath('lib', 'resolveDoctorUUID'));
 
 const router = express.Router();
 

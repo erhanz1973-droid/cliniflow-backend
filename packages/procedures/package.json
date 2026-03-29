@@ -1,0 +1,11 @@
+{
+  "name": "@cliniflow/procedures",
+  "version": "1.0.0",
+  "description": "Canonical procedure type catalog and helpers for Cliniflow services",
+  "main": "index.js",
+  "license": "ISC",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}

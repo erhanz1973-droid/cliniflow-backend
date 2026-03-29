@@ -754,6 +754,8 @@
     CONSULT: 30,
     FOLLOWUP: 20,
     LAB: 30,
+    XRAY: 15,
+    PANORAMIC_XRAY: 20,
     CROWN: 60,
     TEMP_CROWN: 45,
     BRIDGE_UNIT: 75,
@@ -887,7 +889,7 @@
         const finalBreak = Number.isFinite(breakMinutes) && breakMinutes >= 0 ? breakMinutes : 0;
         
         html += `<tr style="border-bottom: 1px solid rgba(55, 65, 81, 0.3);">`;
-        html += `<td style="padding: 12px; font-size: 14px;">${escapeHtml(proc.label)}</td>`;
+        html += `<td style="padding: 12px; font-size: 14px;">${escapeHtml(proc.name || proc.label)}</td>`;
         html += `<td style="padding: 12px; text-align: right;">`;
         html += `<input type="number" id="price_${proc.type}" value="${price}" placeholder="0.00" step="0.01" min="0" style="width: 100%; padding: 6px 8px; text-align: right; background: #1f2937; border: 1px solid var(--b); border-radius: 4px; color: #e6eaf2; font-size: 14px;" />`;
         html += `</td>`;
