@@ -14221,8 +14221,20 @@ async function resolveDoctorEncounterAccess(doctorId, encounterId) {
     .map((id) => String(id || "").trim())
     .filter(Boolean);
 
-  if (ownerIds.length === 0 || ownerIds.includes(String(doctorId))) {
+  const ownerSet = new Set(ownerIds);
+  const tokenDoctor = String(doctorId || "").trim();
+  if (ownerIds.length === 0 || (tokenDoctor && ownerSet.has(tokenDoctor))) {
     return { ok: true, encounter };
+  }
+
+  /** JWT may carry legacy doctor_id (d_…) while encounter stores doctors.id (UUID). */
+  try {
+    const aliases = await resolveEncounterDoctorOwnerCandidates({ doctorId: tokenDoctor });
+    if (aliases.some((k) => ownerSet.has(String(k || "").trim()))) {
+      return { ok: true, encounter };
+    }
+  } catch (_) {
+    /* ignore */
   }
 
   return { ok: false, error: "not_assigned_doctor", encounter };
@@ -14322,9 +14334,23 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       return res.status(403).json({ ok: false, error: "forbidden" });
     }
 
+    /** encounter_diagnoses.created_by_doctor_id is UUID; JWT doctorId may be legacy d_… */
+    const doctorKeyCandidates = await resolveEncounterDoctorOwnerCandidates(v.decoded);
+    const dbDoctorId =
+      doctorKeyCandidates.find((k) => isEncounterDoctorUuid(k)) || null;
+    if (!dbDoctorId) {
+      return res.status(400).json({
+        ok: false,
+        error: "doctor_uuid_required",
+        details:
+          "Could not resolve doctor to UUID for diagnosis rows. Ensure doctors.id exists for this account.",
+      });
+    }
+
     // Enhanced logging
     console.log("[ENCOUNTER DIAGNOSES POST] Request:", {
       doctorId,
+      dbDoctorId,
       encounterId,
       diagnoses,
       user: req.user,
@@ -14380,7 +14406,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
         .from("encounter_diagnoses")
         .select("id, tooth_number, created_at")
         .eq("encounter_id", encounterId)
-        .eq("created_by_doctor_id", doctorId)
+        .eq("created_by_doctor_id", dbDoctorId)
         .in("tooth_number", toothNumbers)
         .order("created_at", { ascending: false });
 
@@ -14414,7 +14440,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
           .from("encounter_diagnoses")
           .update({ is_primary: false })
           .eq("encounter_id", encounterId)
-          .eq("created_by_doctor_id", doctorId)
+          .eq("created_by_doctor_id", dbDoctorId)
           .eq("tooth_number", updateItem.tooth_number)
           .neq("id", updateItem.id);
 
@@ -14435,7 +14461,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
         })
         .eq("id", updateItem.id)
         .eq("encounter_id", encounterId)
-        .eq("created_by_doctor_id", doctorId);
+        .eq("created_by_doctor_id", dbDoctorId);
 
       if (updateError) {
         console.error("[ENCOUNTER DIAGNOSES POST] Update failed:", updateError.message);
@@ -14447,7 +14473,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
     if (diagnosesToInsert.length > 0) {
       const rpcResponse = await supabase.rpc('save_diagnoses_atomic', {
         p_encounter_id: encounterId,
-        p_doctor_id: doctorId,
+        p_doctor_id: dbDoctorId,
         p_diagnoses: diagnosesToInsert
       });
       transactionResult = rpcResponse.data;
@@ -14475,7 +14501,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
         .from("encounter_diagnoses")
         .select("id")
         .eq("encounter_id", encounterId)
-        .eq("created_by_doctor_id", doctorId)
+        .eq("created_by_doctor_id", dbDoctorId)
         .eq("tooth_number", noteItem.tooth_number)
         .eq("icd10_code", noteItem.icd10_code)
         .order("created_at", { ascending: false })
@@ -14508,6 +14534,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       saved: (transactionResult?.saved || 0) + diagnosesToUpdate.length,
       encounterId,
       doctorId,
+      dbDoctorId,
       primary_count: transactionResult?.primary_count || 0,
       updated: diagnosesToUpdate.length,
       inserted: diagnosesToInsert.length
