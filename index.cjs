@@ -28,60 +28,6 @@ const path = require('path');
 const app = express();
 app.set("etag", false);
 
-// ================= DOCTOR DASHBOARD ENDPOINT (REAL DATA) =================
-// const jwt = require('jsonwebtoken'); // Already required elsewhere, avoid redeclaration
-
-function isValidUUID(uuid) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
-}
-
-app.get("/api/doctor/dashboard", async (req, res) => {
-  try {
-    // Extract JWT from Authorization header
-    const authHeader = req.headers["authorization"] || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    let doctorId = null;
-    let clinicId = null;
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        doctorId = decoded.id || decoded.doctorId || decoded.doctor_id || null;
-        clinicId = decoded.clinicId || decoded.clinic_id || null;
-      } catch (e) {
-        return res.status(401).json({ ok: false, error: "invalid_token" });
-      }
-    }
-
-    // Validate UUIDs
-    if (!isValidUUID(doctorId) || (clinicId && !isValidUUID(clinicId))) {
-      return res.status(400).json({ ok: false, error: "Invalid UUID for doctorId or clinicId" });
-    }
-
-    // Query Supabase for patients assigned to this doctor
-    const { data: patients, error: patientError } = await supabase
-      .from("patients")
-      .select("id")
-      .eq("primary_doctor_id", doctorId);
-    if (patientError) {
-      return res.status(500).json({ ok: false, error: patientError.message });
-    }
-    res.json({
-      ok: true,
-      doctor: {
-        id: doctorId,
-        // You can add more doctor info here if needed
-      },
-      stats: {
-        totalPatients: patients ? patients.length : 0,
-        // Add more real stats as needed
-      },
-      message: "Dashboard data from Supabase."
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
 const cors = require("cors");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
@@ -5520,8 +5466,12 @@ function verifyDoctorToken(req) {
     const decoded = jwt.verify(token, JWT_SECRET);
     console.log("[VERIFY DOCTOR] Decoded payload:", decoded);
     
-    // Check if user has DOCTOR role
-    if (decoded.role !== "DOCTOR") {
+    // Check if user has DOCTOR role (JWT may use mixed case or legacy fields)
+    const roleNorm = String(decoded.role || decoded.roleType || "").toUpperCase();
+    const isDoctor =
+      roleNorm === "DOCTOR" ||
+      String(decoded.userType || decoded.type || "").toLowerCase() === "doctor";
+    if (!isDoctor) {
       console.log("[VERIFY DOCTOR] Role mismatch:", decoded.role);
       return { ok: false, code: "insufficient_permissions" };
     }
@@ -6482,6 +6432,261 @@ function checkDoctorSelfAccess(doctorId, targetPatientId) {
   // Doctor cannot access their own treatment data as a patient
   return doctorId === targetPatientId;
 }
+
+/* ================= DOCTOR DASHBOARD (MOBILE) ================= */
+app.get("/api/doctor/dashboard", async (req, res) => {
+  try {
+    const v = verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code || "unauthorized" });
+    }
+
+    const decoded = v.decoded || {};
+    const doctorId = String(decoded.doctorId || "").trim();
+    const clinicId = String(decoded.clinicId || "").trim();
+    const clinicCode = String(decoded.clinicCode || "").trim();
+
+    const ownerKeys = await resolveEncounterDoctorOwnerCandidates(decoded);
+    const doctorKeySet = new Set(
+      [...new Set([doctorId, ...ownerKeys].map((x) => String(x || "").trim()).filter(Boolean))]
+    );
+
+    const access = await collectDoctorEncounterAccess(decoded);
+    const encounters = Array.isArray(access?.encounters) ? access.encounters : [];
+    const encounterPatientIds = [
+      ...new Set(encounters.map((enc) => String(enc?.patient_id || "").trim()).filter(Boolean)),
+    ];
+
+    let doctorRow = null;
+    for (const key of doctorKeySet) {
+      const byDoctorId = await supabase
+        .from("doctors")
+        .select("id, doctor_id, name, full_name, email, clinic_id")
+        .eq("doctor_id", key)
+        .limit(1)
+        .maybeSingle();
+      if (!byDoctorId.error && byDoctorId.data) {
+        doctorRow = byDoctorId.data;
+        break;
+      }
+      const byId = await supabase
+        .from("doctors")
+        .select("id, doctor_id, name, full_name, email, clinic_id")
+        .eq("id", key)
+        .limit(1)
+        .maybeSingle();
+      if (!byId.error && byId.data) {
+        doctorRow = byId.data;
+        break;
+      }
+    }
+
+    const doctor = {
+      id: doctorRow?.id || doctorRow?.doctor_id || doctorId,
+      name: doctorRow?.name || doctorRow?.full_name || decoded.doctorName || null,
+      email: doctorRow?.email || decoded.email || null,
+      clinic_id: doctorRow?.clinic_id || clinicId || null,
+    };
+
+    let patients = [];
+    if (encounterPatientIds.length > 0) {
+      const patientSelectAttempts = [
+        "id, patient_id, name, full_name, first_name, last_name, phone, email, status, health, created_at",
+        "id, patient_id, name, full_name, phone, email, status, created_at",
+        "id, patient_id, name, phone, email, status, created_at",
+      ];
+      for (const selectClause of patientSelectAttempts) {
+        let q = supabase
+          .from("patients")
+          .select(selectClause)
+          .in("id", encounterPatientIds.slice(0, 100))
+          .order("created_at", { ascending: false });
+        if (clinicId) q = q.eq("clinic_id", clinicId);
+        else if (clinicCode) q = q.eq("clinic_code", clinicCode);
+        const { data, error } = await q;
+        if (!error && Array.isArray(data)) {
+          const unique = new Map();
+          for (const p of data) {
+            const id = String(p?.id || "").trim();
+            if (id) unique.set(id, p);
+          }
+          patients = Array.from(unique.values());
+          break;
+        }
+        const code = String(error?.code || "");
+        if (!["42703", "PGRST204", "PGRST205"].includes(code)) break;
+      }
+    }
+
+    const localYmd = (d) => {
+      const x = d instanceof Date ? d : new Date(d);
+      const y = x.getFullYear();
+      const m = String(x.getMonth() + 1).padStart(2, "0");
+      const day = String(x.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const todayStr = localYmd(new Date());
+    const tomorrowD = new Date();
+    tomorrowD.setDate(tomorrowD.getDate() + 1);
+    const tomorrowStr = localYmd(tomorrowD);
+
+    async function fetchAppointmentsForDay(dayYmd) {
+      const attempts = [
+        {
+          sel: "id, patient_id, date, time, status, chair_number, notes, doctor_id, procedure",
+          dateCol: "date",
+          timeOrder: "time",
+        },
+        {
+          sel: "id, patient_id, appointment_date, appointment_time, status, chair_number, notes, doctor_id",
+          dateCol: "appointment_date",
+          timeOrder: "appointment_time",
+        },
+      ];
+      for (const a of attempts) {
+        let q = supabase
+          .from("appointments")
+          .select(a.sel)
+          .eq(a.dateCol, dayYmd)
+          .order(a.timeOrder, { ascending: true })
+          .limit(80);
+        if (clinicId) q = q.eq("clinic_id", clinicId);
+        else if (clinicCode) q = q.eq("clinic_code", clinicCode);
+        const { data, error } = await q;
+        if (!error && Array.isArray(data)) {
+          return data.filter((row) => {
+            const oid = String(row?.doctor_id || "").trim();
+            return !oid || doctorKeySet.has(oid);
+          });
+        }
+        const code = String(error?.code || "");
+        if (!["42703", "PGRST204", "42P01"].includes(code)) break;
+      }
+      return [];
+    }
+
+    const todayRaw = await fetchAppointmentsForDay(todayStr);
+    const tomorrowRaw = await fetchAppointmentsForDay(tomorrowStr);
+
+    const patientMap = new Map(patients.map((p) => [String(p.id), p]));
+    const extraApptPatientIds = [
+      ...new Set(
+        [...todayRaw, ...tomorrowRaw]
+          .map((r) => String(r?.patient_id || "").trim())
+          .filter(Boolean)
+      ),
+    ].filter((id) => !patientMap.has(id));
+    if (extraApptPatientIds.length > 0) {
+      const { data: extraP } = await supabase
+        .from("patients")
+        .select("id, name")
+        .in("id", extraApptPatientIds.slice(0, 100));
+      for (const p of extraP || []) {
+        if (p?.id) patientMap.set(String(p.id), p);
+      }
+    }
+
+    const mapAppointment = (a, fallbackDay) => {
+      const dateVal = a.date || a.appointment_date || fallbackDay;
+      let timeVal = a.time || a.appointment_time || "09:00";
+      if (a.start_at && !a.time && !a.appointment_time) {
+        const d = new Date(String(a.start_at));
+        if (Number.isFinite(d.getTime())) timeVal = d.toTimeString().slice(0, 5);
+      }
+      if (timeVal && String(timeVal).length > 5) timeVal = String(timeVal).slice(0, 5);
+      const patient = patientMap.get(String(a.patient_id)) || null;
+      const st = String(a.status || "").toLowerCase();
+      return {
+        appointmentId: String(a.id || ""),
+        date: dateVal || fallbackDay,
+        time: timeVal,
+        chairNumber: String(a.chair_number != null ? a.chair_number : a.chair || ""),
+        patientId: a.patient_id || "",
+        patientName: patient?.name || "Hasta",
+        procedureSummary: a.notes || a.procedure || "",
+        planId: null,
+        status:
+          st === "completed" || st === "done"
+            ? "completed"
+            : st === "in_progress" || st === "active"
+              ? "in_progress"
+              : "scheduled",
+      };
+    };
+
+    const todayAppointments = todayRaw.map((r) => mapAppointment(r, todayStr));
+    const tomorrowAppointments = tomorrowRaw.map((r) => mapAppointment(r, tomorrowStr));
+
+    const patientIds = patients.map((p) => String(p.id).trim()).filter(Boolean);
+    let planned = 0;
+    let inProgress = 0;
+    let done = 0;
+    if (patientIds.length > 0) {
+      const { data: treatments } = await supabase
+        .from("patient_treatments")
+        .select("treatments_data")
+        .in("patient_id", patientIds.slice(0, 50));
+      (treatments || []).forEach((t) => {
+        const teeth = t?.treatments_data?.teeth || [];
+        teeth.forEach((tooth) => {
+          (tooth?.procedures || []).forEach((proc) => {
+            const s = String(proc?.status || "").toUpperCase();
+            if (s === "COMPLETED") done += 1;
+            else if (s === "ACTIVE" || s === "IN_PROGRESS") inProgress += 1;
+            else planned += 1;
+          });
+        });
+      });
+    }
+
+    const recentPatients = patients.slice(0, 5).map((p) => ({
+      id: p.id,
+      name: p.name || "Hasta",
+      hasRisk: false,
+      riskFlags: [],
+      lastVisit: null,
+    }));
+
+    let notifications = [];
+    try {
+      const uuidRe =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const notifyIds = [...doctorKeySet].filter((x) => uuidRe.test(String(x)));
+      if (notifyIds.length > 0) {
+        const nRes = await supabase
+          .from("notifications")
+          .select("id, user_id, type, title, message, data, is_read, created_at")
+          .in("user_id", notifyIds)
+          .eq("is_read", false)
+          .order("created_at", { ascending: false })
+          .limit(14);
+        if (!nRes.error) notifications = nRes.data || [];
+      }
+    } catch (_) {
+      /* optional table */
+    }
+
+    return res.json({
+      ok: true,
+      doctor,
+      patients,
+      notifications,
+      stats: {
+        planned,
+        in_progress: inProgress,
+        done,
+        today: todayAppointments.length,
+        waiting: patients.length,
+      },
+      recentPatients,
+      todayAppointments,
+      tomorrowAppointments,
+    });
+  } catch (error) {
+    console.error("[DOCTOR DASHBOARD] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
 
 /* ================= DOCTOR DASHBOARD STATS ================= */
 app.get("/api/doctor/dashboard/stats", async (req, res) => {
