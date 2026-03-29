@@ -6452,9 +6452,13 @@ app.get("/api/doctor/dashboard", async (req, res) => {
 
     const access = await collectDoctorEncounterAccess(decoded);
     const encounters = Array.isArray(access?.encounters) ? access.encounters : [];
-    const encounterPatientIds = [
+    const encounterOnlyPatientIds = [
       ...new Set(encounters.map((enc) => String(enc?.patient_id || "").trim()).filter(Boolean)),
     ];
+    const encounterPatientIds = await mergePatientIdsWithPrimaryDoctorPatients(
+      decoded,
+      encounterOnlyPatientIds
+    );
 
     let doctorRow = null;
     for (const key of doctorKeySet) {
@@ -7047,9 +7051,13 @@ app.get("/api/doctor/patients", async (req, res) => {
     if (!v.ok) return res.status(401).json({ ok: false, error: "missing_token" });
 
     const access = await collectDoctorEncounterAccess(v.decoded);
-    const encounterPatientIds = [...new Set(
-      access.encounters.map((enc) => String(enc?.patient_id || "").trim()).filter(Boolean)
-    )];
+    const encounterOnlyIds = [
+      ...new Set(access.encounters.map((enc) => String(enc?.patient_id || "").trim()).filter(Boolean)),
+    ];
+    const encounterPatientIds = await mergePatientIdsWithPrimaryDoctorPatients(
+      v.decoded,
+      encounterOnlyIds
+    );
 
     if (encounterPatientIds.length === 0) {
       return res.json({ ok: true, patients: [] });
@@ -13425,6 +13433,51 @@ async function collectDoctorEncounterAccess(decoded, options = {}) {
   };
 }
 
+/**
+ * Admin paneli hastayı doktora `patients.primary_doctor_id` (doctors.id UUID) ile atar;
+ * liste/dashboard yalnızca encounter’dan topluyordu — atanan hasta görünmüyordu.
+ */
+async function mergePatientIdsWithPrimaryDoctorPatients(decoded, seedIds) {
+  const idSet = new Set(
+    (Array.isArray(seedIds) ? seedIds : [])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+  );
+
+  let keys = [];
+  try {
+    keys = await resolveEncounterDoctorOwnerCandidates(decoded || {});
+  } catch (_) {
+    keys = [];
+  }
+  const uuidKeys = [
+    ...new Set(keys.map((k) => String(k || "").trim()).filter((k) => isEncounterDoctorUuid(k))),
+  ];
+  const clinicId = String(decoded?.clinicId || "").trim();
+
+  if (uuidKeys.length === 0) {
+    return Array.from(idSet);
+  }
+
+  try {
+    let q = supabase.from("patients").select("id").in("primary_doctor_id", uuidKeys).limit(500);
+    if (clinicId) q = q.eq("clinic_id", clinicId);
+    const { data, error } = await q;
+    const code = String(error?.code || "");
+    if (error && !["42703", "PGRST204", "42P01", "PGRST205"].includes(code)) {
+      console.warn("[PRIMARY_DOCTOR_PATIENTS]", error.message);
+    }
+    for (const row of data || []) {
+      const pid = String(row?.id || "").trim();
+      if (pid) idSet.add(pid);
+    }
+  } catch (e) {
+    console.warn("[PRIMARY_DOCTOR_PATIENTS] exception:", e?.message || e);
+  }
+
+  return Array.from(idSet);
+}
+
 async function doctorHasAccessToEncounter(encounterId, decoded) {
   const normalizedEncounterId = String(encounterId || "").trim();
   if (!normalizedEncounterId) return false;
@@ -13442,18 +13495,40 @@ async function doctorHasAccessToPatient(patientId, decoded) {
     return true;
   }
 
-  const patientLookup = await supabase
+  let patientLookup = await supabase
     .from("patients")
-    .select("id, patient_id")
+    .select("id, patient_id, primary_doctor_id, clinic_id")
     .or(`id.eq.${normalizedPatientId},patient_id.eq.${normalizedPatientId}`)
     .limit(1)
     .maybeSingle();
+
+  if (
+    patientLookup.error &&
+    ["42703", "PGRST204"].includes(String(patientLookup.error?.code || ""))
+  ) {
+    patientLookup = await supabase
+      .from("patients")
+      .select("id, patient_id, clinic_id")
+      .or(`id.eq.${normalizedPatientId},patient_id.eq.${normalizedPatientId}`)
+      .limit(1)
+      .maybeSingle();
+  }
 
   if (patientLookup.error || !patientLookup.data) {
     return false;
   }
 
-  const aliases = [String(patientLookup.data.id || "").trim(), String(patientLookup.data.patient_id || "").trim()].filter(Boolean);
+  const row = patientLookup.data;
+  const doctorKeys = await resolveEncounterDoctorOwnerCandidates(decoded || {});
+  const primaryDoc = String(row.primary_doctor_id || "").trim();
+  if (primaryDoc && doctorKeys.some((k) => String(k || "").trim() === primaryDoc)) {
+    const c = String(decoded?.clinicId || "").trim();
+    if (!c || String(row.clinic_id || "") === c) {
+      return true;
+    }
+  }
+
+  const aliases = [String(row.id || "").trim(), String(row.patient_id || "").trim()].filter(Boolean);
   if (aliases.length === 0) return false;
 
   const aliasAccess = await collectDoctorEncounterAccess(decoded || {}, { patientIds: aliases });
