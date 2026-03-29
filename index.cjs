@@ -237,6 +237,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 console.log("✅ Supabase client initialized");
 
+const {
+  resolveDoctorUUID,
+  isDoctorUuidResolveError,
+  sendDoctorUuidResolveError,
+} = require("./lib/resolveDoctorUUID");
+const { buildProceduresCatalogPayload } = require("./lib/procedures");
+
 /* ================= SUPABASE HELPERS ================= */
 function isMissingColumnError(error) {
   const code = String(error?.code || "");
@@ -4257,38 +4264,7 @@ app.get("/api/admin/patients", adminAuth, async (req, res) => {
 });
 
 /* ================= TREATMENT PAGE COMPAT ENDPOINTS ================= */
-const PROCEDURE_TYPES_COMPAT = [
-  { type: "CONSULT", label: "Muayene", category: "EVENTS" },
-  { type: "FOLLOWUP", label: "Kontrol", category: "EVENTS" },
-  { type: "FILLING", label: "Dolgu", category: "RESTORATIVE" },
-  { type: "TEMP_FILLING", label: "Geçici Dolgu", category: "RESTORATIVE" },
-  { type: "ROOT_CANAL_TREATMENT", label: "Kanal Tedavisi", category: "ENDODONTIC" },
-  { type: "EXTRACTION", label: "Çekim", category: "SURGICAL" },
-  { type: "SURGICAL_EXTRACTION", label: "Cerrahi Çekim", category: "SURGICAL" },
-  { type: "CROWN", label: "Kron", category: "PROSTHETIC" },
-  { type: "BRIDGE_UNIT", label: "Köprü", category: "PROSTHETIC" },
-  { type: "IMPLANT", label: "İmplant", category: "IMPLANT" },
-];
-
-/** Mobil `apiGet('/api/doctor/procedures')` ve `secureGet('/api/procedures')` için (admin ile aynı şekil). */
-function buildProceduresCatalogPayload() {
-  const list = PROCEDURE_TYPES_COMPAT.map((t) => ({
-    id: t.type,
-    name: t.label,
-    type: t.type,
-    label: t.label,
-    category: t.category,
-  }));
-  return {
-    ok: true,
-    procedures: list,
-    data: list,
-    types: PROCEDURE_TYPES_COMPAT,
-    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
-    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
-    extractionTypes: ["EXTRACTION", "SURGICAL_EXTRACTION"],
-  };
-}
+/** Procedure catalog: `lib/procedures.js` → buildProceduresCatalogPayload(lang) */
 
 function normalizeTreatmentEventList(rawEvents) {
   if (!Array.isArray(rawEvents)) return [];
@@ -4340,7 +4316,7 @@ async function resolvePatientForAdminTreatmentPage(patientIdOrUuid, clinicId) {
 }
 
 app.get("/api/procedures", (req, res) => {
-  return res.json(buildProceduresCatalogPayload());
+  return res.json(buildProceduresCatalogPayload(req.query.lang));
 });
 
 app.get("/api/admin/treatment-prices", adminAuth, async (req, res) => {
@@ -5695,6 +5671,14 @@ async function findOpenableContext({ patientUuid, doctorId, clinicId }) {
   let activeEncounter = null;
   let confirmedAppointment = null;
 
+  const rawDoctor = String(doctorId || "").trim();
+  const resolvedDoctorId = rawDoctor
+    ? await resolveDoctorUUID(doctorId)
+    : null;
+  const doctorMatchIds = new Set(
+    [rawDoctor, resolvedDoctorId].filter(Boolean)
+  );
+
   const encounterResult = await supabase
     .from("patient_encounters")
     .select("id, patient_id, clinic_id, status, doctor_id, created_by_doctor_id, assigned_doctor_id, created_at")
@@ -5716,7 +5700,10 @@ async function findOpenableContext({ patientUuid, doctorId, clinicId }) {
         .map((id) => String(id || "").trim())
         .filter(Boolean);
 
-      return ownerDoctorIds.length === 0 || ownerDoctorIds.includes(String(doctorId));
+      return (
+        ownerDoctorIds.length === 0 ||
+        ownerDoctorIds.some((id) => doctorMatchIds.has(id))
+      );
     }) || null;
   }
 
@@ -5730,7 +5717,10 @@ async function findOpenableContext({ patientUuid, doctorId, clinicId }) {
   if (!appointmentResult.error) {
     confirmedAppointment = (appointmentResult.data || []).find((appointment) => {
       if (clinicId && appointment?.clinic_id && String(appointment.clinic_id) !== String(clinicId)) return false;
-      if (doctorId && appointment?.doctor_id && String(appointment.doctor_id) !== String(doctorId)) return false;
+      if (doctorId && appointment?.doctor_id) {
+        const aid = String(appointment.doctor_id).trim();
+        if (!doctorMatchIds.has(aid)) return false;
+      }
       return normalizeChatStatus(appointment?.status) === "CONFIRMED";
     }) || null;
   }
@@ -5786,9 +5776,18 @@ app.post("/api/admin/chat/open", getUserFromToken, requireAdmin, async (req, res
     }
 
     const patient = patientLookup.patient;
+
+    let doctorUuidChat;
+    try {
+      doctorUuidChat = await resolveDoctorUUID(doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
+
     const context = await findOpenableContext({
       patientUuid: patient.id,
-      doctorId,
+      doctorId: doctorUuidChat,
       clinicId: req.user?.clinicId || patient?.clinic_id || null,
     });
 
@@ -5807,7 +5806,7 @@ app.post("/api/admin/chat/open", getUserFromToken, requireAdmin, async (req, res
       .from("chat_threads")
       .select("id, status")
       .eq("patient_id", patient.id)
-      .eq("doctor_id", doctorId)
+      .eq("doctor_id", doctorUuidChat)
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -5838,7 +5837,7 @@ app.post("/api/admin/chat/open", getUserFromToken, requireAdmin, async (req, res
         .from("chat_threads")
         .insert({
           patient_id: patient.id,
-          doctor_id: doctorId,
+          doctor_id: doctorUuidChat,
           encounter_id: encounterId,
           appointment_id: appointmentId,
           status: "OPEN",
@@ -5857,6 +5856,7 @@ app.post("/api/admin/chat/open", getUserFromToken, requireAdmin, async (req, res
 
     return res.json({ ok: true, thread });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("[ADMIN CHAT OPEN] Error:", error);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -6253,10 +6253,6 @@ setInterval(() => {
     console.error("[CHAT AUTO CLOSE] Scheduled run failed:", error);
   });
 }, 24 * 60 * 60 * 1000);
-
-app.get("/api/procedures", (req, res) => {
-  return res.json(buildProceduresCatalogPayload());
-});
 
 app.get("/api/admin/treatment-prices", getUserFromToken, requireAdmin, async (req, res) => {
   try {
@@ -6757,7 +6753,17 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
 
     const { clinicId } = v.decoded;
     const today = new Date().toISOString().split('T')[0];
+    let resolvedSelf;
+    try {
+      resolvedSelf = await resolveDoctorUUID(v.decoded?.doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
     const doctorKeys = await resolveEncounterDoctorOwnerCandidates(v.decoded);
+    const doctorKeySet = new Set(
+      [...doctorKeys, resolvedSelf].map((k) => String(k || "").trim()).filter(Boolean)
+    );
 
     // Get today's appointments with patient info
     const { data: appointments, error } = await supabase
@@ -6783,7 +6789,6 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
     }
 
     const allowedAppointmentIds = new Set();
-    const doctorKeySet = new Set(doctorKeys.map((v) => String(v || "").trim()).filter(Boolean));
 
     for (const apt of appointments || []) {
       const ownerId = String(apt?.doctor_id || "").trim();
@@ -6797,9 +6802,11 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
       { table: "appointment_doctors", appointmentColumn: "appointmentId", doctorColumn: "doctorId" },
     ];
 
+    const doctorKeysForAssignment = Array.from(doctorKeySet);
+
     for (const source of assignmentSources) {
       let sourceUnavailable = false;
-      for (const ownerDoctorId of doctorKeys) {
+      for (const ownerDoctorId of doctorKeysForAssignment) {
         const rows = await supabase
           .from(source.table)
           .select(source.appointmentColumn)
@@ -6837,8 +6844,9 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
       appointments: formattedAppointments
     });
   } catch (err) {
-      console.error("REGISTER_DOCTOR_ERROR:", err);
-    console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
+    if (sendDoctorUuidResolveError(res, err)) return;
+    console.error("REGISTER_DOCTOR_ERROR:", err);
+    console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", err);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -7037,7 +7045,7 @@ app.get("/api/doctor/procedures", async (req, res) => {
       const status = v.code === "missing_token" || v.code === "invalid_token" ? 401 : 403;
       return res.status(status).json({ ok: false, error: v.code || "unauthorized" });
     }
-    return res.json(buildProceduresCatalogPayload());
+    return res.json(buildProceduresCatalogPayload(req.query.lang));
   } catch (err) {
     console.error("[DOCTOR PROCEDURES]", err);
     return res.status(500).json({ ok: false, error: "internal_error" });
@@ -7337,6 +7345,14 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
 
     const normalizedRole = roleRaw === "CONSULT" ? "CONSULTANT" : roleRaw;
 
+    let targetDoctorUuid;
+    try {
+      targetDoctorUuid = await resolveDoctorUUID(doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
+
     const { data: plan, error: planError } = await supabase
       .from("treatment_plans")
       .select("id, encounter_id, assigned_doctor_id")
@@ -7362,7 +7378,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
       const { data: targetDoctor, error: targetDoctorError } = await supabase
         .from("doctors")
         .select("id, doctor_id, clinic_id, status, role")
-        .or(`id.eq.${doctorId},doctor_id.eq.${doctorId}`)
+        .eq("id", targetDoctorUuid)
         .limit(1)
         .maybeSingle();
 
@@ -7383,7 +7399,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         table: "treatment_plan_doctors",
         payload: {
           treatment_plan_id: planId,
-          doctor_id: doctorId,
+          doctor_id: targetDoctorUuid,
           role: normalizedRole,
           assigned_at: nowIso,
         },
@@ -7392,7 +7408,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         table: "treatment_doctors",
         payload: {
           encounter_id: encounterId,
-          doctor_id: doctorId,
+          doctor_id: targetDoctorUuid,
           role: normalizedRole,
           assigned_at: nowIso,
         },
@@ -7401,7 +7417,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         table: "treatment_doctors",
         payload: {
           encounterId: encounterId,
-          doctorId,
+          doctorId: targetDoctorUuid,
           role: normalizedRole,
           assignedAt: nowIso,
         },
@@ -7410,7 +7426,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         table: "encounter_doctors",
         payload: {
           encounter_id: encounterId,
-          doctor_id: doctorId,
+          doctor_id: targetDoctorUuid,
           role: normalizedRole,
           assigned_at: nowIso,
         },
@@ -7419,7 +7435,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         table: "encounter_doctors",
         payload: {
           encounterId: encounterId,
-          doctorId,
+          doctorId: targetDoctorUuid,
           role: normalizedRole,
           assignedAt: nowIso,
         },
@@ -7460,7 +7476,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
     if (!assigned && normalizedRole === "PRIMARY") {
       const promote = await supabase
         .from("treatment_plans")
-        .update({ assigned_doctor_id: doctorId })
+        .update({ assigned_doctor_id: targetDoctorUuid })
         .eq("id", planId)
         .select("id")
         .maybeSingle();
@@ -7481,7 +7497,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
         return res.json({
           ok: true,
           planId,
-          doctorId,
+          doctorId: targetDoctorUuid,
           role: normalizedRole,
           storage_source: "ui_only_fallback",
           warning: "assignment_storage_unavailable",
@@ -7494,8 +7510,9 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", async (req, res) => {
       return res.status(500).json({ ok: false, error: "assign_failed" });
     }
 
-    return res.json({ ok: true, planId, doctorId, role: normalizedRole });
+    return res.json({ ok: true, planId, doctorId: targetDoctorUuid, role: normalizedRole });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("[DOCTOR PLAN ADD] exception:", error);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -8162,10 +8179,18 @@ async function planHasPrimaryDoctor(treatmentPlanId) {
 app.post("/api/doctor/treatment-plan", getUserFromToken, requireDoctor, async (req, res) => {
   try {
     const { patientId, diagnosisId } = req.body || {};
-    const doctorId = req.user.id;
+    const tokenDoctorRaw = req.user.id;
 
     if (!patientId || !diagnosisId) {
       return res.status(400).json({ ok: false, message: "patientId and diagnosisId are required" });
+    }
+
+    let doctorUuid;
+    try {
+      doctorUuid = await resolveDoctorUUID(tokenDoctorRaw);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
     }
 
     const { data: plan, error: planError } = await supabase
@@ -8173,7 +8198,7 @@ app.post("/api/doctor/treatment-plan", getUserFromToken, requireDoctor, async (r
       .insert({
         patient_id: patientId,
         diagnosis_id: diagnosisId,
-        created_by_doctor_id: doctorId,
+        created_by_doctor_id: doctorUuid,
         status: "DRAFT",
       })
       .select("*")
@@ -8188,7 +8213,7 @@ app.post("/api/doctor/treatment-plan", getUserFromToken, requireDoctor, async (r
       .from("treatment_plan_doctors")
       .insert({
         treatment_plan_id: plan.id,
-        doctor_id: doctorId,
+        doctor_id: doctorUuid,
         role: "PRIMARY",
         assigned_at: new Date().toISOString(),
       });
@@ -8201,6 +8226,7 @@ app.post("/api/doctor/treatment-plan", getUserFromToken, requireDoctor, async (r
 
     return res.json({ ok: true, plan });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("CREATE_PLAN_ERROR:", error);
     return res.status(500).json({ ok: false });
   }
@@ -8220,11 +8246,19 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", getUserFromToken, requireD
       return res.status(400).json({ ok: false, message: "invalid_role" });
     }
 
+    let doctorUuid;
+    try {
+      doctorUuid = await resolveDoctorUUID(doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
+
     const { error } = await supabase
       .from("treatment_plan_doctors")
       .insert({
         treatment_plan_id: planId,
-        doctor_id: doctorId,
+        doctor_id: doctorUuid,
         role: normalizedRole,
         assigned_at: new Date().toISOString(),
       });
@@ -8241,6 +8275,7 @@ app.post("/api/doctor/treatment-plan/:id/add-doctor", getUserFromToken, requireD
 
     return res.json({ ok: true });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("ADD_DOCTOR_ERROR:", error);
     return res.status(500).json({ ok: false });
   }
@@ -8253,6 +8288,14 @@ app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requir
 
     if (!newPrimaryDoctorId) {
       return res.status(400).json({ ok: false, message: "newPrimaryDoctorId is required" });
+    }
+
+    let newPrimaryUuid;
+    try {
+      newPrimaryUuid = await resolveDoctorUUID(newPrimaryDoctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
     }
 
     const { error: demoteError } = await supabase
@@ -8270,7 +8313,7 @@ app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requir
       .from("treatment_plan_doctors")
       .select("id")
       .eq("treatment_plan_id", planId)
-      .eq("doctor_id", newPrimaryDoctorId)
+      .eq("doctor_id", newPrimaryUuid)
       .maybeSingle();
 
     if (existingMembershipError) {
@@ -8293,7 +8336,7 @@ app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requir
         .from("treatment_plan_doctors")
         .insert({
           treatment_plan_id: planId,
-          doctor_id: newPrimaryDoctorId,
+          doctor_id: newPrimaryUuid,
           role: "PRIMARY",
           assigned_at: new Date().toISOString(),
         });
@@ -8311,6 +8354,7 @@ app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requir
 
     return res.json({ ok: true });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("CHANGE_PRIMARY_ERROR:", error);
     return res.status(500).json({ ok: false });
   }
@@ -8319,18 +8363,26 @@ app.put("/api/admin/treatment-plan/:id/change-primary", getUserFromToken, requir
 app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, res) => {
   try {
     const { treatmentPlanId, title, scheduledDate, toothId, price, currency, patientId } = req.body || {};
-    const doctorId = req.user.id;
+    const tokenDoctorRaw = req.user.id;
     const tokenClinicId = req.user?.clinicId || null;
 
     if (!treatmentPlanId || !title) {
       return res.status(400).json({ ok: false, message: "treatmentPlanId and title are required" });
     }
 
+    let doctorUuid;
+    try {
+      doctorUuid = await resolveDoctorUUID(tokenDoctorRaw);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
+
     const { data: assigned, error: assignedError } = await supabase
       .from("treatment_plan_doctors")
       .select("id")
       .eq("treatment_plan_id", treatmentPlanId)
-      .eq("doctor_id", doctorId)
+      .eq("doctor_id", doctorUuid)
       .maybeSingle();
 
     if (assignedError) {
@@ -8347,7 +8399,7 @@ app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, r
       const doctorLookup = await supabase
         .from("doctors")
         .select("id, clinic_id")
-        .eq("id", doctorId)
+        .eq("id", doctorUuid)
         .limit(1)
         .maybeSingle();
 
@@ -8357,7 +8409,7 @@ app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, r
     }
 
     console.log("[CREATE_PROCEDURE] clinic debug", {
-      doctorId,
+      doctorId: doctorUuid,
       clinicId,
       treatmentPlanId,
       patientId: patientId || null,
@@ -8371,7 +8423,7 @@ app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, r
       {
         treatment_plan_id: treatmentPlanId,
         patient_id: patientId || null,
-        doctor_id: doctorId,
+        doctor_id: doctorUuid,
         clinic_id: clinicId,
         title,
         tooth_id: toothId || null,
@@ -8383,7 +8435,7 @@ app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, r
       {
         treatment_plan_id: treatmentPlanId,
         patient_id: patientId || null,
-        doctor_id: doctorId,
+        doctor_id: doctorUuid,
         title,
         tooth_id: toothId || null,
         price: price ?? null,
@@ -8420,6 +8472,7 @@ app.post("/api/doctor/procedure", getUserFromToken, requireDoctor, async (req, r
 
     return res.json({ ok: true, procedure });
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("CREATE_PROCEDURE_ERROR:", error);
     return res.status(500).json({ ok: false });
   }
@@ -13045,6 +13098,14 @@ app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (re
       });
     }
 
+    let doctorUuid;
+    try {
+      doctorUuid = await resolveDoctorUUID(doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
+    }
+
     // Validate group belongs to same clinic
     const { data: group, error: groupError } = await supabase
       .from("treatment_groups")
@@ -13064,7 +13125,7 @@ app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (re
     const { data: doctor, error: doctorError } = await supabase
       .from("doctors")
       .select("id, clinic_id, status")
-      .eq("id", doctorId)
+      .eq("id", doctorUuid)
       .eq("clinic_id", clinicId)
       .eq("status", "APPROVED")
       .single();
@@ -13081,7 +13142,7 @@ app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (re
       .from("treatment_group_members")
       .select("id")
       .eq("treatment_group_id", groupId)
-      .eq("doctor_id", doctorId)
+      .eq("doctor_id", doctorUuid)
       .single();
 
     if (existingMember) {
@@ -13096,7 +13157,7 @@ app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (re
       .from("treatment_group_members")
       .insert({
         treatment_group_id: groupId,
-        doctor_id: doctorId,
+        doctor_id: doctorUuid,
         role: "MEMBER",
         status: "ACTIVE",
         joined_at: new Date().toISOString()
@@ -13118,6 +13179,7 @@ app.post("/api/admin/treatment-groups/:groupId/add-doctor", adminAuth, async (re
     });
 
   } catch (error) {
+    if (sendDoctorUuidResolveError(res, error)) return;
     console.error("[ADD DOCTOR TO TREATMENT GROUP] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
@@ -13539,7 +13601,24 @@ async function doctorHasAccessToAppointment(appointmentId, decoded) {
   const normalizedAppointmentId = String(appointmentId || "").trim();
   if (!normalizedAppointmentId) return false;
 
-  const doctorKeys = await resolveEncounterDoctorOwnerCandidates(decoded || {});
+  const rawTokenDoctor = String(decoded?.doctorId || "").trim();
+  let resolvedSelf = null;
+  if (rawTokenDoctor) {
+    try {
+      resolvedSelf = await resolveDoctorUUID(decoded.doctorId);
+    } catch (e) {
+      if (isDoctorUuidResolveError(e) && e.code === "doctor_uuid_not_found") {
+        return false;
+      }
+      throw e;
+    }
+  }
+  const fromCandidates = await resolveEncounterDoctorOwnerCandidates(decoded || {});
+  const doctorKeys = [
+    ...new Set(
+      [resolvedSelf, ...fromCandidates].map((k) => String(k || "").trim()).filter(Boolean)
+    ),
+  ];
 
   for (const ownerDoctorId of doctorKeys) {
     const primaryResult = await supabase
@@ -13944,154 +14023,61 @@ app.post("/api/doctor/encounters", async (req, res) => {
       return res.status(400).json({ ok: false, error: "patient_id_required" });
     }
 
-    const isUuid = (value) =>
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        String(value || "").trim()
-      );
-
-    const doctorOwnerCandidates = [...new Set([String(doctorId || "").trim()].filter(Boolean))];
-
+    let doctorUuid;
     try {
-      const selectCandidates = [
-        "id, doctor_id, clinic_id, clinic_code, email",
-        "id, doctor_id, clinic_code, email",
-        "id, doctor_id, email",
-      ];
-
-      let resolvedDoctor = null;
-      for (const selectClause of selectCandidates) {
-        const byDoctorId = await supabase
-          .from("doctors")
-          .select(selectClause)
-          .eq("doctor_id", String(doctorId || "").trim())
-          .limit(1)
-          .maybeSingle();
-
-        if (!byDoctorId.error && byDoctorId.data) {
-          resolvedDoctor = byDoctorId.data;
-          break;
-        }
-
-        const byId = await supabase
-          .from("doctors")
-          .select(selectClause)
-          .eq("id", String(doctorId || "").trim())
-          .limit(1)
-          .maybeSingle();
-
-        if (!byId.error && byId.data) {
-          resolvedDoctor = byId.data;
-          break;
-        }
-
-        const normalizedEmail = String(email || "").trim().toLowerCase();
-        const normalizedClinicCode = String(clinicCode || "").trim().toUpperCase();
-        if (normalizedEmail && normalizedClinicCode) {
-          const byEmailClinic = await supabase
-            .from("doctors")
-            .select(selectClause)
-            .eq("email", normalizedEmail)
-            .eq("clinic_code", normalizedClinicCode)
-            .limit(1)
-            .maybeSingle();
-
-          if (!byEmailClinic.error && byEmailClinic.data) {
-            resolvedDoctor = byEmailClinic.data;
-            break;
-          }
-        }
-      }
-
-      if (resolvedDoctor) {
-        if (!clinicId || !resolvedDoctor.clinic_id || String(resolvedDoctor.clinic_id) === String(clinicId)) {
-          doctorOwnerCandidates.unshift(String(resolvedDoctor.id || "").trim());
-          doctorOwnerCandidates.push(String(resolvedDoctor.doctor_id || "").trim());
-        }
-      }
-    } catch (doctorResolveError) {
-      console.warn("[ENCOUNTERS] doctor resolver warning:", doctorResolveError?.message || doctorResolveError);
+      doctorUuid = await resolveDoctorUUID(doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
     }
-
-    const normalizedDoctorCandidates = [...new Set(doctorOwnerCandidates.filter(Boolean))];
-    const uuidDoctorCandidates = normalizedDoctorCandidates.filter(isUuid);
-    const ownershipCandidates = uuidDoctorCandidates.length > 0 ? uuidDoctorCandidates : normalizedDoctorCandidates;
 
     // Rule: Aynı hastada aktif encounter var mı?
     if (!forceCreateNewEncounter) {
-      for (const doctorOwnerId of ownershipCandidates) {
-        const existingResult = await supabase
-          .from("patient_encounters")
-          .select("id, patient_id, created_by_doctor_id, status, created_at")
-          .eq("patient_id", patient_id)
-          .in("status", ["ACTIVE", "active"])
-          .eq("created_by_doctor_id", doctorOwnerId)
-          .maybeSingle();
+      const existingResult = await supabase
+        .from("patient_encounters")
+        .select("id, patient_id, created_by_doctor_id, status, created_at")
+        .eq("patient_id", patient_id)
+        .in("status", ["ACTIVE", "active"])
+        .eq("created_by_doctor_id", doctorUuid)
+        .maybeSingle();
 
-        const existingErrorCode = String(existingResult?.error?.code || "");
-        if (existingResult?.error && existingErrorCode === "22P02") {
-          continue;
-        }
+      if (existingResult?.data) {
+        return res.json({
+          ok: true,
+          alreadyExists: true,
+          encounter: existingResult.data,
+        });
+      }
 
-        if (existingResult?.data) {
-          return res.json({
-            ok: true,
-            alreadyExists: true,
-            encounter: existingResult.data,
-          });
-        }
-
-        if (existingResult?.error) {
+      if (existingResult?.error) {
+        const existingErrorCode = String(existingResult.error.code || "");
+        if (!["22P02", "PGRST116"].includes(existingErrorCode)) {
           console.warn("[ENCOUNTERS] existing encounter check warning:", existingResult.error);
         }
-        break;
       }
     }
+
+    const basePayload = {
+      patient_id: patient_id,
+      created_by_doctor_id: doctorUuid,
+      encounter_type: "initial",
+      status: "active",
+      created_at: new Date().toISOString(),
+    };
+
+    const payloadWithOptionalFields = {
+      ...basePayload,
+      notes: notes || "Initial examination",
+    };
 
     let encounter = null;
     let encounterError = null;
 
-    for (const doctorOwnerId of ownershipCandidates) {
-      const basePayload = {
-        patient_id: patient_id,
-        created_by_doctor_id: doctorOwnerId,
-        encounter_type: "initial",
-        status: "active",
-        created_at: new Date().toISOString(),
-      };
-
-      const payloadWithOptionalFields = {
-        ...basePayload,
-        notes: notes || "Initial examination",
-      };
-
-      const insertWithAllFields = await supabase
-        .from("patient_encounters")
-        .insert(payloadWithOptionalFields)
-        .select("id, patient_id, created_by_doctor_id, status, created_at")
-        .single();
-
-      encounter = insertWithAllFields.data;
-      encounterError = insertWithAllFields.error;
-
-      if (encounterError && String(encounterError.code || "") === "PGRST204") {
-        const insertWithCoreFields = await supabase
-          .from("patient_encounters")
-          .insert(basePayload)
-          .select("id, patient_id, created_by_doctor_id, status, created_at")
-          .single();
-        encounter = insertWithCoreFields.data;
-        encounterError = insertWithCoreFields.error;
-      }
-
-      const errorCode = String(encounterError?.code || "");
-      if (!encounterError) {
-        break;
-      }
-      if (errorCode === "22P02") {
-        continue;
-      }
-      break;
-    }
+    const insertWithAllFields = await supabase
+      .from("patient_encounters")
+      .insert(payloadWithOptionalFields)
+      .select("id, patient_id, created_by_doctor_id, status, created_at")
+      .single();
 
     encounter = insertWithAllFields.data;
     encounterError = insertWithAllFields.error;
@@ -14117,6 +14103,7 @@ app.post("/api/doctor/encounters", async (req, res) => {
     });
 
   } catch (err) {
+    if (sendDoctorUuidResolveError(res, err)) return;
     console.error("[ENCOUNTERS] Exception:", err.message);
     console.error("[ENCOUNTERS] Stack trace:", err.stack);
     res.status(500).json({ ok: false, error: err.message });
@@ -14423,17 +14410,13 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
       return res.status(403).json({ ok: false, error: "forbidden" });
     }
 
-    /** encounter_diagnoses.created_by_doctor_id is UUID; JWT doctorId may be legacy d_… */
-    const doctorKeyCandidates = await resolveEncounterDoctorOwnerCandidates(v.decoded);
-    const dbDoctorId =
-      doctorKeyCandidates.find((k) => isEncounterDoctorUuid(k)) || null;
-    if (!dbDoctorId) {
-      return res.status(400).json({
-        ok: false,
-        error: "doctor_uuid_required",
-        details:
-          "Could not resolve doctor to UUID for diagnosis rows. Ensure doctors.id exists for this account.",
-      });
+    /** encounter_diagnoses.created_by_doctor_id FK = doctors.id (UUID) */
+    let dbDoctorId;
+    try {
+      dbDoctorId = await resolveDoctorUUID(v.decoded?.doctorId);
+    } catch (e) {
+      if (sendDoctorUuidResolveError(res, e)) return;
+      throw e;
     }
 
     // Enhanced logging
@@ -14668,6 +14651,7 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
     });
 
   } catch (err) {
+    if (sendDoctorUuidResolveError(res, err)) return;
     console.error("[ENCOUNTER DIAGNOSES POST] Exception:", err.message);
     console.error("[ENCOUNTER DIAGNOSES POST] Stack trace:", err.stack);
     return res.status(500).json({ ok: false, error: err.message });
