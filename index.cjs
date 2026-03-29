@@ -14585,6 +14585,79 @@ app.post("/api/doctor/encounters/:id/diagnoses", async (req, res) => {
   }
 });
 
+// GET /api/doctor/encounters/:id/plan — latest treatment_plans row (doctor app encounter + treatment screens)
+app.get("/api/doctor/encounters/:id/plan", async (req, res) => {
+  try {
+    const v = await verifyDoctorToken(req);
+    if (!v.ok) {
+      return res.status(401).json({ ok: false, error: v.code });
+    }
+
+    const encounterId = String(req.params.id || "").trim();
+    if (!encounterId) {
+      return res.status(400).json({ ok: false, error: "encounter_id_required" });
+    }
+
+    const hasAccess = await doctorHasAccessToEncounter(encounterId, v.decoded);
+    if (!hasAccess) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    const planSelectCandidates = [
+      "id, encounter_id, patient_id, status, created_at, submitted_at, completed_at, created_by_doctor_id",
+      "id, encounter_id, patient_id, status, created_at, created_by_doctor_id",
+      "id, encounter_id, status, created_at, created_by_doctor_id",
+      "id, encounter_id, patient_id, status, created_at",
+      "id, encounter_id, status, created_at",
+      "id, encounter_id, created_at",
+      "id, encounter_id",
+    ];
+
+    let plan = null;
+    let lastErr = null;
+    for (const selectClause of planSelectCandidates) {
+      const result = await supabase
+        .from("treatment_plans")
+        .select(selectClause)
+        .eq("encounter_id", encounterId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!result.error) {
+        plan = result.data || null;
+        lastErr = null;
+        break;
+      }
+      lastErr = result.error;
+      const code = String(result.error?.code || "");
+      if (!["42703", "PGRST204", "PGRST205", "42P01"].includes(code)) {
+        console.error("[DOCTOR ENCOUNTERS] plan get failed:", result.error);
+        return res.status(500).json({
+          ok: false,
+          error: "plan_fetch_failed",
+          message: result.error.message,
+        });
+      }
+    }
+
+    if (lastErr) {
+      res.setHeader("Cache-Control", "private, no-store, no-cache, must-revalidate");
+      return res.json({ ok: true, plan: null });
+    }
+
+    res.setHeader("Cache-Control", "private, no-store, no-cache, must-revalidate");
+    return res.json({ ok: true, plan });
+  } catch (error) {
+    console.error("[DOCTOR ENCOUNTERS] plan get exception:", error);
+    return res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: error.message,
+    });
+  }
+});
+
 // GET /api/doctor/encounters/:id - Get specific encounter by ID
 app.get("/api/doctor/encounters/:id", async (req, res) => {
   try {
