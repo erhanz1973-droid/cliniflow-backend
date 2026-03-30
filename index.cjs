@@ -18835,14 +18835,30 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     // 🔥 TYPE-BASED USER LOOKUP AND RESPONSE
     if (normalizedType === "patient") {
-      const emailNorm = String(email || "").trim().toLowerCase();
+      let emailNorm = String(email || "").trim().toLowerCase();
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      // Mobil: sadece phone + otp — e-postayı hastadan çöz
       if (!emailNorm || !emailRegex.test(emailNorm)) {
-        return res.status(400).json({
-          ok: false,
-          error: "email_required",
-          message: "E-posta gereklidir (doğrulama kodu e-posta ile gönderilir).",
-        });
+        const { data: patientForEmail, error: pfe } = await supabase
+          .from("patients")
+          .select("email")
+          .eq("phone", normalizedPhone)
+          .maybeSingle();
+        if (pfe || !patientForEmail) {
+          return res.status(404).json({
+            ok: false,
+            error: "patient_not_found",
+            message: "Hasta bulunamadı.",
+          });
+        }
+        emailNorm = String(patientForEmail.email || "").trim().toLowerCase();
+        if (!emailNorm || !emailRegex.test(emailNorm)) {
+          return res.status(400).json({
+            ok: false,
+            error: "email_missing_on_account",
+            message: "Bu hesapta e-posta yok; doğrulama yapılamaz.",
+          });
+        }
       }
 
       const { data: otpRows, error: otpFetchErr } = await supabase
