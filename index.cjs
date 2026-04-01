@@ -23362,6 +23362,17 @@ app.get("/api/doctor/me", requireDoctorAuth, async (req, res) => {
       } catch (e) {
         console.warn("[DOCTOR ME] doctor_specialities/languages resolve:", e?.message || e);
       }
+
+      // Fallback: if junction tables returned nothing, read from doctors.languages / doctors.specialties columns
+      // (doctor app saves plain strings there — keep them visible until junction tables are synced)
+      if (specialities.length === 0 && base?.specialties) {
+        const raw = Array.isArray(base.specialties) ? base.specialties : String(base.specialties).split(/[,،]\s*/);
+        specialities = raw.filter(Boolean).map((s, i) => ({ id: `col_sp_${i}`, name: String(s).trim() }));
+      }
+      if (languages.length === 0 && base?.languages) {
+        const raw = Array.isArray(base.languages) ? base.languages : String(base.languages).split(/[,،]\s*/);
+        languages = raw.filter(Boolean).map((s, i) => ({ id: `col_lang_${i}`, name: String(s).trim() }));
+      }
     }
 
     try {
