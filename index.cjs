@@ -10498,9 +10498,9 @@ async function patientHealthGetHandler(req, res) {
       return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
     }
 
-    // PRODUCTION: patient_health_forms is single source of truth
+    // patient_medical_forms is single source of truth
     if (isSupabaseEnabled()) {
-      // Resolve patientUuid for lookup
+      // Resolve canonical UUID
       const { data: patRowG } = await supabase
         .from("patients")
         .select("id")
@@ -10508,18 +10508,15 @@ async function patientHealthGetHandler(req, res) {
         .maybeSingle();
       const patientUuidG = patRowG?.id || (UUID_RE.test(patientId) ? patientId : null);
 
-      // Build candidate list: UUID first, then original id for legacy records
-      const candidates = Array.from(new Set([patientUuidG, patientId].filter(Boolean)));
-      let hfRecord = null;
-      for (const cid of candidates) {
-        const { data: rows } = await supabase
-          .from("patient_health_forms")
-          .select("*")
-          .eq("patient_id", cid)
-          .order("updated_at", { ascending: false })
-          .limit(1);
-        if (rows && rows[0]) { hfRecord = rows[0]; break; }
+      if (!patientUuidG) {
+        return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
       }
+
+      const { data: hfRecord } = await supabase
+        .from("patient_medical_forms")
+        .select("patient_id, form_data, is_complete, submitted_at, created_at, updated_at")
+        .eq("patient_id", patientUuidG)
+        .maybeSingle();
 
       if (!hfRecord) {
         return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
@@ -10534,7 +10531,7 @@ async function patientHealthGetHandler(req, res) {
         form: fd,
         formData: fd,
         isComplete: hfRecord.is_complete || false,
-        completedAt: hfRecord.completed_at || null,
+        completedAt: hfRecord.submitted_at || null,
         updatedAt: hfRecord.updated_at || null,
         createdAt: hfRecord.created_at || null,
       });
@@ -10613,7 +10610,7 @@ async function patientHealthPostHandler(req, res) {
     };
 
     if (isSupabaseEnabled()) {
-      // Resolve patientUuid — single source of truth is patient_health_forms with UUID patient_id
+      // Resolve patientUuid — single source of truth is patient_medical_forms with UUID patient_id
       const { data: patRow } = await supabase
         .from("patients")
         .select("id")
@@ -10624,41 +10621,27 @@ async function patientHealthPostHandler(req, res) {
         return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
 
-      // Check existing record in patient_health_forms
+      // Upsert into patient_medical_forms (patient_id is PRIMARY KEY)
+      const nowIso = new Date().toISOString();
       const { data: existing } = await supabase
-        .from("patient_health_forms")
-        .select("id")
+        .from("patient_medical_forms")
+        .select("patient_id, submitted_at")
         .eq("patient_id", patientUuid)
         .maybeSingle();
 
-      const nowIso = new Date().toISOString();
-      let saveErr;
-      if (existing?.id) {
-        ({ error: saveErr } = await supabase
-          .from("patient_health_forms")
-          .update({
-            form_data: formData,
-            is_complete: isComplete,
-            updated_at: nowIso,
-            ...(isComplete && { completed_at: nowIso }),
-          })
-          .eq("id", existing.id));
-      } else {
-        ({ error: saveErr } = await supabase
-          .from("patient_health_forms")
-          .insert({
-            patient_id: patientUuid,
-            clinic_code: payload.clinicCode || null,
-            form_data: formData,
-            is_complete: isComplete,
-            created_at: nowIso,
-            updated_at: nowIso,
-            ...(isComplete && { completed_at: nowIso }),
-          }));
-      }
+      const { error: saveErr } = await supabase
+        .from("patient_medical_forms")
+        .upsert({
+          patient_id:  patientUuid,
+          form_data:   formData,
+          is_complete: isComplete,
+          updated_at:  nowIso,
+          created_at:  existing ? undefined : nowIso,
+          ...(isComplete && !existing?.submitted_at ? { submitted_at: nowIso } : {}),
+        }, { onConflict: "patient_id" });
 
       if (saveErr) {
-        console.error("[HEALTH] patient_health_forms save failed:", saveErr.message);
+        console.error("[HEALTH] patient_medical_forms save failed:", saveErr.message);
         return res.status(500).json({ ok: false, error: "health_save_failed", details: saveErr.message });
       }
 
@@ -10713,7 +10696,7 @@ async function patientHealthPutHandler(req, res) {
     const nowTs = now();
 
     if (isSupabaseEnabled()) {
-      // Resolve patientUuid — single source of truth is patient_health_forms with UUID patient_id
+      // Resolve patientUuid — single source of truth is patient_medical_forms with UUID patient_id
       const { data: patRow2 } = await supabase
         .from("patients")
         .select("id")
@@ -10724,40 +10707,27 @@ async function patientHealthPutHandler(req, res) {
         return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
 
-      // Check existing record in patient_health_forms
+      // Upsert into patient_medical_forms (patient_id is PRIMARY KEY)
+      const nowIso2 = new Date().toISOString();
       const { data: existing2 } = await supabase
-        .from("patient_health_forms")
-        .select("id, created_at, completed_at")
+        .from("patient_medical_forms")
+        .select("patient_id, submitted_at")
         .eq("patient_id", patientUuid2)
         .maybeSingle();
 
-      const nowIso2 = new Date().toISOString();
-      let saveErr2;
-      if (existing2?.id) {
-        ({ error: saveErr2 } = await supabase
-          .from("patient_health_forms")
-          .update({
-            form_data: formData,
-            is_complete: isComplete,
-            updated_at: nowIso2,
-            ...(isComplete && !existing2.completed_at && { completed_at: nowIso2 }),
-          })
-          .eq("id", existing2.id));
-      } else {
-        ({ error: saveErr2 } = await supabase
-          .from("patient_health_forms")
-          .insert({
-            patient_id: patientUuid2,
-            form_data: formData,
-            is_complete: isComplete,
-            created_at: nowIso2,
-            updated_at: nowIso2,
-            ...(isComplete && { completed_at: nowIso2 }),
-          }));
-      }
+      const { error: saveErr2 } = await supabase
+        .from("patient_medical_forms")
+        .upsert({
+          patient_id:  patientUuid2,
+          form_data:   formData,
+          is_complete: isComplete,
+          updated_at:  nowIso2,
+          created_at:  existing2 ? undefined : nowIso2,
+          ...(isComplete && !existing2?.submitted_at ? { submitted_at: nowIso2 } : {}),
+        }, { onConflict: "patient_id" });
 
       if (saveErr2) {
-        console.error("[HEALTH PUT] patient_health_forms save failed:", saveErr2.message);
+        console.error("[HEALTH PUT] patient_medical_forms save failed:", saveErr2.message);
         return res.status(500).json({ ok: false, error: "health_save_failed", details: saveErr2.message });
       }
 
@@ -10829,9 +10799,9 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
-    // PRODUCTION: patient_health_forms is single source of truth
+    // patient_medical_forms is single source of truth
     if (isSupabaseEnabled()) {
-      // Resolve patientUuid
+      // Resolve canonical UUID
       const { data: patRowA } = await supabase
         .from("patients")
         .select("id")
@@ -10839,17 +10809,15 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
         .maybeSingle();
       const patientUuidA = patRowA?.id || (UUID_RE.test(patientId) ? patientId : null);
 
-      const candidates = Array.from(new Set([patientUuidA, patientId].filter(Boolean)));
-      let hfA = null;
-      for (const cid of candidates) {
-        const { data: rows } = await supabase
-          .from("patient_health_forms")
-          .select("*")
-          .eq("patient_id", cid)
-          .order("updated_at", { ascending: false })
-          .limit(1);
-        if (rows && rows[0]) { hfA = rows[0]; break; }
+      if (!patientUuidA) {
+        return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
       }
+
+      const { data: hfA } = await supabase
+        .from("patient_medical_forms")
+        .select("patient_id, form_data, is_complete, submitted_at, created_at, updated_at")
+        .eq("patient_id", patientUuidA)
+        .maybeSingle();
 
       if (!hfA) {
         return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
@@ -10864,7 +10832,7 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
         form: fdA,
         formData: fdA,
         isComplete: hfA.is_complete || false,
-        completedAt: hfA.completed_at || null,
+        completedAt: hfA.submitted_at || null,
         updatedAt: hfA.updated_at || null,
         createdAt: hfA.created_at || null,
       });
@@ -23837,7 +23805,7 @@ app.get('/api/doctor/doctors', requireDoctorAuth, async (req, res) => {
 });
 
 // GET /api/doctor/patient/:patientId/health-form
-// Doctor reads patient health/allergy form — checks both patients.health and patient_health_forms
+// Doctor reads patient health/allergy form — checks patients.health then patient_medical_forms
 app.get('/api/doctor/patient/:patientId/health-form', requireDoctorAuth, async (req, res) => {
   try {
     const patientId = String(req.params.patientId || '').trim();
@@ -23884,35 +23852,25 @@ app.get('/api/doctor/patient/:patientId/health-form', requireDoctorAuth, async (
       meta = rawHealth;
     }
 
-    // Source 2: patient_health_forms table (if patients.health is empty)
+    // Source 2: patient_medical_forms table (single source of truth)
     if (!fd || Object.keys(fd).length === 0) {
-      const patientUuid   = (patientRow && patientRow.id) || (isUuidD ? patientId : null);
-      const patientTextId = (patientRow && patientRow.patient_id) || (!isUuidD ? patientId : null);
-      const candidates = Array.from(new Set([patientUuid, patientTextId].filter(Boolean)));
+      const patientUuid = (patientRow && patientRow.id) || (isUuidD ? patientId : null);
 
-      for (let ci = 0; ci < candidates.length; ci++) {
-        const cid = candidates[ci];
-        const qr = await supabase.from('patient_health_forms')
-          .select('*')
-          .eq('patient_id', cid)
-          .order('updated_at', { ascending: false })
-          .limit(1);
-        const hf = qr.data && qr.data[0];
+      if (patientUuid) {
+        const qr = await supabase.from('patient_medical_forms')
+          .select('form_data, is_complete, submitted_at, updated_at')
+          .eq('patient_id', patientUuid)
+          .maybeSingle();
+        const hf = qr.data;
         if (hf) {
-          const raw = hf.form_data || hf;
-          fd = {
-            allergies:       raw.allergies,
-            medications:     raw.medications,
-            chronicDiseases: raw.chronicDiseases,
-            conditions:      raw.conditions,
-            medicationsList: raw.medicationsList,
-            notes:           raw.notes,
-            submittedAt:     raw.submittedAt,
-          };
+          const raw = typeof hf.form_data === 'string'
+            ? (() => { try { return JSON.parse(hf.form_data); } catch { return {}; } })()
+            : (hf.form_data || {});
+          fd = raw;
           isComplete = hf.is_complete === true;
-          meta = { completedAt: hf.completed_at, updatedAt: hf.updated_at };
-          break;
+          meta = { completedAt: hf.submitted_at, updatedAt: hf.updated_at };
         }
+        // dummy block to match closing braces below
       }
     }
 
@@ -24042,7 +24000,7 @@ app.get('/api/doctor/stats', requireDoctorAuth, async (req, res) => {
 
 /**
  * Risk rozetleri — yalnızca patients.health (tek kaynak). formData + üst seviye alanlar birleştirilir.
- * patient_health_forms kullanılmaz.
+ * patient_health_forms kullanılmaz (deprecated). Kaynak: patient_medical_forms.
  */
 function buildDashboardRiskFlagsFromHealth(healthRaw) {
   const flags = [];
