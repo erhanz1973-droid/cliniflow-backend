@@ -813,6 +813,17 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
+
+// ── UUID param sanitization ──────────────────────────────────────────────────
+const _paramUuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function _assertUuidParam(paramName) {
+  return (req, res, next, value) => {
+    const v = String(value || "").trim();
+    if (_paramUuidRe.test(v) || /^[a-zA-Z][a-zA-Z0-9]*_/.test(v)) return next();
+    return res.status(400).json({ ok: false, error: "invalid_uuid", param: paramName, received: v });
+  };
+}
+app.param("encounterId", _assertUuidParam("encounterId"));
 // Invalid JSON body → always JSON (never HTML), so mobile clients don't get JSON.parse errors on "<"
 app.use((err, req, res, next) => {
   const isBodyParse =
@@ -1133,6 +1144,29 @@ function cleanUuid(id) {
 /** Filter an array to only valid bare UUIDs (strips prefixes). */
 function cleanUuids(ids) {
   return [...new Set((ids || []).map(cleanUuid).filter(Boolean))];
+}
+
+/**
+ * Resolves any patient identifier to the bare UUID in patients.id.
+ * - Bare UUID input → returned directly (no DB round-trip).
+ * - p_... / prefixed formats → looked up in patients.patient_id column.
+ *   (cleanUuid wrongly strips p_ and treats remainder as UUID; patients.patient_id ≠ patients.id)
+ */
+async function resolvePatientUuid(patientId) {
+  if (!patientId) return null;
+  const raw = String(patientId).trim();
+  if (!raw) return null;
+  if (UUID_RE.test(raw)) return raw;
+  if (!isSupabaseEnabled()) return null;
+  try {
+    const { data } = await supabase
+      .from('patients')
+      .select('id')
+      .eq('patient_id', raw)
+      .maybeSingle();
+    if (data?.id && UUID_RE.test(data.id)) return data.id;
+  } catch (_) { /* non-fatal */ }
+  return null;
 }
 
 const TREATMENTS_CACHE_TTL_MS = 15000;
