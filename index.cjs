@@ -23090,9 +23090,11 @@ async function requireDoctorAuth(req, res, next) {
   
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    
-    if (String(decoded.role || '').toUpperCase() !== 'DOCTOR') {
-      return res.status(403).json({ ok: false, error: 'invalid_role' });
+
+    const roleNorm = String(decoded.role || "").toUpperCase();
+    if (roleNorm !== "DOCTOR") {
+      console.warn("[DOCTOR AUTH] non-doctor access attempt, role:", decoded.role);
+      return res.status(403).json({ ok: false, error: "invalid_role" });
     }
 
     const doctorIdFromToken = String(decoded.doctorId || '').trim();
@@ -23126,12 +23128,19 @@ async function requireDoctorAuth(req, res, next) {
       return res.status(401).json({ ok: false, error: 'doctor_not_found' });
     }
 
+    if (String(doctor.status || "").toUpperCase() !== "APPROVED") {
+      console.warn("[DOCTOR AUTH] doctor not approved, status:", doctor.status, "doctorId:", req.doctorId);
+      return res.status(403).json({ ok: false, error: "doctor_not_approved" });
+    }
+
     req.doctor = doctor;
     req.doctorId = doctor.id || doctor.doctor_id || doctorIdFromToken;
     req.clinicId = doctor.clinic_id || String(decoded.clinicId || "").trim() || null;
     next();
   } catch (error) {
-    return res.status(401).json({ ok: false, error: 'invalid_token' });
+    const code = error?.name === "TokenExpiredError" ? "token_expired" : "invalid_token";
+    console.warn("[DOCTOR AUTH] token error:", code, error?.message);
+    return res.status(401).json({ ok: false, error: code });
   }
 }
 
