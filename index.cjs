@@ -841,6 +841,15 @@ app.use((err, req, res, next) => {
   next(err);
 });
 app.use((req, res, next) => {
+  // Structured request logger — always active for /api/ paths
+  if (String(req.path || "").startsWith("/api/")) {
+    const t0 = Date.now();
+    res.on("finish", () => {
+      const ms = Date.now() - t0;
+      const lvl = res.statusCode >= 500 ? "[API][ERROR]" : res.statusCode >= 400 ? "[API][WARN]" : "[API]";
+      console.log(`${lvl} ${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
+    });
+  }
   if (!PERF_LOGS_ENABLED || !String(req.path || "").startsWith("/api/")) {
     next();
     return;
@@ -2174,6 +2183,31 @@ app.get("/health/detail", (req, res) => {
     smtp: !!emailTransporter
   });
 });
+
+// ── Standard /api/health (matches main backend convention) ───────────────────
+app.get("/api/health", async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const { error: dbErr } = await supabase.from("clinics").select("id").limit(1);
+    const dbOk = !dbErr;
+    if (dbErr) console.error("[DB] health check DB error:", dbErr.message);
+    res.json({
+      ok: true,
+      status: "ok",
+      db: dbOk ? "ok" : "degraded",
+      dbError: dbErr?.message || null,
+      uptime: Math.floor(process.uptime()),
+      ts: Date.now(),
+      ms: Date.now() - t0,
+    });
+  } catch (err) {
+    console.error("[API][ERROR] /api/health:", err.message);
+    res.status(500).json({ ok: false, status: "error", error: err.message });
+  }
+});
+
+// ── Fast ping ─────────────────────────────────────────────────────────────────
+app.get("/api/ping", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // ================== DEBUG: SMTP TEST ENDPOINT ==================
 // TEMPORARY - Remove after testing
@@ -30707,6 +30741,15 @@ app.get(
 );
 
 
+
+// ── Final global error handler (catches anything not caught per-route) ────────
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  const status = err.status || err.statusCode || 500;
+  console.error(`[API][ERROR] ${req.method} ${req.path} → ${status}:`, err.message || err);
+  if (!res.headersSent) {
+    res.status(status).json({ ok: false, error: err.message || "internal_server_error" });
+  }
+});
 
 // ================== GLOBAL ERROR HANDLING ==================
 process.on("uncaughtException", (error) => {
