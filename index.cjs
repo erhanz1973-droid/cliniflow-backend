@@ -10459,6 +10459,8 @@ async function patientHealthGetHandler(req, res) {
 }
 
 async function patientHealthPostHandler(req, res) {
+  // Health form is patient-only. Admin can view but not submit.
+  return res.status(403).json({ ok: false, error: "form_patient_only", message: "Health form can only be submitted by the patient." });
   try {
 
 
@@ -10585,6 +10587,8 @@ async function patientHealthPostHandler(req, res) {
 }
 
 async function patientHealthPutHandler(req, res) {
+  // Health form is patient-only. Admin can view but not submit.
+  return res.status(403).json({ ok: false, error: "form_patient_only", message: "Health form can only be submitted by the patient." });
   try {
 
 
