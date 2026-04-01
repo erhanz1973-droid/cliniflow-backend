@@ -6369,8 +6369,9 @@ app.get("/api/admin/doctors", requireAdminAuth, async (req, res) => {
 
     const normalized = (data || []).map((d) => {
       const shortId = d.doctor_id ? String(d.doctor_id).trim() : "";
+      // Prefer `name` column; fall back to `full_name`, then email, then id
       const display =
-        String(d.full_name || d.name || "").trim() ||
+        String(d.name || d.full_name || "").trim() ||
         String(d.email || "").trim() ||
         (shortId ? `Dr. ${shortId}` : "") ||
         "Doctor";
@@ -7368,7 +7369,7 @@ async function attachDoctorNamesToEncounterTreatmentsList(treatments, supabaseCl
   const nameByKey = new Map();
   const ingest = (row) => {
     if (!row || typeof row !== "object") return;
-    const nm = String(row.full_name || row.name || row.email || "").trim();
+    const nm = String(row.name || row.full_name || row.email || "").trim();
     if (!nm) return;
     const rid = row.id != null ? String(row.id).trim() : "";
     const did = row.doctor_id != null ? String(row.doctor_id).trim() : "";
@@ -7940,7 +7941,7 @@ async function enrichTreatmentsDataDoctorDisplayFields(data, patientId) {
       const r = await supabase.from("doctors").select(sel).in("id", idList);
       if (!r.error && Array.isArray(r.data)) {
         for (const d of r.data) {
-          const nm = String(d?.full_name || d?.name || "").trim();
+          const nm = String(d?.name || d?.full_name || "").trim();
           if (!nm) continue;
           nameById.set(String(d.id), nm);
           if (d.doctor_id != null && String(d.doctor_id).trim()) {
@@ -7958,7 +7959,7 @@ async function enrichTreatmentsDataDoctorDisplayFields(data, patientId) {
         const r = await supabase.from("doctors").select(sel).in("doctor_id", miss);
         if (!r.error && Array.isArray(r.data)) {
           for (const d of r.data) {
-            const nm = String(d?.full_name || d?.name || "").trim();
+            const nm = String(d?.name || d?.full_name || "").trim();
             if (!nm) continue;
             nameById.set(String(d.id), nm);
             if (d.doctor_id != null && String(d.doctor_id).trim()) {
