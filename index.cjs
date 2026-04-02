@@ -21294,6 +21294,230 @@ app.get("/api/super-admin/clinics/:clinicId/statistics", superAdminGuard, (req, 
   }
 });
 
+// ================== SUPER ADMIN ANALYTICS ==================
+
+// GET /api/super-admin/analytics
+// System-wide analytics: clinic metrics, doctor performance, referrals, alerts
+app.get("/api/super-admin/analytics", superAdminGuard, async (req, res) => {
+  try {
+    const now = new Date();
+    const d30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const d7  = new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString();
+
+    // Parallel queries — best-effort (each resolves individually)
+    const [
+      clinicsRes,
+      patientsRes,
+      doctorsRes,
+      treatmentsRes,
+      referralsRes,
+      medicalFormsRes,
+      newPatientsRes,
+      activePatientsRes,
+    ] = await Promise.allSettled([
+      supabase.from("clinics").select("id, clinic_code, name, status, plan, created_at, email, phone").order("created_at", { ascending: false }),
+      supabase.from("patients").select("id, clinic_id, clinic_code, created_at, role").eq("role", "PATIENT"),
+      supabase.from("patients").select("id, clinic_id, name, created_at").eq("role", "DOCTOR"),
+      supabase.from("encounter_treatments").select("id, clinic_id, status, created_at, scheduled_at, doctor_id").order("created_at", { ascending: false }),
+      supabase.from("referrals").select("id, clinic_id, clinic_code, status, inviter_patient_id, created_at"),
+      supabase.from("patient_medical_forms").select("patient_id, clinic_code, is_complete, submitted_at"),
+      supabase.from("patients").select("id, clinic_id").eq("role", "PATIENT").gte("created_at", d7),
+      supabase.from("patients").select("id, clinic_id").eq("role", "PATIENT").gte("created_at", d30),
+    ]);
+
+    const clinics  = clinicsRes.status === "fulfilled"         ? (clinicsRes.value.data   || []) : [];
+    const patients = patientsRes.status === "fulfilled"        ? (patientsRes.value.data  || []) : [];
+    const doctors  = doctorsRes.status === "fulfilled"         ? (doctorsRes.value.data   || []) : [];
+    const treatments = treatmentsRes.status === "fulfilled"    ? (treatmentsRes.value.data || []) : [];
+    const referrals  = referralsRes.status === "fulfilled"     ? (referralsRes.value.data  || []) : [];
+    const medForms   = medicalFormsRes.status === "fulfilled"  ? (medicalFormsRes.value.data || []) : [];
+    const newPats    = newPatientsRes.status === "fulfilled"   ? (newPatientsRes.value.data || []) : [];
+    const activePats = activePatientsRes.status === "fulfilled"? (activePatientsRes.value.data || []) : [];
+
+    // ── Indexing helpers ──────────────────────────────────────────
+    const patsByClinic     = {};
+    const docsByClinic     = {};
+    const treatByClinic    = {};
+    const refByClinic      = {};
+    const medFormByClinic  = {};
+    const newPatsMap       = {};
+    const activePatsMap    = {};
+
+    for (const p of patients) {
+      const cid = p.clinic_id || "";
+      (patsByClinic[cid] = patsByClinic[cid] || []).push(p);
+    }
+    for (const d of doctors) {
+      const cid = d.clinic_id || "";
+      (docsByClinic[cid] = docsByClinic[cid] || []).push(d);
+    }
+    for (const t of treatments) {
+      const cid = t.clinic_id || "";
+      (treatByClinic[cid] = treatByClinic[cid] || []).push(t);
+    }
+    for (const r of referrals) {
+      const cid = r.clinic_id || "";
+      (refByClinic[cid] = refByClinic[cid] || []).push(r);
+    }
+    for (const m of medForms) {
+      const cc = (m.clinic_code || "").toUpperCase();
+      (medFormByClinic[cc] = medFormByClinic[cc] || []).push(m);
+    }
+    for (const p of newPats)    { newPatsMap[p.clinic_id]    = (newPatsMap[p.clinic_id]    || 0) + 1; }
+    for (const p of activePats) { activePatsMap[p.clinic_id] = (activePatsMap[p.clinic_id] || 0) + 1; }
+
+    // ── Doctor performance ────────────────────────────────────────
+    const treatsByDoctor = {};
+    for (const t of treatments) {
+      if (t.doctor_id) {
+        treatsByDoctor[t.doctor_id] = (treatsByDoctor[t.doctor_id] || 0) + 1;
+      }
+    }
+
+    // ── Top referrers ─────────────────────────────────────────────
+    const refCountByPatient = {};
+    for (const r of referrals) {
+      const pid = r.inviter_patient_id || "";
+      if (pid) refCountByPatient[pid] = (refCountByPatient[pid] || 0) + 1;
+    }
+    const topReferrers = Object.entries(refCountByPatient)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([pid, count]) => ({ patientId: pid.substring(0, 8) + "…", count }));
+
+    // ── Clinic scores & per-clinic metrics ───────────────────────
+    const clinicMetrics = clinics.map(clinic => {
+      const cid = clinic.id || "";
+      const code = (clinic.clinic_code || "").toUpperCase();
+      const cPats   = (patsByClinic[cid]  || []);
+      const cDocs   = (docsByClinic[cid]  || []);
+      const cTreats = (treatByClinic[cid] || []);
+      const cRefs   = (refByClinic[cid]   || []);
+      const cForms  = (medFormByClinic[code] || []);
+
+      const totalPatients     = cPats.length;
+      const activePatients30d = activePatsMap[cid] || 0;
+      const newPatients7d     = newPatsMap[cid]    || 0;
+      const totalDoctors      = cDocs.length;
+
+      const completedTx = cTreats.filter(t => ["COMPLETED","DONE","COMPLETE"].includes((t.status||"").toUpperCase())).length;
+      const pendingTx   = cTreats.filter(t => ["PLANNED","SCHEDULED","PENDING"].includes((t.status||"").toUpperCase())).length;
+      const activeTx    = cTreats.filter(t => ["IN_PROGRESS","ACTIVE"].includes((t.status||"").toUpperCase())).length;
+
+      const totalRefs     = cRefs.length;
+      const convRefs      = cRefs.filter(r => ["APPROVED","ACTIVE","USED"].includes((r.status||"").toUpperCase())).length;
+      const convRate      = totalRefs > 0 ? Math.round((convRefs / totalRefs) * 100) : 0;
+
+      const filledForms   = cForms.filter(f => f.is_complete || f.submitted_at).length;
+      const formFillRate  = totalPatients > 0 ? Math.round((filledForms / totalPatients) * 100) : 0;
+
+      // ── Clinic score (0–100) ──
+      let score = 0;
+      // 30 pts: has patients
+      if (totalPatients >= 10)       score += 30;
+      else if (totalPatients >= 5)   score += 20;
+      else if (totalPatients >= 1)   score += 10;
+      // 20 pts: has doctors
+      if (totalDoctors >= 3)         score += 20;
+      else if (totalDoctors >= 1)    score += 12;
+      // 20 pts: active patients (30d)
+      const actRatio = totalPatients > 0 ? activePatients30d / totalPatients : 0;
+      if (actRatio >= 0.5)           score += 20;
+      else if (actRatio >= 0.2)      score += 12;
+      else if (actRatio > 0)         score += 5;
+      // 15 pts: treatments
+      if (completedTx >= 10)         score += 15;
+      else if (completedTx >= 3)     score += 10;
+      else if (completedTx >= 1)     score += 5;
+      // 15 pts: referrals
+      if (convRate >= 50)            score += 15;
+      else if (convRate >= 20)       score += 10;
+      else if (totalRefs >= 1)       score += 5;
+      score = Math.min(100, score);
+
+      return {
+        clinicId:       cid,
+        clinicCode:     code,
+        name:           clinic.name || "—",
+        email:          clinic.email || "",
+        phone:          clinic.phone || "",
+        status:         clinic.status || "UNKNOWN",
+        plan:           clinic.plan || "FREE",
+        createdAt:      clinic.created_at || null,
+        totalPatients,
+        activePatients30d,
+        newPatients7d,
+        totalDoctors,
+        completedTreatments: completedTx,
+        pendingTreatments:   pendingTx,
+        activeTreatments:    activeTx,
+        totalReferrals:  totalRefs,
+        convertedReferrals: convRefs,
+        referralConversionRate: convRate,
+        formFillRate,
+        filledForms,
+        score,
+      };
+    });
+
+    // ── Alerts ───────────────────────────────────────────────────
+    const alerts = [];
+    for (const cm of clinicMetrics) {
+      if ((cm.status || "").toUpperCase() === "ACTIVE" || (cm.status || "").toUpperCase() === "APPROVED") {
+        if (cm.totalPatients === 0) {
+          alerts.push({ type: "no_patients", clinicId: cm.clinicId, clinicCode: cm.clinicCode, name: cm.name, message: "Hiç hasta yok" });
+        } else if (cm.activePatients30d === 0) {
+          alerts.push({ type: "inactive", clinicId: cm.clinicId, clinicCode: cm.clinicCode, name: cm.name, message: "30 günde aktif hasta yok" });
+        }
+        if (cm.totalReferrals === 0 && cm.totalPatients >= 3) {
+          alerts.push({ type: "no_referral", clinicId: cm.clinicId, clinicCode: cm.clinicCode, name: cm.name, message: "Hiç referral yok" });
+        }
+      }
+    }
+
+    // ── System-wide totals ────────────────────────────────────────
+    const activeClinics    = clinics.filter(c => ["ACTIVE","APPROVED"].includes((c.status||"").toUpperCase())).length;
+    const totalCompleted   = treatments.filter(t => ["COMPLETED","DONE"].includes((t.status||"").toUpperCase())).length;
+    const totalPending     = treatments.filter(t => ["PLANNED","SCHEDULED"].includes((t.status||"").toUpperCase())).length;
+    const totalConvRefs    = referrals.filter(r => ["APPROVED","ACTIVE","USED"].includes((r.status||"").toUpperCase())).length;
+
+    // ── Doctor performance list ───────────────────────────────────
+    const doctorPerformance = doctors.slice(0, 50).map(d => ({
+      doctorId:   d.id,
+      name:       d.name || "—",
+      clinicId:   d.clinic_id || "",
+      treatments: treatsByDoctor[d.id] || 0,
+    })).sort((a, b) => b.treatments - a.treatments).slice(0, 20);
+
+    res.json({
+      ok: true,
+      generatedAt: now.toISOString(),
+      summary: {
+        totalClinics:    clinics.length,
+        activeClinics,
+        totalPatients:   patients.length,
+        activePatients30d: activePats.length,
+        newPatients7d:   newPats.length,
+        totalDoctors:    doctors.length,
+        totalTreatments: treatments.length,
+        completedTreatments: totalCompleted,
+        pendingTreatments:   totalPending,
+        totalReferrals:  referrals.length,
+        convertedReferrals: totalConvRefs,
+        healthFormFillRate: patients.length > 0
+          ? Math.round((medForms.filter(f => f.is_complete || f.submitted_at).length / patients.length) * 100) : 0,
+      },
+      clinicMetrics,
+      doctorPerformance,
+      topReferrers,
+      alerts,
+    });
+  } catch (err) {
+    console.error("[SUPER_ADMIN ANALYTICS] Error:", err);
+    res.status(500).json({ ok: false, error: "internal_error", message: err?.message || "Internal server error" });
+  }
+});
+
 // ================== CLINIC PAYMENT & SUBSCRIPTION ==================
 
 // POST /api/admin/payment-success
