@@ -324,12 +324,25 @@
       const json = await res.json();
 
       if (!res.ok || !json.ok) {
-        const detail =
-          json.message ||
-          json.error ||
-          (typeof json === "string" ? json : null) ||
-          `HTTP ${res.status}`;
-        showAlert(`Login failed: ${detail}`, "error");
+        const errorCode = json.error || "";
+        let friendlyMsg;
+        if (errorCode === "invalid_admin_credentials") {
+          friendlyMsg = "E-posta, klinik kodu veya şifre hatalı. Lütfen kontrol edip tekrar deneyin.";
+        } else if (errorCode === "email_required") {
+          friendlyMsg = "E-posta adresi gereklidir.";
+        } else if (errorCode === "password_required") {
+          friendlyMsg = "Şifre gereklidir.";
+        } else if (errorCode === "clinic_code_required") {
+          friendlyMsg = "Klinik kodu gereklidir.";
+        } else if (errorCode === "clinic_suspended") {
+          friendlyMsg = "Bu klinik hesabı askıya alınmıştır. Destek için iletişime geçin.";
+        } else if (errorCode === "admin_service_unavailable") {
+          friendlyMsg = "Sunucu şu anda kullanılamıyor. Lütfen biraz bekleyin.";
+        } else {
+          const detail = json.message || errorCode || `HTTP ${res.status}`;
+          friendlyMsg = `Giriş başarısız: ${detail}`;
+        }
+        showAlert(friendlyMsg, "error");
         return;
       }
 

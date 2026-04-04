@@ -20141,43 +20141,64 @@ app.post("/api/admin/login", async (req, res) => {
     let identity = null;
     let clinicForToken = null;
 
+    console.log("[ADMIN LOGIN] admins table lookup:", { found: !!admin });
+
     if (admin) {
       const adminStatus = String(admin.status || "ACTIVE").toUpperCase();
       if (adminStatus !== "ACTIVE") {
+        console.warn("[ADMIN LOGIN] Admin status not ACTIVE:", adminStatus);
         return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
       const stored = admin.password_hash || admin.password;
       const passwordMatch = await checkPassword(trimmedPassword, stored);
+      console.log("[ADMIN LOGIN] admins table password match:", passwordMatch);
       if (!passwordMatch) {
-        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
+        // Fall through to clinics table in case passwords differ
+        console.warn("[ADMIN LOGIN] admins table password mismatch, trying clinics table");
+      } else {
+        clinicForToken = await getClinicByCode(admin.clinic_code || trimmedClinicCode);
+        identity = {
+          id: admin.id,
+          email: admin.email,
+          clinicCode: trimmedClinicCode,
+          status: admin.status,
+          clinicId: clinicForToken?.id || null,
+          clinicName: clinicForToken?.name || "",
+        };
+        console.log("[ADMIN LOGIN] Authenticated via admins table, clinicId:", identity.clinicId);
       }
-      clinicForToken = await getClinicByCode(admin.clinic_code || trimmedClinicCode);
-      identity = {
-        id: admin.id,
-        email: admin.email,
-        clinicCode: trimmedClinicCode,
-        status: admin.status,
-        clinicId: clinicForToken?.id || null,
-        clinicName: clinicForToken?.name || "",
-      };
-    } else {
+    }
+
+    if (!identity) {
       const clinicRow = await getClinicByCode(trimmedClinicCode);
+      console.log("[ADMIN LOGIN] clinics table lookup:", { found: !!clinicRow });
+
       if (!clinicRow) {
-        console.log("[ADMIN LOGIN] No admin and no clinic for code:", trimmedClinicCode);
+        console.log("[ADMIN LOGIN] No clinic for code:", trimmedClinicCode);
         return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
-      if (String(clinicRow.email || "").trim().toLowerCase() !== trimmedEmail) {
+
+      const dbEmail = String(clinicRow.email || "").trim().toLowerCase();
+      if (dbEmail !== trimmedEmail) {
+        console.warn("[ADMIN LOGIN] Email mismatch:", { entered: trimmedEmail, stored: dbEmail });
         return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
+
       const clinicStatus = String(clinicRow.status || "ACTIVE").toUpperCase();
       if (clinicStatus === "SUSPENDED") {
         return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
       }
+
       const stored = clinicRow.password_hash || clinicRow.password;
+      const hasHash = !!stored;
       const passwordMatch = await checkPassword(trimmedPassword, stored);
+      console.log("[ADMIN LOGIN] clinics table password match:", passwordMatch, "hasHash:", hasHash);
+
       if (!passwordMatch) {
+        console.warn("[ADMIN LOGIN] Password mismatch for clinic:", trimmedClinicCode, "hasHash:", hasHash);
         return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
+
       clinicForToken = clinicRow;
       identity = {
         id: clinicRow.id,
@@ -20187,9 +20208,11 @@ app.post("/api/admin/login", async (req, res) => {
         clinicId: clinicRow.id,
         clinicName: clinicRow.name || "",
       };
+      console.log("[ADMIN LOGIN] Authenticated via clinics table, clinicId:", identity.clinicId);
     }
 
     if (!identity) {
+      console.warn("[ADMIN LOGIN] Could not resolve identity");
       return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
     }
 
