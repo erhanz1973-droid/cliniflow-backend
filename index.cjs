@@ -16065,6 +16065,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
       subscriptionPlan: rawPlan, // keep compatibility with older fields
       max_patients: computedMaxPatients,
       address: String(body.address || existing.address || ""),
+      city: body.city ? String(body.city).trim() : (existing.city || null),
       phone: String(body.phone || existing.phone || ""),
       email: String(existing.email || ""),
       website: String(body.website || existing.website || ""),
@@ -16107,6 +16108,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           plan: updated.plan,
           max_patients: updated.max_patients,
           address: updated.address,
+          city: updated.city ? String(updated.city).trim() : (body.city ? String(body.city).trim() : undefined),
           phone: updated.phone,
           website: updated.website,
           settings: {
