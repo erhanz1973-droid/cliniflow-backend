@@ -333,32 +333,32 @@
         return;
       }
 
-      // ✅ TOKEN SAVE (backward compatible keys)
-      localStorage.setItem("admin_token", json.token);
-      localStorage.setItem("adminToken", json.token);
-      const savedClinicCode = json.clinicCode || json.admin?.clinicCode || clinicCode;
-      const savedClinicName = json.clinicName || json.admin?.clinicName || "";
+      // ✅ TOKEN SAVE — token lives inside json.user.token (backward compat: also check json.token)
+      const savedToken = json.user?.token || json.token;
+      if (!savedToken) {
+        showAlert("Login failed: no token in response", "error");
+        return;
+      }
+      localStorage.setItem("admin_token", savedToken);
+      localStorage.setItem("adminToken", savedToken);
+      const savedClinicCode = json.user?.clinicCode || json.clinicCode || json.admin?.clinicCode || clinicCode;
+      const savedClinicName = json.user?.name || json.clinicName || json.admin?.clinicName || "";
       localStorage.setItem("clinic_code", savedClinicCode);
       localStorage.setItem("clinic_name", savedClinicName);
       // Clear session-specific data from previous clinic sessions
       localStorage.removeItem("selected_patient_id");
       
-      // ✅ USER DATA SAVE - Use real user data from API response
-      if (json.user) {
-        localStorage.setItem("user", JSON.stringify(json.user));
-        console.log("[LOGIN] User data saved:", json.user);
-      } else {
-        // Fallback for backward compatibility
-        const userData = {
-          id: json.clinicId || 'admin',
-          email: json.email || "",
-          role: "ADMIN",
-          clinicCode: savedClinicCode,
-          clinicName: savedClinicName
-        };
-        localStorage.setItem("user", JSON.stringify(userData));
-        console.log("[LOGIN] Fallback user data saved:", userData);
-      }
+      // ✅ USER DATA SAVE
+      const userToSave = json.user || {
+        id: json.clinicId || 'admin',
+        token: savedToken,
+        email: json.email || "",
+        role: "ADMIN",
+        clinicCode: savedClinicCode,
+        clinicName: savedClinicName
+      };
+      localStorage.setItem("user", JSON.stringify(userToSave));
+      console.log("[LOGIN] User data saved:", { ...userToSave, token: "***" });
 
       showAlert("Login successful", "success");
 
