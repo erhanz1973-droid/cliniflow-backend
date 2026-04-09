@@ -113,6 +113,11 @@
             patients: "hasta",
             events: "etkinlik"
           }
+        },
+        charts: {
+          activePatients: "Aktif Hastalar",
+          procedures: "İşlemler",
+          vsPreviousMonth: "önceki aya göre"
         }
       },
       
@@ -559,6 +564,22 @@
         procedure: "İşlem",
         status: "Durum"
       },
+      procedureTypes: {
+        CROWN: "Kuron", TEMP_CROWN: "Geçici Kuron", BRIDGE_UNIT: "Köprü",
+        TEMP_BRIDGE_UNIT: "Geçici Köprü", CROWN_REPLACEMENT: "Kuron Yenileme",
+        BRIDGE_REPLACEMENT_OR_REMOVAL: "Köprü Yenileme / Çıkarma",
+        INLAY: "İnley", ONLAY: "Onley", OVERLAY: "Overley", POST_AND_CORE: "Post & Core",
+        FILLING: "Dolgu", TEMP_FILLING: "Geçici Dolgu",
+        FILLING_REPLACEMENT_OR_REMOVAL: "Dolgu Yenileme / Çıkarma",
+        ROOT_CANAL_TREATMENT: "Kanal Tedavisi", ROOT_CANAL_RETREATMENT: "Kanal Tedavisi Tekrarı",
+        CANAL_OPENING: "Kanal Açılması", CANAL_FILLING: "Kanal Dolgusu",
+        EXTRACTION: "Çekim", SURGICAL_EXTRACTION: "Cerrahi Çekim",
+        APICAL_RESECTION: "Apeks Rezeksiyonu", IMPLANT: "İmplant",
+        HEALING_ABUTMENT: "İyileşme Abutmenti", IMPLANT_CROWN: "İmplant Kuronu",
+        CLEANING: "Diş Temizliği", BLEACHING: "Diş Beyazlatma",
+        BONE_GRAFT: "Kemik Grefti", SINUS_LIFT: "Sinüs Lift",
+        VENEER: "Veneer", CONSULT: "Muayene", CHECKUP: "Kontrol"
+      },
       files: {
         pageTitle: "Admin – Hasta Dosyaları",
         title: "📁 Hasta Dosyaları",
@@ -687,6 +708,11 @@
             patients: "patients",
             events: "events"
           }
+        },
+        charts: {
+          activePatients: "Active Patients",
+          procedures: "Procedures",
+          vsPreviousMonth: "vs previous month"
         }
       },
       
@@ -1132,6 +1158,22 @@
           rejectFailed: "Rejection error: {error}"
         }
       },
+      procedureTypes: {
+        CROWN: "Crown", TEMP_CROWN: "Temporary Crown", BRIDGE_UNIT: "Bridge",
+        TEMP_BRIDGE_UNIT: "Temporary Bridge", CROWN_REPLACEMENT: "Crown Replacement",
+        BRIDGE_REPLACEMENT_OR_REMOVAL: "Bridge Replacement / Removal",
+        INLAY: "Inlay", ONLAY: "Onlay", OVERLAY: "Overlay", POST_AND_CORE: "Post & Core",
+        FILLING: "Filling", TEMP_FILLING: "Temporary Filling",
+        FILLING_REPLACEMENT_OR_REMOVAL: "Filling Replacement / Removal",
+        ROOT_CANAL_TREATMENT: "Root Canal Treatment", ROOT_CANAL_RETREATMENT: "Root Canal Retreatment",
+        CANAL_OPENING: "Canal Opening", CANAL_FILLING: "Canal Filling",
+        EXTRACTION: "Extraction", SURGICAL_EXTRACTION: "Surgical Extraction",
+        APICAL_RESECTION: "Apical Resection", IMPLANT: "Implant",
+        HEALING_ABUTMENT: "Healing Abutment", IMPLANT_CROWN: "Implant Crown",
+        CLEANING: "Cleaning", BLEACHING: "Bleaching",
+        BONE_GRAFT: "Bone Graft", SINUS_LIFT: "Sinus Lift",
+        VENEER: "Veneer", CONSULT: "Consultation", CHECKUP: "Checkup"
+      },
       timeline: {
         tooth: "Tooth",
         procedure: "Procedure",
@@ -1197,6 +1239,11 @@
             SURGERY: "Хирургия",
             CHECKUP: "Осмотр"
           }
+        },
+        charts: {
+          activePatients: "Активные пациенты",
+          procedures: "Процедуры",
+          vsPreviousMonth: "по сравнению с прошлым месяцем"
         }
       },
       login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль." },
@@ -1394,6 +1441,22 @@
           CANCELLED: "Отменено"
         }
       },
+      procedureTypes: {
+        CROWN: "Коронка", TEMP_CROWN: "Временная коронка", BRIDGE_UNIT: "Мост",
+        TEMP_BRIDGE_UNIT: "Временный мост", CROWN_REPLACEMENT: "Замена коронки",
+        BRIDGE_REPLACEMENT_OR_REMOVAL: "Замена / снятие моста",
+        INLAY: "Вкладка", ONLAY: "Накладка", OVERLAY: "Перекрывающая накладка", POST_AND_CORE: "Штифт и культя",
+        FILLING: "Пломба", TEMP_FILLING: "Временная пломба",
+        FILLING_REPLACEMENT_OR_REMOVAL: "Замена / удаление пломбы",
+        ROOT_CANAL_TREATMENT: "Лечение корневого канала", ROOT_CANAL_RETREATMENT: "Повторное лечение канала",
+        CANAL_OPENING: "Открытие канала", CANAL_FILLING: "Пломбирование канала",
+        EXTRACTION: "Удаление", SURGICAL_EXTRACTION: "Хирургическое удаление",
+        APICAL_RESECTION: "Апикальная резекция", IMPLANT: "Имплант",
+        HEALING_ABUTMENT: "Формирователь десны", IMPLANT_CROWN: "Коронка на импланте",
+        CLEANING: "Профессиональная чистка", BLEACHING: "Отбеливание",
+        BONE_GRAFT: "Костный трансплантат", SINUS_LIFT: "Синус-лифтинг",
+        VENEER: "Виниры", CONSULT: "Консультация", CHECKUP: "Осмотр"
+      },
       timeline: {
         tooth: "Зуб",
         procedure: "Процедура",
@@ -1459,6 +1522,11 @@
             SURGERY: "ქირურგია",
             CHECKUP: "გასინჯვა"
           }
+        },
+        charts: {
+          activePatients: "აქტიური პაციენტები",
+          procedures: "პროცედურები",
+          vsPreviousMonth: "წინა თვესთან შედარებით"
         }
       },
       login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია." },
@@ -1655,6 +1723,22 @@
           COMPLETED: "დასრულებულია",
           CANCELLED: "გაუქმებულია"
         }
+      },
+      procedureTypes: {
+        CROWN: "გვირდი", TEMP_CROWN: "დროელი გვირდი", BRIDGE_UNIT: "ხიდი",
+        TEMP_BRIDGE_UNIT: "დროელი ხიდი", CROWN_REPLACEMENT: "გვირდის შეცვლა",
+        BRIDGE_REPLACEMENT_OR_REMOVAL: "ხიდის შეცვლა / მოხსნა",
+        INLAY: "ინლაი", ONLAY: "ონლაი", OVERLAY: "ოვერლაი", POST_AND_CORE: "პოსტი და კორი",
+        FILLING: "შევსება", TEMP_FILLING: "დროელი შევსება",
+        FILLING_REPLACEMENT_OR_REMOVAL: "შევსების შეცვლა / მოხსნა",
+        ROOT_CANAL_TREATMENT: "ფესვის მკურნალება", ROOT_CANAL_RETREATMENT: "ფესვის მკურნალების გამეორება",
+        CANAL_OPENING: "ფესვის გახსნა", CANAL_FILLING: "ფესვის შევსება",
+        EXTRACTION: "ამოღება", SURGICAL_EXTRACTION: "ქირურგიული ამოღება",
+        APICAL_RESECTION: "აპიკალური რეზექცია", IMPLANT: "იმპლანტი",
+        HEALING_ABUTMENT: "შეხმების აბატმენტი", IMPLANT_CROWN: "იმპლანტის გვირდი",
+        CLEANING: "პროფესიონალური გამოწმება", BLEACHING: "გათეთრება",
+        BONE_GRAFT: "ძვლის ტრანსპლანტი", SINUS_LIFT: "სინუს ლიფტი",
+        VENEER: "ვინირი", CONSULT: "კონსულტაცია", CHECKUP: "გასინჯვა"
       },
       timeline: {
         tooth: "კბილი",
