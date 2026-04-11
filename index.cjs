@@ -26954,14 +26954,15 @@ async function handleDoctorEncounterTreatmentPut(req, res) {
       return res.status(400).json({ ok: false, error: 'treatment_id_required' });
     }
 
-    const { status, chair, assigned_doctor_id, scheduled_at, encounter_id } = req.body || {};
+    const { status, chair, assigned_doctor_id, scheduled_at, notes, encounter_id } = req.body || {};
     const updateFields = {
       updated_at: new Date().toISOString(),
     };
-    if (status !== undefined) updateFields.status = status;
-    if (chair !== undefined) updateFields.chair = chair;
+    if (status !== undefined)             updateFields.status             = status;
+    if (chair !== undefined)              updateFields.chair              = chair;
     if (assigned_doctor_id !== undefined) updateFields.assigned_doctor_id = assigned_doctor_id;
-    if (scheduled_at !== undefined) updateFields.scheduled_at = scheduled_at;
+    if (scheduled_at !== undefined)       updateFields.scheduled_at       = scheduled_at;
+    if (notes !== undefined)              updateFields.notes              = notes;
 
     const candidates = encounterTreatmentIdLookupCandidates(treatmentIdParam);
     const lookups = await Promise.all(
@@ -27052,6 +27053,62 @@ async function handleDoctorEncounterTreatmentPut(req, res) {
 
 app.put('/api/doctor/treatments/:id', requireDoctorAuth, handleDoctorEncounterTreatmentPut);
 app.patch('/api/doctor/treatments/:id', requireDoctorAuth, handleDoctorEncounterTreatmentPut);
+
+/*
+ * GET /api/doctor/patients/:patientId/treatments
+ * Doktor uygulamasının treatment-plan ekranı bu endpoint'i çağırır.
+ * Hastanın tüm encounter'larındaki encounter_treatments satırlarını döner.
+ */
+app.get('/api/doctor/patients/:patientId/treatments', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patient_id_required' });
+
+    // Hastanın tüm encounter ID'lerini bul
+    const { data: encounters, error: encErr } = await supabase
+      .from('patient_encounters')
+      .select('id')
+      .eq('patient_id', patientId);
+
+    if (encErr) {
+      console.error('[DOCTOR PATIENT TREATMENTS] encounters fetch error:', encErr);
+      return res.status(500).json({ ok: false, error: 'encounters_fetch_failed' });
+    }
+
+    const encounterIds = (encounters || []).map(e => String(e.id)).filter(Boolean);
+    if (encounterIds.length === 0) {
+      return res.json({ ok: true, treatments: [] });
+    }
+
+    const selectClause = 'id, encounter_id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, notes, created_at, updated_at';
+    const { data: rows, error: txErr } = await supabase
+      .from('encounter_treatments')
+      .select(selectClause)
+      .in('encounter_id', encounterIds)
+      .order('created_at', { ascending: false });
+
+    if (txErr) {
+      // notes kolonu yoksa notes olmadan tekrar dene
+      const sel2 = 'id, encounter_id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, created_at, updated_at';
+      const { data: rows2, error: txErr2 } = await supabase
+        .from('encounter_treatments')
+        .select(sel2)
+        .in('encounter_id', encounterIds)
+        .order('created_at', { ascending: false });
+
+      if (txErr2) {
+        console.error('[DOCTOR PATIENT TREATMENTS] fetch error:', txErr2);
+        return res.status(500).json({ ok: false, error: 'treatments_fetch_failed' });
+      }
+      return res.json({ ok: true, treatments: rows2 || [] });
+    }
+
+    return res.json({ ok: true, treatments: rows || [] });
+  } catch (err) {
+    console.error('[DOCTOR PATIENT TREATMENTS] exception:', err);
+    return res.status(500).json({ ok: false, error: err.message || 'server_error' });
+  }
+});
 
 const DOCTOR_ROW_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
