@@ -9,7 +9,7 @@
   <meta http-equiv="Expires" content="0"/>
   <title>Dashboard - Clinifly Admin</title>
   <link rel="stylesheet" href="/admin-layout.css"/>
-  <script src="/admin-i18n.js?v=202502011445"></script>
+  <script src="/admin-i18n.js?v=202604110"></script>
   <style>
     :root { 
       --bg:#111827; 
@@ -442,7 +442,7 @@
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h3 style="margin:0; font-size:14px; font-weight:600; color:#e6eaf2;">📊 <span id="activePatientsTitle"></span></h3>
-          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;">
+          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;" data-i18n="common.loading">
             Loading...
           </div>
         </div>
@@ -454,7 +454,7 @@
         
         <!-- Summary -->
         <div style="text-align:center; color:#a7b2c8; font-size:11px; margin-top:4px;">
-          <div id="activePatientsSummary">Loading...</div>
+          <div id="activePatientsSummary" data-i18n="common.loading">Loading...</div>
         </div>
       </div>
 
@@ -462,7 +462,7 @@
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h3 style="margin:0; font-size:14px; font-weight:600; color:#e6eaf2;">🦷 <span id="proceduresTitle"></span></h3>
-          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;">
+          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.07); color:#a7b2c8;" data-i18n="common.loading">
             Loading...
           </div>
         </div>
@@ -474,7 +474,7 @@
         
         <!-- Summary -->
         <div style="text-align:center; color:#a7b2c8; font-size:11px; margin-top:4px;">
-          <div id="monthlyProceduresSummary">Loading...</div>
+          <div id="monthlyProceduresSummary" data-i18n="common.loading">Loading...</div>
         </div>
       </div>
       
@@ -500,21 +500,21 @@
           </div>
           <div class="summary-badge summary-badge-today" style="padding:8px 14px; background:rgba(37, 99, 235, 0.15); border:1px solid rgba(37, 99, 235, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:14px;">📅</span>
-            <span style="font-size:13px; font-weight:600; color:#93c5fd;" data-i18n="dashboard.upcoming.summary.today">Bugün:</span>
+            <span id="todayLabel" style="font-size:13px; font-weight:600; color:#93c5fd;" data-i18n="dashboard.upcoming.summary.today">Bugün:</span>
             <span id="todayPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.patients">hasta</span>
+            <span id="todayPatientsLabel" style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.patients">hasta</span>
             <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
             <span id="todayEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.events">etkinlik</span>
+            <span id="todayEventsLabel" style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.events">etkinlik</span>
           </div>
           <div class="summary-badge summary-badge-tomorrow" style="padding:8px 14px; background:rgba(139, 92, 246, 0.15); border:1px solid rgba(139, 92, 246, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:14px;">📅</span>
-            <span style="font-size:13px; font-weight:600; color:#c4b5fd;">Tomorrow:</span>
+            <span id="tomorrowLabel" style="font-size:13px; font-weight:600; color:#c4b5fd;" data-i18n="dashboard.upcoming.summary.tomorrow">Yarın:</span>
             <span id="tomorrowPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);">patients</span>
+            <span id="tomorrowPatientsLabel" style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.patients">hasta</span>
             <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
             <span id="tomorrowEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);">events</span>
+            <span id="tomorrowEventsLabel" style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.events">etkinlik</span>
           </div>
         </div>
       </div>
@@ -554,6 +554,77 @@
   }
 
   const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
+
+  // ── Procedure code → multilingual labels ────────────────────────────────────
+  const PROC_LABELS = {
+    FILLING:        { tr: "Dolgu",             en: "Filling",          ru: "Пломба",                 ka: "პლომბი" },
+    BRIDGE_UNIT:    { tr: "Köprü Ünitesi",     en: "Bridge Unit",      ru: "Единица моста",          ka: "ხიდის ერთეული" },
+    BRIDGE:         { tr: "Köprü",             en: "Bridge",           ru: "Мост",                   ka: "ხიდი" },
+    CROWN:          { tr: "Kuron",             en: "Crown",            ru: "Коронка",                ka: "გვირგვინი" },
+    EXTRACTION:     { tr: "Çekim",             en: "Extraction",       ru: "Удаление",               ka: "ამოძრავება" },
+    IMPLANT:        { tr: "İmplant",           en: "Implant",          ru: "Имплант",                ka: "იმპლანტი" },
+    ROOT_CANAL:     { tr: "Kanal Tedavisi",    en: "Root Canal",       ru: "Лечение канала",         ka: "ფესვის არხი" },
+    SCALING:        { tr: "Diş Taşı",          en: "Scaling",          ru: "Снятие камня",           ka: "ქვის გაწმენდა" },
+    WHITENING:      { tr: "Beyazlatma",        en: "Whitening",        ru: "Отбеливание",            ka: "გათეთრება" },
+    BLEACHING:      { tr: "Beyazlatma",        en: "Bleaching",        ru: "Отбеливание",            ka: "გათეთრება" },
+    VENEER:         { tr: "Veneer",            en: "Veneer",           ru: "Виниры",                 ka: "ვინირი" },
+    INLAY:          { tr: "İnley",             en: "Inlay",            ru: "Вкладка",                ka: "ინლეი" },
+    ONLAY:          { tr: "Onley",             en: "Onlay",            ru: "Накладка",               ka: "ონლეი" },
+    DENTURE:        { tr: "Protez",            en: "Denture",          ru: "Протез",                 ka: "პროთეზი" },
+    CONSULTATION:   { tr: "Konsültasyon",      en: "Consultation",     ru: "Консультация",           ka: "კონსულტაცია" },
+    CLEANING:       { tr: "Temizlik",          en: "Cleaning",         ru: "Чистка",                 ka: "გაწმენდა" },
+    X_RAY:          { tr: "Röntgen",           en: "X-Ray",            ru: "Рентген",                ka: "რენტგენი" },
+    COMPOSITE:      { tr: "Kompozit",          en: "Composite",        ru: "Композит",               ka: "კომპოზიტი" },
+    TEMPORARY:      { tr: "Geçici Dolgu",      en: "Temporary",        ru: "Врем. пломба",           ka: "დროებითი პლომბი" },
+    POST_CORE:      { tr: "Post ve Kor",       en: "Post & Core",      ru: "Штифт",                  ka: "პოსტი" },
+    ZIRCONIA:       { tr: "Zirkonyum",         en: "Zirconia",         ru: "Цирконий",               ka: "ცირკონიუმი" },
+    SINUS_LIFT:     { tr: "Sinüs Lifting",     en: "Sinus Lift",       ru: "Синус-лифтинг",          ka: "სინუს-ლიფტი" },
+    BONE_GRAFT:     { tr: "Kemik Grefti",      en: "Bone Graft",       ru: "Костный трансплантат",   ka: "ძვლის გრაფტი" },
+    GINGIVECTOMY:   { tr: "Dişeti Op.",        en: "Gingivectomy",     ru: "Гингивэктомия",          ka: "გინგივექტომია" },
+    NIGHT_GUARD:    { tr: "Gece Plağı",        en: "Night Guard",      ru: "Каппа",                  ka: "ღამის დაფა" },
+    IMPLANT_CROWN:  { tr: "İmplant Kuron",     en: "Implant Crown",    ru: "Коронка на имплант",     ka: "იმპლანტის გვირგვინი" },
+    CEREC:          { tr: "CEREC",             en: "CEREC",            ru: "CEREC",                  ka: "CEREC" },
+    APICOECTOMY:    { tr: "Apikoektomi",       en: "Apicoectomy",      ru: "Апикоэктомия",           ka: "აპიკოექტომია" },
+    TREATMENT:      { tr: "Tedavi",            en: "Treatment",        ru: "Лечение",                ka: "მკურნალობა" },
+  };
+
+  function localizeProcCode(rawCode) {
+    if (!rawCode) return rawCode || "";
+    const lang = (window.i18n && window.i18n.getLang) ? window.i18n.getLang() : 'tr';
+    const code = String(rawCode).trim().toUpperCase().replace(/[-\s]+/g, '_');
+    const labels = PROC_LABELS[code];
+    return (labels && (labels[lang] || labels['en'])) || rawCode;
+  }
+
+  // Tooth words in all supported languages for pattern matching
+  const TOOTH_WORDS_RE = /(?:Tooth|Diş|Dente|Зуб|კბილი|Tooth)/i;
+
+  function localizeEventTitle(title) {
+    if (!title) return title || "";
+    const lang = (window.i18n && window.i18n.getLang) ? window.i18n.getLang() : 'tr';
+    const tl = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : (k) => k;
+    const toothWord = tl("timeline.tooth");
+
+    let t = String(title).trim();
+
+    // Pattern 1: "PROC_CODE - Tooth N" / "PROC_CODE - Diş N" / "PROC_CODE - კბილი N"
+    const dashMatch = t.match(/^(.+?)\s*[-–]\s*(?:Tooth|Diş|Dente|Зуб|კბილი)\s*(\d+)\s*$/i);
+    if (dashMatch) {
+      return `${localizeProcCode(dashMatch[1].trim())} - ${toothWord} ${dashMatch[2]}`;
+    }
+
+    // Pattern 2: "Diş N • PROC_CODE" / "Tooth N • PROC_CODE"
+    const bulletMatch = t.match(/^(?:Tooth|Diş|Dente|Зуб|კბილი)\s*(\d+)\s*[•·]\s*(.+)\s*$/i);
+    if (bulletMatch) {
+      return `${toothWord} ${bulletMatch[1]} • ${localizeProcCode(bulletMatch[2].trim())}`;
+    }
+
+    // Pattern 3: bare procedure code (no tooth)
+    const localized = localizeProcCode(t);
+    return localized !== t ? localized : t;
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   function applyTokenFromUrl() {
     try {
       const url = new URL(location.href);
@@ -675,41 +746,56 @@
       ? new Date(raw)
       : new Date(raw + (timeStr ? `T${timeStr}:00` : "T00:00:00"));
     if (isNaN(date.getTime())) return dateStr;
-    
-    const lang = i18n.getLang();
+
+    const lang = (window.i18n && window.i18n.getLang) ? window.i18n.getLang() : 'tr';
     const localeMap = { tr: 'tr-TR', en: 'en-US', ru: 'ru-RU', ka: 'ka-GE' };
     const locale = localeMap[lang] || 'en-US';
-    const options = { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric',
-      weekday: 'short'
-    };
-    const dateFormatted = date.toLocaleDateString(locale, options);
-    // If dateStr already has a time component (ISO UTC), derive local time from it via toLocaleTimeString.
-    // Only use a raw timeStr when dateStr is date-only (no T), since server-side toTimeString() emits UTC.
-    const resolvedTime = (!hasTimePart && timeStr) ? timeStr : (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
+
+    // Resolve month and weekday names from i18n translations (reliable cross-browser)
+    const t = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : (k) => k;
+    const monthsShort = [0,1,2,3,4,5,6,7,8,9,10,11].map(i => {
+      const v = t(`date.monthsShort.${i}`);
+      return (v && !v.startsWith('date.')) ? v : ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][i];
+    });
+    const weekdaysShort = [0,1,2,3,4,5,6].map(i => {
+      const v = t(`date.weekdays.${i}`);
+      return (v && !v.startsWith('date.')) ? v : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][i];
+    });
+
+    const day = date.getDate();
+    const month = monthsShort[date.getMonth()];
+    const weekday = weekdaysShort[date.getDay()];
+    const year = date.getFullYear();
+    const dateFormatted = `${weekday}, ${day} ${month} ${year}`;
+
+    const resolvedTime = timeStr || (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
     return resolvedTime ? `${dateFormatted} ${resolvedTime}` : dateFormatted;
   }
 
   function formatRelativeDate(dateStr) {
     if (!dateStr) return "—";
-    const date = new Date(dateStr + "T00:00:00");
-    if (isNaN(date.getTime())) return dateStr;
-    
+    const raw = String(dateStr);
+    // Support both "YYYY-MM-DD" and full ISO timestamps
+    const hasTimePart = raw.includes("T") || /\d{2}:\d{2}/.test(raw);
+    const date = hasTimePart ? new Date(raw) : new Date(raw + "T00:00:00");
+    if (isNaN(date.getTime())) return raw;
+
+    const tl = (window.i18n && window.i18n.t) ? (k, p) => window.i18n.t(k, p) : (k) => k;
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const eventDate = new Date(date);
     eventDate.setHours(0, 0, 0, 0);
-    
+
     const diffTime = eventDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 0) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.today") : "Today";
-    if (diffDays === 1) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.tomorrow") : "Tomorrow";
-    if (diffDays === 2) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.dayAfterTomorrow") : "Day after tomorrow";
-    if (diffDays > 0 && diffDays <= 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.daysLater", { count: diffDays }) : `${diffDays} days later`;
-    if (diffDays > 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) }) : `${Math.ceil(diffDays / 7)} weeks later`;
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return tl("dashboard.upcoming.today") || "Today";
+    if (diffDays === 1) return tl("dashboard.upcoming.tomorrow") || "Tomorrow";
+    if (diffDays === 2) return tl("dashboard.upcoming.dayAfterTomorrow") || "Day after tomorrow";
+    if (diffDays > 0 && diffDays <= 7) return tl("dashboard.upcoming.daysLater", { count: diffDays }) || `${diffDays} days later`;
+    if (diffDays > 7) return tl("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) }) || `${Math.ceil(diffDays / 7)} weeks later`;
+    // Past dates — show the localized full date
     return formatDate(dateStr);
   }
 
@@ -960,16 +1046,15 @@
       
       const eventIcon = getEventIcon(evt.type, evt.eventType);
       const tl = (window.i18n && window.i18n.t) ? window.i18n.t.bind(window.i18n) : (k) => k;
-      const procedureName = String(evt.procedureName || evt.procedure_name || evt.procedureCode || evt.procedure_code || evt.procedure || "").trim();
+      const rawProcName = String(evt.procedureName || evt.procedure_name || evt.procedureCode || evt.procedure_code || evt.procedure || "").trim();
+      const procedureName = rawProcName ? localizeProcCode(rawProcName) : "";
       const toothNo = String(evt.toothId || evt.tooth_id || evt.toothNumber || evt.tooth_number || "").trim();
-      // Replace hardcoded English " - Tooth X" in backend titles with translated equivalent
+      // Localize event title: translate procedure codes and tooth words in all languages
       const toothWord = tl("timeline.tooth");
-      let eventTitle = evt.title || getEventTypeLabel(evt.type);
-      const toothMatch = eventTitle.match(/^(.*?)\s*-\s*Tooth\s+(\d+)$/i);
-      if (toothMatch) {
-        eventTitle = `${toothMatch[1]} - ${toothWord} ${toothMatch[2]}`;
-      } else if (toothNo && !eventTitle) {
-        eventTitle = `${getEventTypeLabel(evt.type)} - ${toothWord} ${toothNo}`;
+      let eventTitle = localizeEventTitle(evt.title || getEventTypeLabel(evt.type));
+      // If title has no tooth info but we have a tooth number, append it
+      if (toothNo && eventTitle && !TOOTH_WORDS_RE.test(eventTitle) && !/\d+/.test(eventTitle)) {
+        eventTitle = `${eventTitle} - ${toothWord} ${toothNo}`;
       }
       const rawPatientName = String(evt.patientName || evt.patient_name || (evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '') || '').trim();
       const patientName = ["unknown", "unknown unknown", "unknown patient", "null", "undefined", "-", "--"].includes(rawPatientName.toLowerCase()) ? '' : rawPatientName;
@@ -1107,6 +1192,35 @@
         if (todayEventsEl) todayEventsEl.textContent = todayEvents.length;
         if (tomorrowPatientsEl) tomorrowPatientsEl.textContent = tomorrowPatients.size;
         if (tomorrowEventsEl) tomorrowEventsEl.textContent = tomorrowEvents.length;
+
+        // Force-translate summary badge labels by ID (most reliable approach)
+        const _tl = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : null;
+        if (_tl) {
+          const _setById = (id, key) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const v = _tl(key);
+            if (v && !v.startsWith("dashboard.")) el.textContent = v;
+          };
+          _setById("tomorrowLabel",         "dashboard.upcoming.summary.tomorrow");
+          _setById("tomorrowPatientsLabel", "dashboard.upcoming.summary.patients");
+          _setById("tomorrowEventsLabel",   "dashboard.upcoming.summary.events");
+          _setById("todayLabel",            "dashboard.upcoming.summary.today");
+          _setById("todayPatientsLabel",    "dashboard.upcoming.summary.patients");
+          _setById("todayEventsLabel",      "dashboard.upcoming.summary.events");
+          document.querySelectorAll('[data-i18n="dashboard.upcoming.summary.overdue"]').forEach(el => {
+            const v = _tl("dashboard.upcoming.summary.overdue");
+            if (v && !v.startsWith("dashboard.")) el.textContent = v;
+          });
+          document.querySelectorAll('[data-i18n="dashboard.upcoming.summary.patients"]').forEach(el => {
+            const v = _tl("dashboard.upcoming.summary.patients");
+            if (v && !v.startsWith("dashboard.")) el.textContent = v;
+          });
+          document.querySelectorAll('[data-i18n="dashboard.upcoming.summary.events"]').forEach(el => {
+            const v = _tl("dashboard.upcoming.summary.events");
+            if (v && !v.startsWith("dashboard.")) el.textContent = v;
+          });
+        }
         summaryEl.style.display = "block";
       }
 
@@ -1162,6 +1276,33 @@
     // Reload clinic info and events (this will re-render timeline with new language)
     loadClinicInfo();
     loadEvents();
+    // Force-translate summary badge labels immediately on language change
+    const _itl = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : null;
+    if (_itl) {
+      const _setById2 = (id, key) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const v = _itl(key);
+        if (v && !v.startsWith("dashboard.")) el.textContent = v;
+      };
+      _setById2("tomorrowLabel",         "dashboard.upcoming.summary.tomorrow");
+      _setById2("tomorrowPatientsLabel", "dashboard.upcoming.summary.patients");
+      _setById2("tomorrowEventsLabel",   "dashboard.upcoming.summary.events");
+      _setById2("todayLabel",            "dashboard.upcoming.summary.today");
+      _setById2("todayPatientsLabel",    "dashboard.upcoming.summary.patients");
+      _setById2("todayEventsLabel",      "dashboard.upcoming.summary.events");
+      [
+        ["dashboard.upcoming.summary.overdue",  '[data-i18n="dashboard.upcoming.summary.overdue"]'],
+        ["dashboard.upcoming.summary.patients", '[data-i18n="dashboard.upcoming.summary.patients"]'],
+        ["dashboard.upcoming.summary.events",   '[data-i18n="dashboard.upcoming.summary.events"]'],
+      ].forEach(([key, sel]) => {
+        const v = _itl(key);
+        if (v && !v.startsWith("dashboard.")) {
+          document.querySelectorAll(sel).forEach(el => { el.textContent = v; });
+        }
+      });
+    }
+
     // Reload badges after i18n update (in case badges were removed during translation)
     setTimeout(() => {
       loadAllBadges();
@@ -1319,13 +1460,14 @@ function updateActivePatientsUI(data) {
   const summaryEl = document.getElementById('activePatientsSummary');
   
   if (!data || data.data.length === 0) {
+    const _t = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : null;
     if (growthEl) {
-      growthEl.textContent = 'No data';
+      growthEl.textContent = _t ? _t("dashboard.charts.noData") : "No data";
       growthEl.style.background = 'rgba(255,255,255,0.07)';
       growthEl.style.color = '#a7b2c8';
     }
     if (summaryEl) {
-      summaryEl.textContent = 'Trend will improve as more data is collected';
+      summaryEl.textContent = _t ? _t("dashboard.charts.trendNote") : "Trend will improve as more data is collected";
     }
     return;
   }
@@ -1342,7 +1484,7 @@ function updateActivePatientsUI(data) {
     growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
     growthEl.style.color = growth >= 0 ? '#4ade80' : '#f87171';
   } else if (growthEl) {
-    growthEl.textContent = 'No previous data';
+    growthEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.noPreviousData") : 'No previous data';
     growthEl.style.background = 'rgba(255,255,255,0.07)';
     growthEl.style.color = '#a7b2c8';
   }
@@ -1350,7 +1492,10 @@ function updateActivePatientsUI(data) {
   // Update summary
   if (summaryEl) {
     const totalPatients = latestMonth.activePatients;
-    summaryEl.textContent = `${totalPatients} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'active patients'} in ${latestMonth.monthLabel}`;
+    const tl = (window.i18n && window.i18n.t) ? (k, p) => window.i18n.t(k, p) : null;
+    summaryEl.textContent = tl
+      ? tl("dashboard.charts.summaryActivePatients", { count: totalPatients, month: latestMonth.monthLabel })
+      : `${totalPatients} active patients • ${latestMonth.monthLabel}`;
   }
   
   // Create or update chart
@@ -1391,13 +1536,14 @@ function updateActivePatientsUI(data) {
     const summaryEl = document.getElementById('monthlyProceduresSummary');
     
     if (!data || data.data.length === 0) {
+      const _t2 = (window.i18n && window.i18n.t) ? (k) => window.i18n.t(k) : null;
       if (growthEl) {
-        growthEl.textContent = 'No data';
+        growthEl.textContent = _t2 ? _t2("dashboard.charts.noData") : "No data";
         growthEl.style.background = 'rgba(255,255,255,0.07)';
         growthEl.style.color = '#a7b2c8';
       }
       if (summaryEl) {
-        summaryEl.textContent = 'Trend will improve as more data is collected';
+        summaryEl.textContent = _t2 ? _t2("dashboard.charts.trendNote") : "Trend will improve as more data is collected";
       }
       return;
     }
@@ -1413,7 +1559,7 @@ function updateActivePatientsUI(data) {
       growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
       growthEl.style.color = growth >= 0 ? '#4ade80' : '#f87171';
     } else if (growthEl) {
-      growthEl.textContent = 'No previous data';
+      growthEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.noPreviousData") : 'No previous data';
       growthEl.style.background = 'rgba(255,255,255,0.07)';
       growthEl.style.color = '#a7b2c8';
     }
@@ -1421,7 +1567,10 @@ function updateActivePatientsUI(data) {
     // Update summary
     if (summaryEl) {
       const totalProcedures = latestMonth.procedures;
-      summaryEl.textContent = `${totalProcedures} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'procedures'} in ${latestMonth.monthLabel}`;
+      const tl2 = (window.i18n && window.i18n.t) ? (k, p) => window.i18n.t(k, p) : null;
+      summaryEl.textContent = tl2
+        ? tl2("dashboard.charts.summaryProcedures", { count: totalProcedures, month: latestMonth.monthLabel })
+        : `${totalProcedures} procedures • ${latestMonth.monthLabel}`;
     }
     
     // Create or update chart

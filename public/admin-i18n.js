@@ -70,6 +70,16 @@
           logout: "Çıkış Yap",
           clinic: "Klinik"
         },
+        charts: {
+          activePatients: "Aktif Hastalar",
+          procedures: "Prosedürler",
+          noData: "Veri yok",
+          trendNote: "Daha fazla veri toplandıkça trend iyileşecek",
+          vsPreviousMonth: "önceki aya göre",
+          noPreviousData: "Önceki veri yok",
+          summaryActivePatients: "{count} aktif hasta • {month}",
+          summaryProcedures: "{count} prosedür • {month}"
+        },
         clinicBadge: {
           noToken: "⚠️ Admin token yok. <a href=\"/admin-register.html\" style=\"color:var(--link);\">Klinik Kaydı</a> ile giriş yapın.",
           switchClinic: "Klinik değiştir",
@@ -110,14 +120,10 @@
           summary: {
             overdue: "Gecikmiş:",
             today: "Bugün:",
+            tomorrow: "Yarın:",
             patients: "hasta",
             events: "etkinlik"
           }
-        },
-        charts: {
-          activePatients: "Aktif Hastalar",
-          procedures: "İşlemler",
-          vsPreviousMonth: "önceki aya göre"
         }
       },
       
@@ -334,7 +340,8 @@
           loginFailed: "Giriş başarısız. Lütfen tekrar deneyin.",
           genericError: "Giriş hatası: {error}"
         },
-        success: "Hoş geldiniz {name}! Giriş başarılı."
+        success: "Hoş geldiniz {name}! Giriş başarılı.",
+        sessionExpired: "⏰ Oturum süreniz doldu veya token geçersiz. Lütfen tekrar giriş yapın."
       },
       
       // Register (admin-register.html)
@@ -379,7 +386,8 @@
           passwordMismatch: "Şifreler eşleşmiyor.",
           registerFailed: "Kayıt başarısız. Lütfen tekrar deneyin.",
           genericError: "Kayıt hatası: {error}",
-          termsNotAccepted: "Lütfen hizmet sözleşmesini kabul edin."
+          termsNotAccepted: "Lütfen hizmet sözleşmesini kabul edin.",
+          timeout: "⏳ Sunucu başlatılıyor, lütfen birkaç saniye bekleyip tekrar deneyin."
         },
         success: "Klinik kaydı başarılı! Giriş sayfasına yönlendiriliyorsunuz...",
         successTitle: "Kayıt Başarılı!",
@@ -564,21 +572,9 @@
         procedure: "İşlem",
         status: "Durum"
       },
-      procedureTypes: {
-        CROWN: "Kuron", TEMP_CROWN: "Geçici Kuron", BRIDGE_UNIT: "Köprü",
-        TEMP_BRIDGE_UNIT: "Geçici Köprü", CROWN_REPLACEMENT: "Kuron Yenileme",
-        BRIDGE_REPLACEMENT_OR_REMOVAL: "Köprü Yenileme / Çıkarma",
-        INLAY: "İnley", ONLAY: "Onley", OVERLAY: "Overley", POST_AND_CORE: "Post & Core",
-        FILLING: "Dolgu", TEMP_FILLING: "Geçici Dolgu",
-        FILLING_REPLACEMENT_OR_REMOVAL: "Dolgu Yenileme / Çıkarma",
-        ROOT_CANAL_TREATMENT: "Kanal Tedavisi", ROOT_CANAL_RETREATMENT: "Kanal Tedavisi Tekrarı",
-        CANAL_OPENING: "Kanal Açılması", CANAL_FILLING: "Kanal Dolgusu",
-        EXTRACTION: "Çekim", SURGICAL_EXTRACTION: "Cerrahi Çekim",
-        APICAL_RESECTION: "Apeks Rezeksiyonu", IMPLANT: "İmplant",
-        HEALING_ABUTMENT: "İyileşme Abutmenti", IMPLANT_CROWN: "İmplant Kuronu",
-        CLEANING: "Diş Temizliği", BLEACHING: "Diş Beyazlatma",
-        BONE_GRAFT: "Kemik Grefti", SINUS_LIFT: "Sinüs Lift",
-        VENEER: "Veneer", CONSULT: "Muayene", CHECKUP: "Kontrol"
+      date: {
+        monthsShort: ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"],
+        weekdays: ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"]
       },
       files: {
         pageTitle: "Admin – Hasta Dosyaları",
@@ -665,6 +661,16 @@
           logout: "Logout",
           clinic: "Clinic"
         },
+        charts: {
+          activePatients: "Active Patients",
+          procedures: "Procedures",
+          noData: "No data",
+          trendNote: "Trend will improve as more data is collected",
+          vsPreviousMonth: "vs previous month",
+          noPreviousData: "No previous data",
+          summaryActivePatients: "{count} active patients • {month}",
+          summaryProcedures: "{count} procedures • {month}"
+        },
         clinicBadge: {
           noToken: "⚠️ No admin token. <a href=\"/admin-register.html\" style=\"color:var(--link);\">Register Clinic</a> to login.",
           switchClinic: "Switch clinic",
@@ -705,14 +711,10 @@
           summary: {
             overdue: "Overdue:",
             today: "Today:",
+            tomorrow: "Tomorrow:",
             patients: "patients",
             events: "events"
           }
-        },
-        charts: {
-          activePatients: "Active Patients",
-          procedures: "Procedures",
-          vsPreviousMonth: "vs previous month"
         }
       },
       
@@ -929,7 +931,8 @@
           loginFailed: "Login failed. Please try again.",
           genericError: "Login error: {error}"
         },
-        success: "Welcome {name}! Login successful."
+        success: "Welcome {name}! Login successful.",
+        sessionExpired: "⏰ Your session has expired or the token is invalid. Please log in again."
       },
       
       // Register (admin-register.html)
@@ -974,7 +977,8 @@
           passwordMismatch: "Passwords do not match.",
           registerFailed: "Registration failed. Please try again.",
           genericError: "Registration error: {error}",
-          termsNotAccepted: "Please accept the service agreement."
+          termsNotAccepted: "Please accept the service agreement.",
+          timeout: "⏳ Server is starting up, please wait a moment and try again."
         },
         success: "Clinic registration successful! Redirecting to login page...",
         successTitle: "Registration Successful!",
@@ -1158,26 +1162,14 @@
           rejectFailed: "Rejection error: {error}"
         }
       },
-      procedureTypes: {
-        CROWN: "Crown", TEMP_CROWN: "Temporary Crown", BRIDGE_UNIT: "Bridge",
-        TEMP_BRIDGE_UNIT: "Temporary Bridge", CROWN_REPLACEMENT: "Crown Replacement",
-        BRIDGE_REPLACEMENT_OR_REMOVAL: "Bridge Replacement / Removal",
-        INLAY: "Inlay", ONLAY: "Onlay", OVERLAY: "Overlay", POST_AND_CORE: "Post & Core",
-        FILLING: "Filling", TEMP_FILLING: "Temporary Filling",
-        FILLING_REPLACEMENT_OR_REMOVAL: "Filling Replacement / Removal",
-        ROOT_CANAL_TREATMENT: "Root Canal Treatment", ROOT_CANAL_RETREATMENT: "Root Canal Retreatment",
-        CANAL_OPENING: "Canal Opening", CANAL_FILLING: "Canal Filling",
-        EXTRACTION: "Extraction", SURGICAL_EXTRACTION: "Surgical Extraction",
-        APICAL_RESECTION: "Apical Resection", IMPLANT: "Implant",
-        HEALING_ABUTMENT: "Healing Abutment", IMPLANT_CROWN: "Implant Crown",
-        CLEANING: "Cleaning", BLEACHING: "Bleaching",
-        BONE_GRAFT: "Bone Graft", SINUS_LIFT: "Sinus Lift",
-        VENEER: "Veneer", CONSULT: "Consultation", CHECKUP: "Checkup"
-      },
       timeline: {
         tooth: "Tooth",
         procedure: "Procedure",
         status: "Status"
+      },
+      date: {
+        monthsShort: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
       },
       files: {
         pageTitle: "Admin – Patient Files",
@@ -1211,6 +1203,16 @@
         title: "Clinifly Admin – Панель управления",
         nav: { dashboard: "Панель", patients: "Пациенты", travel: "Путешествие", treatment: "Лечение", schedule: "Календарь", doctors: "Врачи", chat: "Сообщения", files: "Файлы", referrals: "Рефералы", health: "Здоровье", settings: "Настройки" },
         sidebar: { mainMenu: "Главное меню", management: "Управление", logout: "Выйти", clinic: "Клиника" },
+        charts: {
+          activePatients: "Активные пациенты",
+          procedures: "Процедуры",
+          noData: "Нет данных",
+          trendNote: "Тренд улучшится по мере накопления данных",
+          vsPreviousMonth: "по сравнению с прошлым месяцем",
+          noPreviousData: "Нет данных за предыдущий период",
+          summaryActivePatients: "{count} активных пациентов • {month}",
+          summaryProcedures: "{count} процедур • {month}"
+        },
         upcoming: {
           title: "📅 Расписание клиники",
           subtitle: "Все события (прошлые и будущие)",
@@ -1223,7 +1225,7 @@
           overdue: "⚠️ Просрочено: {count}",
           overdueDesc: "У вас {count} просроченных событий, требующих внимания.",
           status: { planned: "Запланировано", done: "Выполнено" },
-          summary: { overdue: "Просрочено:", today: "Сегодня:", patients: "пациентов", events: "событий" },
+          summary: { overdue: "Просрочено:", today: "Сегодня:", tomorrow: "Завтра:", patients: "пациентов", events: "событий" },
           eventTypes: {
             TRAVEL_EVENT: "Туристическое мероприятие",
             FLIGHT: "Рейс",
@@ -1239,14 +1241,9 @@
             SURGERY: "Хирургия",
             CHECKUP: "Осмотр"
           }
-        },
-        charts: {
-          activePatients: "Активные пациенты",
-          procedures: "Процедуры",
-          vsPreviousMonth: "по сравнению с прошлым месяцем"
         }
       },
-      login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль." },
+      login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль.", sessionExpired: "⏰ Срок сессии истёк или токен недействителен. Пожалуйста, войдите снова." },
       patients: {
         title: "Пациенты", search: "Поиск пациентов...", filter: "Фильтр",
         filterAll: "Все", approve: "Одобрить", treatment: "Лечение", chat: "Чат", travel: "Путешествие", health: "Здоровье", files: "📁 Файлы",
@@ -1441,26 +1438,14 @@
           CANCELLED: "Отменено"
         }
       },
-      procedureTypes: {
-        CROWN: "Коронка", TEMP_CROWN: "Временная коронка", BRIDGE_UNIT: "Мост",
-        TEMP_BRIDGE_UNIT: "Временный мост", CROWN_REPLACEMENT: "Замена коронки",
-        BRIDGE_REPLACEMENT_OR_REMOVAL: "Замена / снятие моста",
-        INLAY: "Вкладка", ONLAY: "Накладка", OVERLAY: "Перекрывающая накладка", POST_AND_CORE: "Штифт и культя",
-        FILLING: "Пломба", TEMP_FILLING: "Временная пломба",
-        FILLING_REPLACEMENT_OR_REMOVAL: "Замена / удаление пломбы",
-        ROOT_CANAL_TREATMENT: "Лечение корневого канала", ROOT_CANAL_RETREATMENT: "Повторное лечение канала",
-        CANAL_OPENING: "Открытие канала", CANAL_FILLING: "Пломбирование канала",
-        EXTRACTION: "Удаление", SURGICAL_EXTRACTION: "Хирургическое удаление",
-        APICAL_RESECTION: "Апикальная резекция", IMPLANT: "Имплант",
-        HEALING_ABUTMENT: "Формирователь десны", IMPLANT_CROWN: "Коронка на импланте",
-        CLEANING: "Профессиональная чистка", BLEACHING: "Отбеливание",
-        BONE_GRAFT: "Костный трансплантат", SINUS_LIFT: "Синус-лифтинг",
-        VENEER: "Виниры", CONSULT: "Консультация", CHECKUP: "Осмотр"
-      },
       timeline: {
         tooth: "Зуб",
         procedure: "Процедура",
         status: "Статус"
+      },
+      date: {
+        monthsShort: ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"],
+        weekdays: ["вс", "пн", "вт", "ср", "чт", "пт", "сб"]
       },
       files: {
         pageTitle: "Admin – Файлы пациента",
@@ -1494,6 +1479,16 @@
         title: "Clinifly Admin – მართვის პანელი",
         nav: { dashboard: "პანელი", patients: "პაციენტები", travel: "მოგზაურობა", treatment: "მკურნალება", schedule: "კალენდარი", doctors: "ექიმები", chat: "შეტყობინებები", files: "ფაილები", referrals: "მოწვევები", health: "ჯანმრთელობა", settings: "პარამეტრები" },
         sidebar: { mainMenu: "მთავარი მენიუ", management: "მართვა", logout: "გასვლა", clinic: "კლინიკა" },
+        charts: {
+          activePatients: "აქტიური პაციენტები",
+          procedures: "პროცედურები",
+          noData: "მონაცემი არ არის",
+          trendNote: "ტრენდი გაუმჯობესდება მეტი მონაცემის დაგროვებისას",
+          vsPreviousMonth: "წინა თვესთან შედარებით",
+          noPreviousData: "წინა მონაცემი არ არის",
+          summaryActivePatients: "{count} აქტიური პაციენტი • {month}",
+          summaryProcedures: "{count} პროცედურა • {month}"
+        },
         upcoming: {
           title: "📅 კლინიკის განრიგი",
           subtitle: "ყველა მოვლენა (წარსული და მომავალი)",
@@ -1506,7 +1501,7 @@
           overdue: "⚠️ ვადაგადაცილებული: {count}",
           overdueDesc: "გაქვთ {count} ვადაგადაცილებული მოვლენა.",
           status: { planned: "დაგეგმილია", done: "შესრულებულია" },
-          summary: { overdue: "ვადაგადაცილებული:", today: "დღეს:", patients: "პაციენტი", events: "მოვლენა" },
+          summary: { overdue: "ვადაგადაცილებული:", today: "დღეს:", tomorrow: "ხვალ:", patients: "პაციენტი", events: "მოვლენა" },
           eventTypes: {
             TRAVEL_EVENT: "მოგზაურობის მოვლენა",
             FLIGHT: "რეისი",
@@ -1522,14 +1517,9 @@
             SURGERY: "ქირურგია",
             CHECKUP: "გასინჯვა"
           }
-        },
-        charts: {
-          activePatients: "აქტიური პაციენტები",
-          procedures: "პროცედურები",
-          vsPreviousMonth: "წინა თვესთან შედარებით"
         }
       },
-      login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია." },
+      login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია.", sessionExpired: "⏰ სეანსი ამოიწურა ან ტოკენი არასწორია. გთხოვთ, ხელახლა შეხვიდეთ." },
       patients: {
         title: "პაციენტები", search: "პაციენტის ძებნა...", filter: "ფილტრი",
         filterAll: "ყველა", approve: "დადასტურება", treatment: "მკურნალება", chat: "ჩათი", travel: "მოგზაურობა", health: "ჯანმრთელობა", files: "📁 ფაილები",
@@ -1724,26 +1714,14 @@
           CANCELLED: "გაუქმებულია"
         }
       },
-      procedureTypes: {
-        CROWN: "გვირდი", TEMP_CROWN: "დროელი გვირდი", BRIDGE_UNIT: "ხიდი",
-        TEMP_BRIDGE_UNIT: "დროელი ხიდი", CROWN_REPLACEMENT: "გვირდის შეცვლა",
-        BRIDGE_REPLACEMENT_OR_REMOVAL: "ხიდის შეცვლა / მოხსნა",
-        INLAY: "ინლაი", ONLAY: "ონლაი", OVERLAY: "ოვერლაი", POST_AND_CORE: "პოსტი და კორი",
-        FILLING: "შევსება", TEMP_FILLING: "დროელი შევსება",
-        FILLING_REPLACEMENT_OR_REMOVAL: "შევსების შეცვლა / მოხსნა",
-        ROOT_CANAL_TREATMENT: "ფესვის მკურნალება", ROOT_CANAL_RETREATMENT: "ფესვის მკურნალების გამეორება",
-        CANAL_OPENING: "ფესვის გახსნა", CANAL_FILLING: "ფესვის შევსება",
-        EXTRACTION: "ამოღება", SURGICAL_EXTRACTION: "ქირურგიული ამოღება",
-        APICAL_RESECTION: "აპიკალური რეზექცია", IMPLANT: "იმპლანტი",
-        HEALING_ABUTMENT: "შეხმების აბატმენტი", IMPLANT_CROWN: "იმპლანტის გვირდი",
-        CLEANING: "პროფესიონალური გამოწმება", BLEACHING: "გათეთრება",
-        BONE_GRAFT: "ძვლის ტრანსპლანტი", SINUS_LIFT: "სინუს ლიფტი",
-        VENEER: "ვინირი", CONSULT: "კონსულტაცია", CHECKUP: "გასინჯვა"
-      },
       timeline: {
         tooth: "კბილი",
         procedure: "პროცედურა",
         status: "სტატუსი"
+      },
+      date: {
+        monthsShort: ["იან", "თებ", "მარ", "აპრ", "მაი", "ივნ", "ივლ", "აგვ", "სექ", "ოქტ", "ნოე", "დეკ"],
+        weekdays: ["კვ", "ორ", "სამ", "ოთხ", "ხუთ", "პარ", "შაბ"]
       },
       files: {
         pageTitle: "Admin – პაციენტის ფაილები",
