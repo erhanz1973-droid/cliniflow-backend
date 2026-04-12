@@ -15094,6 +15094,99 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
   }
 });
 
+// ─── AI Clinic Recommendation Helpers ────────────────────────────────────────
+
+/**
+ * Maps insight keywords → dental specialty label.
+ * Order matters: first match wins.
+ */
+const INSIGHT_SPECIALTY_MAP = [
+  { pattern: /dizilim|alignment|eğri|çapraşık|ortodon/i,         label: 'Ortodonti' },
+  { pattern: /eksik diş|missing.*tooth|implant/i,                label: 'İmplant' },
+  { pattern: /diş eti|gum|periodont|kızarık|şişlik|bleeding/i,  label: 'Periodontoloji' },
+  { pattern: /estetik|beyazlatma|smile|whiten|renk değişikliği/i, label: 'Estetik Diş Hekimliği' },
+  { pattern: /çürük|cavity|leke|delik|dark spot/i,               label: 'Genel Diş Hekimliği' },
+];
+
+/** Determine the primary specialty needed from a list of insight strings. */
+function detectSpecialtyFromInsights(insights) {
+  const text = insights.join(' ');
+  for (const { pattern, label } of INSIGHT_SPECIALTY_MAP) {
+    if (pattern.test(text)) return label;
+  }
+  return 'Genel Diş Hekimliği';
+}
+
+/**
+ * Fetches up to 3 recommended active clinics from Supabase.
+ * Excludes the patient's own clinic.
+ * Attaches avg overall rating when available.
+ * Returns [] on any error (non-fatal — AI result is still saved).
+ */
+async function getRecommendedClinics({ insights = [], patientId } = {}) {
+  if (!isSupabaseEnabled()) return [];
+  try {
+    const specialty = detectSpecialtyFromInsights(insights);
+
+    // Exclude patient's own clinic from suggestions
+    let excludeClinicId = null;
+    if (patientId) {
+      const { data: pt } = await supabase
+        .from('patients')
+        .select('clinic_id')
+        .eq('id', patientId)
+        .maybeSingle();
+      excludeClinicId = pt?.clinic_id || null;
+    }
+
+    // Fetch active clinics (max 10 candidates, narrow down to 3 after rating sort)
+    let query = supabase
+      .from('clinics')
+      .select('id, name, city')
+      .eq('status', 'active')
+      .limit(10);
+    if (excludeClinicId) query = query.neq('id', excludeClinicId);
+
+    const { data: clinics } = await query;
+    if (!clinics?.length) return [];
+
+    // Fetch avg ratings for these clinics in one shot
+    const ids = clinics.map(c => c.id);
+    const { data: ratingRows } = await supabase
+      .from('ratings')
+      .select('clinic_id, overall')
+      .in('clinic_id', ids);
+
+    const ratingMap = {};
+    if (ratingRows?.length) {
+      const grouped = {};
+      for (const r of ratingRows) {
+        if (!grouped[r.clinic_id]) grouped[r.clinic_id] = [];
+        grouped[r.clinic_id].push(r.overall);
+      }
+      for (const [id, scores] of Object.entries(grouped)) {
+        ratingMap[id] = Math.round(
+          (scores.reduce((a, b) => a + b, 0) / scores.length) * 10
+        ) / 10;
+      }
+    }
+
+    return clinics
+      .map(c => ({
+        id:        c.id,
+        name:      c.name   || 'Klinik',
+        city:      c.city   || null,
+        specialty,
+        rating:    ratingMap[c.id] ?? null,
+      }))
+      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+      .slice(0, 3);
+  } catch (err) {
+    logAI('warn', 'clinic_recommendations_error', { patientId, message: err?.message });
+    return [];
+  }
+}
+
 // ─── AI Dental Analysis Helpers ──────────────────────────────────────────────
 
 /** Safe fallback returned whenever AI output is invalid or unrecoverable. */
@@ -15515,6 +15608,9 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
 
     const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
 
+    // ── Clinic recommendations (non-blocking — runs concurrently with save) ──
+    const recommendedClinics = await getRecommendedClinics({ insights, patientId });
+
     // ── Save AI result as CLINIC message ──────────────────────────────
     await insertMessageToSupabase({
       patientId,
@@ -15529,6 +15625,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
           disclaimer,
           originalImageUrl: imageUrl,
           ...(simulatedImageUrl ? { simulatedImageUrl } : {}),
+          ...(recommendedClinics.length > 0 ? { clinics: recommendedClinics } : {}),
         },
       },
       type: 'ai_result',
@@ -15543,7 +15640,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       totalElapsedMs: Date.now() - _t0,
     });
 
-    return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, disclaimer });
+    return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, disclaimer, clinics: recommendedClinics });
 
   } catch (err) {
     const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
