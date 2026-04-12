@@ -16024,7 +16024,7 @@ async function runSmileSimulation({ imageUrl, patientId }) {
 
 // POST /api/chat/smile-simulation
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
-  console.log('=== SIM ENDPOINT v5 HIT ===');
+  console.log('=== SIM ENDPOINT v6 | MAX_POLLS=60 | POLL_INTERVAL=1500ms | single balanced ===');
   const { patientId, imageUrl, insights = [] } = req.body || {};
   console.log('[SIM ENDPOINT] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
