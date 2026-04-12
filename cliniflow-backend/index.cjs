@@ -16037,7 +16037,7 @@ setInterval(() => {
 // Returns { ok, jobId, status:"pending" } immediately (no long-held connection).
 // Client polls GET /api/chat/sim-status/:jobId for the result.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
-  console.log('=== SIM ENDPOINT v7 | ASYNC JOB | balanced only ===');
+  console.log('🎯 SIM ENDPOINT v7 HIT | ASYNC JOB | returning jobId immediately');
   const { patientId, imageUrl } = req.body || {};
   console.log('[SIM] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
@@ -32608,6 +32608,10 @@ server.on("error", (err) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
+  console.log('🚀 ============================================');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v7');
+  console.log('🚀  SIM: async job pattern (POST→jobId, GET poll)');
+  console.log('🚀 ============================================');
 
 
 
