@@ -19,6 +19,14 @@ const ENABLE_AI_ANALYSIS         = process.env.ENABLE_AI_ANALYSIS         !== "f
 const ENABLE_SMILE_SIMULATION    = process.env.ENABLE_SMILE_SIMULATION     !== "false";
 const ENABLE_MULTI_PHOTO_PROGRESS = process.env.ENABLE_MULTI_PHOTO_PROGRESS !== "false";
 
+// ─── AI Cost Limit ───────────────────────────────────────────────────────────
+// Set AI_COST_LIMIT_PER_USER=0.50 in env to cap each user at $0.50 lifetime.
+// Set to 0 or leave unset to disable the limit.
+const AI_COST_LIMIT_PER_USER = parseFloat(process.env.AI_COST_LIMIT_PER_USER || "0") || 0;
+// Fixed cost estimate per analysis call (GPT-4o vision ~$0.01 per request).
+// Replace with real token-based calculation when needed.
+const AI_ESTIMATED_COST_PER_CALL = parseFloat(process.env.AI_ESTIMATED_COST_PER_CALL || "0.01");
+
 // ─── AI Rate Limiter ─────────────────────────────────────────────────────────
 // Per-patient: max 10 AI requests / 60 s window (configurable via env)
 const AI_RATE_LIMIT_MAX    = parseInt(process.env.AI_RATE_LIMIT_MAX    || "10",    10);
@@ -54,6 +62,72 @@ function aiRateLimitMiddleware(req, res, next) {
     }
   }
   next();
+}
+
+// ─── AI Cost Tracking ────────────────────────────────────────────────────────
+// Reads and writes to the `ai_usage` table in Supabase.
+// Table DDL (run scripts/add-ai-usage.sql once):
+//   CREATE TABLE ai_usage (
+//     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//     user_id text NOT NULL UNIQUE,
+//     total_cost float NOT NULL DEFAULT 0,
+//     updated_at timestamptz NOT NULL DEFAULT now()
+//   );
+
+/** Returns { totalCost, limited } for the given userId.
+ *  If AI_COST_LIMIT_PER_USER === 0 the limit is disabled → limited always false. */
+async function aiCostCheck(userId) {
+  if (!AI_COST_LIMIT_PER_USER || !isSupabaseEnabled()) {
+    return { totalCost: 0, limited: false };
+  }
+  try {
+    const { data, error } = await supabase
+      .from('ai_usage')
+      .select('total_cost')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[AI COST] Check failed (allowing request):', error.message);
+      return { totalCost: 0, limited: false };
+    }
+
+    const totalCost = data?.total_cost ?? 0;
+    const limited   = totalCost >= AI_COST_LIMIT_PER_USER;
+    console.log('[AI COST]:', { userId, totalCost: totalCost.toFixed(4), limit: AI_COST_LIMIT_PER_USER, limited });
+    return { totalCost, limited };
+  } catch (e) {
+    console.warn('[AI COST] Exception during check (allowing request):', e?.message);
+    return { totalCost: 0, limited: false };
+  }
+}
+
+/** Increments the user's accumulated cost by AI_ESTIMATED_COST_PER_CALL.
+ *  Creates the row if it doesn't exist (upsert). Only called after a successful AI response. */
+async function aiCostRecord(userId) {
+  if (!isSupabaseEnabled()) return;
+  try {
+    // Fetch current value first so we can log the running total
+    const { data: existing } = await supabase
+      .from('ai_usage')
+      .select('total_cost')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const prev = existing?.total_cost ?? 0;
+    const next = parseFloat((prev + AI_ESTIMATED_COST_PER_CALL).toFixed(6));
+
+    await supabase
+      .from('ai_usage')
+      .upsert(
+        { user_id: userId, total_cost: next, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
+
+    console.log('[AI COST] Recorded:', { userId, prev: prev.toFixed(4), added: AI_ESTIMATED_COST_PER_CALL, next: next.toFixed(4) });
+  } catch (e) {
+    console.warn('[AI COST] Record failed (non-fatal):', e?.message);
+  }
 }
 
 // ─── Image Magic-Bytes Validator ─────────────────────────────────────────────
@@ -15691,6 +15765,19 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(501).json({ ok: false, error: 'ai_not_configured', message: 'OPENAI_API_KEY not set' });
     }
 
+    // ── Cost limit check ────────────────────────────────────────────────
+    const { limited, totalCost } = await aiCostCheck(patientId);
+    if (limited) {
+      logAI('warn', 'ai_cost_limit_reached', { patientId, totalCost, limit: AI_COST_LIMIT_PER_USER });
+      return res.status(403).json({
+        ok: false,
+        error: 'ai_limit_reached',
+        message: 'AI kullanım limitine ulaştınız',
+        totalCost,
+        limit: AI_COST_LIMIT_PER_USER,
+      });
+    }
+
     logAI('info', 'analyze_start', { patientId, imageUrl });
 
     // ── Load image — from remote URL (Supabase) or local disk ───────────
@@ -15934,6 +16021,9 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       inMemory:      true,
       totalElapsedMs: Date.now() - _t0,
     });
+
+    // ── Record cost only after a successful AI response ─────────────────
+    await aiCostRecord(patientId);
 
     return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, disclaimer, clinics: recommendedClinics });
 
