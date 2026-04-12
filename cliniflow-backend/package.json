@@ -1,0 +1,18 @@
+{
+  "name": "cliniflow-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cliniflow API — boots ../index.cjs; production uses Render env (no .env required)",
+  "main": "run.cjs",
+  "scripts": {
+    "start": "node run.cjs",
+    "dev": "node run.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@cliniflow/procedures": "file:../packages/procedures",
+    "dotenv": "^16.4.5"
+  }
+}

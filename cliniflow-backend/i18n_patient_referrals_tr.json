@@ -1,0 +1,52 @@
+{
+  "referrals": {
+    "title": "Arkadaşlarını Davet Et, Birlikte Kazanın",
+    "subtitle": "Davet ettiğin arkadaşın kliniğe katıldığında, ikiniz de indirim kazanırsınız.",
+    
+    "inviteCode": {
+      "title": "Davet Kodun",
+      "helper": "Bu kodu arkadaşınla paylaş. Kayıt olurken kullansın."
+    },
+    
+    "copy": "Kopyala",
+    "share": "Paylaş",
+    
+    "shareMessage": "Clinifly'de indirim kazanalım!\nBu davet kodunu kullan, ikimiz de indirim kazanalım.\nDavet kodum: {{code}}",
+    
+    "howItWorks": {
+      "title": "Nasıl çalışır?",
+      "steps": [
+        "Davet kodunu arkadaşınla paylaş",
+        "Arkadaşın bu kodla kayıt olur",
+        "Klinik başvuruyu onaylar",
+        "İkiniz de indirim kazanırsınız"
+      ]
+    },
+    
+    "note": "İndirim oranları kliniğe göre değişiklik gösterebilir.",
+    
+    "status": {
+      "title": "Referral'ların",
+      "pending": "Beklemede",
+      "approved": "Onaylandı", 
+      "rejected": "Reddedildi",
+      "pendingDesc": "Klinik onayı bekleniyor",
+      "approvedDesc": "İndirim kazanıldı",
+      "rejectedDesc": "Referral onaylanmadı"
+    },
+    
+    "inviterPerson": "Davet ettiğin kişi",
+    "invitedPerson": "Seni davet eden kişi",
+    "bothEarnDiscount": "İkiniz de %{percent}% indirim kazandınız!",
+    
+    "copySuccess": "Davet kodu panoya kopyalandı!",
+    "copyError": "Davet kodu kopyalanamadı",
+    "shareFailed": "Davet kodu paylaşılamadı",
+    
+    "noReferrals": "Henüz referral yok",
+    "loading": "Referral'lar yükleniyor...",
+    
+    "inviteButton": "Arkadaşlarını Davet Et",
+    "howItWorksButton": "Nasıl Çalışır?"
+  }
+}
