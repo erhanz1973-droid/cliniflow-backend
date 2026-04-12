@@ -10,52 +10,14 @@ const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
 
-// ─── AI / Storage config (read once at startup) ──────────────────────────────
-const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS  || "30000", 10));
-const IMAGE_MAX_SIZE_MB    = Math.max(1,    parseInt(process.env.IMAGE_MAX_SIZE_MB || "10",  10));
+// ─── AI config (read once at startup) ────────────────────────────────────────
+const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS     || "30000", 10));
+const IMAGE_MAX_SIZE_MB    = Math.max(1,    parseInt(process.env.IMAGE_MAX_SIZE_MB  || "10",    10));
 const IMAGE_MAX_SIZE_BYTES = IMAGE_MAX_SIZE_MB * 1024 * 1024;
 
-const ENABLE_AI_ANALYSIS        = process.env.ENABLE_AI_ANALYSIS        !== "false";
-const ENABLE_SMILE_SIMULATION   = process.env.ENABLE_SMILE_SIMULATION   !== "false";
+const ENABLE_AI_ANALYSIS         = process.env.ENABLE_AI_ANALYSIS         !== "false";
+const ENABLE_SMILE_SIMULATION    = process.env.ENABLE_SMILE_SIMULATION     !== "false";
 const ENABLE_MULTI_PHOTO_PROGRESS = process.env.ENABLE_MULTI_PHOTO_PROGRESS !== "false";
-
-// S3 — used to give Replicate a public URL instead of raw base64
-const S3_ENABLED     = process.env.UPLOAD_PROVIDER === "s3" &&
-                       !!process.env.AWS_ACCESS_KEY_ID &&
-                       !!process.env.AWS_SECRET_ACCESS_KEY;
-const S3_BUCKET      = process.env.S3_BUCKET_NAME  || "";
-const S3_REGION      = process.env.AWS_REGION      || "eu-central-1";
-
-let s3Client = null;
-if (S3_ENABLED) {
-  try {
-    const { S3Client } = require("@aws-sdk/client-s3");
-    s3Client = new S3Client({
-      region: S3_REGION,
-      credentials: {
-        accessKeyId:     process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      },
-    });
-    console.log(`[S3] Client initialised – bucket: ${S3_BUCKET}, region: ${S3_REGION}`);
-  } catch (e) {
-    console.warn("[S3] @aws-sdk/client-s3 not available – falling back to base64 for Replicate:", e.message);
-  }
-}
-
-/** Upload a Buffer to S3 and return the public object URL. */
-async function uploadBufferToS3(buffer, key, mimeType) {
-  if (!s3Client) throw new Error("S3 not configured");
-  const { PutObjectCommand } = require("@aws-sdk/client-s3");
-  await s3Client.send(new PutObjectCommand({
-    Bucket: S3_BUCKET,
-    Key:    key,
-    Body:   buffer,
-    ContentType: mimeType,
-    ACL: "public-read",
-  }));
-  return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}`;
-}
 
 // ─── AI Rate Limiter ─────────────────────────────────────────────────────────
 // Per-patient: max 10 AI requests / 60 s window (configurable via env)
@@ -15137,7 +15099,7 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 // Accepts: { patientId, imageUrl }  (imageUrl = relative path from upload response)
 // Feature flags: ENABLE_AI_ANALYSIS, ENABLE_SMILE_SIMULATION
 // Timeouts:      AI_TIMEOUT_MS (default 30 000 ms)
-// Storage:       UPLOAD_PROVIDER=s3 → uploads image to S3 for Replicate URL access
+// Images are processed in-memory as base64 — no external storage required
 app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req, res) => {
   const _t0 = Date.now();
   try {
@@ -15190,23 +15152,9 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     const ext      = path.extname(diskPath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
 
-    // ── If S3 enabled, upload to S3 and get a public URL ───────────────
-    // (Replicate prefers URL over base64; also avoids large payload limits)
-    let s3PublicUrl = null;
-    if (S3_ENABLED && s3Client) {
-      try {
-        const s3Key = `ai-inputs/${patientId}/${Date.now()}_${path.basename(diskPath)}`;
-        s3PublicUrl = await uploadBufferToS3(imageBuffer, s3Key, mimeType);
-        console.log('[AI ANALYZE] Image uploaded to S3:', s3PublicUrl);
-      } catch (s3Err) {
-        console.warn('[AI ANALYZE] S3 upload failed (non-fatal), falling back to base64:', s3Err.message);
-      }
-    }
-
+    // ── Convert to base64 data URL (stateless — no external storage needed) ──
     const base64Image  = imageBuffer.toString('base64');
     const imageDataUrl = `data:${mimeType};base64,${base64Image}`;
-    // Prefer S3 URL for Replicate; fall back to base64 for OpenAI Vision
-    const replicateImageInput = s3PublicUrl || imageDataUrl;
 
     // ── OpenAI Vision — dental photo analysis ─────────────────────────
     const aiPrompt = `Bu bir ağız/diş fotoğrafı. Lütfen kısa ve net biçimde analiz et.
@@ -15302,7 +15250,7 @@ Kurallar:
           body: JSON.stringify({
             version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
             input: {
-              img:     replicateImageInput,   // S3 URL when available, else base64
+              img:     imageDataUrl,
               scale:   2,
               version: 'v1.4',
             },
@@ -15376,7 +15324,7 @@ Kurallar:
       patientId,
       insightCount:    insights.length,
       hasSimulation:   !!simulatedImageUrl,
-      s3Used:          !!s3PublicUrl,
+      inMemory:        true,
       totalElapsedMs:  Date.now() - _t0,
     });
 
