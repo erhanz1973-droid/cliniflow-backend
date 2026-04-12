@@ -15911,46 +15911,94 @@ async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights 
   }
 
   // ── 2. Replicate GFPGAN fallback ─────────────────────────────────────
-  // Uses the original remote imageUrl (no re-fetch needed) — GFPGAN accepts URLs.
-  // NOT SDXL (text-to-image) — GFPGAN is image-to-image face/tooth restoration.
-  if (!url && REPLICATE_TOKEN && imageUrl) {
-    const repTimeout   = Math.min(timeoutMs, 12_000);
-    const pollDeadline = Date.now() + Math.min(timeoutMs, 28_000);
+  // Uses the original remote imageUrl — GFPGAN (image-to-image) accepts URLs directly.
+  // Polling: check status every 1 s, max 10 attempts (≈ 10 s budget).
+  if (!url && hasReplicate && imageUrl) {
     try {
+      // Step 1: Create prediction
       const repRes = await fetch('https://api.replicate.com/v1/predictions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+        },
         body: JSON.stringify({
           version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
           input: { img: imageUrl, scale: 2, version: 'v1.4' },
         }),
-        signal: AbortSignal.timeout(repTimeout),
+        signal: AbortSignal.timeout(10_000),
       });
-      console.log('[REPLICATE SIM STATUS]:', repRes.status);
-      if (repRes.ok) {
-        const { id: predId } = await repRes.json();
-        if (predId) {
-          while (Date.now() < pollDeadline) {
-            await new Promise(r => setTimeout(r, 2500));
-            const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-              headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-              signal: AbortSignal.timeout(5000),
-            }).catch(() => null);
-            if (!poll?.ok) break;
-            const pd = await poll.json();
-            if (pd.status === 'succeeded') {
-              url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
-              if (url) provider = 'replicate';
+
+      console.log('[REPLICATE] Create status:', repRes.status);
+
+      if (!repRes.ok) {
+        const body = await repRes.json().catch(() => ({}));
+        lastError = `replicate_create_${repRes.status}: ${body?.detail ?? ''}`;
+        console.error('[REPLICATE] Create failed:', lastError);
+      } else {
+        const created = await repRes.json();
+        const predId  = created?.id;
+        console.log('[REPLICATE] Prediction id:', predId, '| initial status:', created?.status);
+
+        if (!predId) {
+          lastError = 'replicate_no_prediction_id';
+          console.error('[REPLICATE] No prediction id in response:', JSON.stringify(created).slice(0, 200));
+        } else {
+          // Step 2: Poll — check first, then sleep
+          const MAX_POLLS    = 10;
+          const POLL_INTERVAL = 1_000; // 1 s
+
+          for (let i = 0; i < MAX_POLLS; i++) {
+            const poll = await fetch(
+              `https://api.replicate.com/v1/predictions/${predId}`,
+              {
+                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+                signal: AbortSignal.timeout(8_000),
+              }
+            ).catch(e => { console.warn('[REPLICATE] Poll fetch error:', e?.message); return null; });
+
+            if (!poll?.ok) {
+              console.warn('[REPLICATE] Poll returned non-ok, attempt', i + 1);
               break;
             }
-            if (pd.status === 'failed' || pd.status === 'canceled') break;
+
+            const pd = await poll.json();
+            console.log(`[REPLICATE] Poll ${i + 1}/${MAX_POLLS}: status=${pd.status}`);
+
+            if (pd.status === 'succeeded') {
+              url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
+              if (url) {
+                provider = 'replicate';
+                console.log('[REPLICATE] Succeeded:', url.slice(0, 80));
+                logAI('info', 'replicate_success', { patientId, polls: i + 1 });
+              } else {
+                lastError = 'replicate_succeeded_empty_output';
+                console.warn('[REPLICATE] Succeeded but output was empty:', pd.output);
+              }
+              break;
+            }
+
+            if (pd.status === 'failed' || pd.status === 'canceled') {
+              lastError = `replicate_${pd.status}: ${pd.error ?? ''}`;
+              console.error('[REPLICATE] Prediction', pd.status, ':', pd.error);
+              break;
+            }
+
+            // Still processing — wait before next poll
+            if (i < MAX_POLLS - 1) {
+              await new Promise(r => setTimeout(r, POLL_INTERVAL));
+            }
+          }
+
+          if (!url && !lastError) {
+            lastError = 'replicate_timeout_no_result';
+            console.warn('[REPLICATE] Max polls reached without result for predId:', predId);
           }
         }
       }
-      if (url) logAI('info', 'replicate_fallback_success', { patientId });
     } catch (e) {
       lastError = `replicate_exception: ${e?.message}`;
-      console.warn('[REPLICATE SIM FAILED]:', e?.message);
+      console.warn('[REPLICATE] Exception:', e?.message);
       logAI('warn', 'replicate_exception', { patientId, message: e?.message });
     }
   }
