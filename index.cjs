@@ -15441,15 +15441,11 @@ const VAGUE_PATTERNS = [
   /\bgenel (bir )?sorun\b/i,
   /\biyi görünüyor\b/i,            // "looks fine" without specifics
   /^(ok|iyi|normal|tamam|güzel)\.?$/i,  // single-word non-answers
-  // Forbidden refusal phrases
-  /\bcannot (analyze|analyse|assess|evaluate)\b/i,
-  /\bunable to (analyze|analyse|assess|evaluate|determine)\b/i,
-  /\bimage (is )?(too )?(blurry|unclear|dark|low quality|not clear)\b/i,
-  /\bnot (possible|able) to (analyze|see|determine)\b/i,
-  /\banaliz (edilemez|yapılamaz|mümkün değil)\b/i,
-  /\bgörüntü (net değil|bulanık|karanlık|kalitesiz|analiz edilemez)\b/i,
-  /\bnet (bir |görüntü )?(analiz|değerlendirme) (yapılamadı|mümkün değil)\b/i,
-  /\bfotoğraf (yetersiz|net değil|analiz için uygun değil)\b/i,
+  // Pure refusal phrases — no observation at all
+  // Note: "Görüntü kalitesi sınırlı" is ALLOWED as a quality disclaimer,
+  // so we only block zero-observation hard refusals here.
+  /^(cannot|unable to) (analyze|analyse|assess|evaluate)\.?$/i,
+  /^(analiz edilemez|değerlendirme yapılamaz)\.?$/i,
 ];
 
 /**
@@ -15510,12 +15506,16 @@ function validateDentalAIQuality(parsed) {
 
   if (insights.length === 0) {
     reasons.push('no_insights');
-  } else if (insights.length < 2) {
-    reasons.push('insufficient_insights');  // require at least 2
   } else {
+    // Require at least 1 insight that is NOT a pure refusal phrase.
+    // A single honest quality disclaimer ("Görüntü kalitesi sınırlı...") is
+    // acceptable only when accompanied by at least 1 real observation.
+    const nonRefusalInsights = insights.filter(t => t.length >= 10 && !isVague(t));
+    if (nonRefusalInsights.length === 0) {
+      reasons.push('all_insights_vague_or_refusal');
+    }
     insights.forEach((t, i) => {
-      if (t.length < 10)   reasons.push(`insight_${i}_too_short`);
-      if (isVague(t))      reasons.push(`insight_${i}_vague`);
+      if (t.length < 10) reasons.push(`insight_${i}_too_short`);
     });
   }
 
@@ -15580,38 +15580,37 @@ function generateDentalAnalysisPrompt(photoType = 'general') {
     system: `You are a dental AI assistant analyzing intraoral photos for a patient-facing app.
 
 STRICT RULES — never break these:
-1. You MUST provide at least 2 specific observations if ANY teeth are visible in the image.
-2. NEVER say "cannot analyze", "image is unclear", "unable to assess", or any refusal phrase.
-3. If the image is blurry or dark, still describe what you CAN see — make your best assessment.
-4. NEVER give a definitive diagnosis — always use cautious language: "may indicate", "appears to", "could be", "seems like", "olabilir", "görünüyor".
+1. ALWAYS provide at least 1–2 observations. Never return an empty insights array.
+2. If image quality is poor, you MAY note it with: "Görüntü kalitesi sınırlı, bu nedenle değerlendirme kısıtlıdır" — but you MUST still include at least 1 cautious observation about what you can see.
+3. NEVER fabricate details you cannot see. Prefer honest uncertainty over hallucination.
+4. NEVER give a definitive diagnosis — always use cautious language: "may indicate", "appears to", "could be", "olabilir", "görünüyor".
 5. NEVER guarantee treatment outcomes.
 6. ONLY describe conditions that are visually observable.
 7. Write insights in natural, friendly Turkish — avoid clinical jargon.
-8. If teeth are barely visible, describe tooth shape, color range, or gum line — do not refuse.
 
 FORBIDDEN OUTPUT (will be rejected):
-• "cannot analyze"  • "image unclear"  • "unable to determine"
-• "görüntü net değil"  • "analiz edilemez"  • empty insights array
-• single vague insight with no specifics`,
+• Completely empty insights array
+• Insights that are pure refusals with zero observations (e.g. "I cannot analyze this image" with nothing else)
+• Made-up specific details not visible in the image`,
 
     user: `Photo type: ${ctx.label}
 Focus area: ${ctx.focus}
 
 Carefully examine this dental image and return ONLY valid JSON — no markdown, no extra text:
 {
-  "insights": ["specific observation 1 in Turkish", "specific observation 2 in Turkish"],
+  "insights": ["observation 1 in Turkish", "observation 2 in Turkish"],
   "confidence": "low" | "medium" | "high",
   "summary": "1-sentence overall assessment in Turkish",
   "recommendation": "1 concrete next step for the patient in Turkish"
 }
 
 RULES:
-- insights: MINIMUM 2 items, MAXIMUM 3 items. Each must be 1 sentence. Use cautious language ("görünüyor", "olabilir").
+- insights: 1–3 items. Each must be 1 sentence. Use cautious language ("görünüyor", "olabilir").
+- If image is blurry/dark: start with "Görüntü kalitesi sınırlı, bu nedenle değerlendirme kısıtlıdır", then add 1–2 observations about what IS visible (e.g. rough tooth outline, visible gum line, general color).
 - Inspect specifically: tooth alignment, color/staining (decay risk), gum condition, missing/broken teeth, calculus buildup.
 - confidence: "low" = blurry/dark image | "medium" = partially visible | "high" = clear and well-lit.
-- summary: neutral 1 sentence, summarises what you observed.
-- recommendation: short, polite, directs patient to a dentist. Example: "Ön dişlerdeki renk değişikliği için bir diş hekimiyle görüşmenizi öneririz."
-- Even if image quality is poor, ALWAYS fill insights with your best observations. Never leave it empty.`,
+- summary: neutral 1 sentence. If quality was poor, reflect that honestly.
+- recommendation: short, polite, directs patient to a dentist or to retake the photo if unusable.`,
   };
 }
 
