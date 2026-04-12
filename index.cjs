@@ -15094,6 +15094,90 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
   }
 });
 
+// ─── Google Maps Coordinate Extraction ───────────────────────────────────────
+
+/**
+ * Extracts { latitude, longitude } from a Google Maps URL.
+ * Returns null if no coords are found.
+ *
+ * Supported patterns (in priority order):
+ *  1. /@lat,lng  — standard place/directions URLs
+ *  2. !3dlat!4dlng — embed/data fragment
+ *  3. ?q=lat,lng  — simple query with coords
+ *  4. ?ll=lat,lng — legacy ll param
+ *  5. ?q=loc:lat,lng — loc: prefix variant
+ */
+function parseGoogleMapsCoords(url) {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    // 1. /@lat,lng[,zoom]
+    let m = url.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+    if (m) return { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) };
+
+    // 2. !3dlat!4dlng  (embed URLs)
+    m = url.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+    if (m) return { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) };
+
+    // Parse query string for remaining patterns
+    const qs = url.includes('?') ? new URL(url).searchParams : null;
+
+    // 3. ?q=lat,lng  or  ?q=lat,+lng
+    const q = qs?.get('q') || '';
+    m = q.replace(/\s/g, '').match(/^(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)$/);
+    if (m) return { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) };
+
+    // 4. ?q=loc:lat,lng
+    m = q.match(/loc:(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/i);
+    if (m) return { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) };
+
+    // 5. ?ll=lat,lng
+    const ll = qs?.get('ll') || '';
+    m = ll.match(/^(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+    if (m) return { latitude: parseFloat(m[1]), longitude: parseFloat(m[2]) };
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Geocodes an address using Google Geocoding API.
+ * Returns { latitude, longitude } or null if unavailable / no API key.
+ * Only called when parseGoogleMapsCoords() returns null.
+ */
+async function geocodeAddressWithGoogle(address, apiKey) {
+  if (!address || !apiKey) return null;
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
+    const res  = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const loc  = data?.results?.[0]?.geometry?.location;
+    if (!loc) return null;
+    return { latitude: loc.lat, longitude: loc.lng };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Master resolver: parse URL first, fall back to geocoding address.
+ * Always parse-once-on-save — never call at runtime per request.
+ * Returns { latitude, longitude } or null.
+ */
+async function resolveClinicCoords(googleMapsUrl, address) {
+  const fromUrl = parseGoogleMapsCoords(googleMapsUrl);
+  if (fromUrl) return fromUrl;
+
+  const geocodeKey = process.env.GOOGLE_GEOCODING_API_KEY;
+  if (geocodeKey && address) {
+    const fromGeocode = await geocodeAddressWithGoogle(address, geocodeKey);
+    if (fromGeocode) return fromGeocode;
+  }
+  return null;
+}
+
 // ─── AI Clinic Recommendation Helpers ────────────────────────────────────────
 
 /**
@@ -16862,8 +16946,23 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         
         // 🔒 UPDATE sırasında unique alanları koru
         delete supabaseUpdate.clinic_code;
-        
 
+        // ── Resolve lat/lng from Google Maps URL (parse-once-on-save) ──────
+        const incomingMapsUrl = updated.googleMapsUrl || '';
+        const existingMapsUrl = (req.clinic?.googleMapsUrl || req.clinic?.settings?.googleMapsUrl || '');
+        const mapsUrlChanged  = incomingMapsUrl && incomingMapsUrl !== existingMapsUrl;
+
+        if (mapsUrlChanged) {
+          const coords = await resolveClinicCoords(incomingMapsUrl, updated.address || '');
+          if (coords) {
+            supabaseUpdate.latitude  = coords.latitude;
+            supabaseUpdate.longitude = coords.longitude;
+            console.log(`[clinic update] coords resolved: ${coords.latitude}, ${coords.longitude}`);
+          } else if (incomingMapsUrl) {
+            // URL was provided but no coords extractable — warn but don't block save
+            console.warn(`[clinic update] could not extract coords from maps URL: ${incomingMapsUrl}`);
+          }
+        }
         
         const { data, error } = await supabase
           .from("clinics")
@@ -22067,7 +22166,7 @@ app.patch("/api/super-admin/clinics/:clinicId/contact", superAdminGuard, async (
       return res.status(400).json({ ok: false, error: "clinic_id_required" });
     }
 
-    const allowed = ["contact_name","city","country","phone","email","notes","crm_status","last_contact_at"];
+    const allowed = ["contact_name","city","country","phone","email","notes","crm_status","last_contact_at","google_maps_url","latitude","longitude"];
     const body = req.body || {};
     const patch = {};
     for (const key of allowed) {
@@ -22080,7 +22179,19 @@ app.patch("/api/super-admin/clinics/:clinicId/contact", superAdminGuard, async (
     }
     patch.updated_at = new Date().toISOString();
 
-    if (Object.keys(patch).length === 0) {
+    // ── Resolve coords from google_maps_url if provided ─────────────────
+    if (patch.google_maps_url) {
+      const coords = await resolveClinicCoords(patch.google_maps_url, patch.city || '');
+      if (coords) {
+        patch.latitude  = coords.latitude;
+        patch.longitude = coords.longitude;
+        console.log(`[super-admin CRM] coords resolved: ${coords.latitude}, ${coords.longitude}`);
+      } else {
+        console.warn(`[super-admin CRM] could not extract coords from: ${patch.google_maps_url}`);
+      }
+    }
+
+    if (Object.keys(patch).length <= 1) { // only updated_at
       return res.status(400).json({ ok: false, error: "no_fields_provided" });
     }
 
