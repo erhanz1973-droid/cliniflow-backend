@@ -15096,55 +15096,109 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 
 // ─── AI Dental Analysis Helpers ──────────────────────────────────────────────
 
+/** Safe fallback returned whenever AI output is invalid or unrecoverable. */
+const DENTAL_AI_FALLBACK = {
+  insights:       ['Görüntü analiz edilemedi, lütfen tekrar deneyin.'],
+  confidence:     'low',
+  summary:        'Net bir değerlendirme yapılamadı.',
+  recommendation: 'Farklı açılardan fotoğraf ekleyebilir veya diş hekiminize danışabilirsiniz.',
+};
+
 /**
- * Returns the system prompt for dental photo analysis.
- * photoType: 'general' | 'intraoral' — allows context-aware wording.
+ * Per-photoType analysis focus and context hints.
+ * photoType: 'front' | 'left' | 'right' | 'upper' | 'lower' | 'general'
+ */
+const PHOTO_TYPE_CONTEXT = {
+  front: {
+    label:   'Ön görünüm (front)',
+    focus:   'Özellikle ön dişlerdeki dizilim sorunlarına, renk değişikliklerine ve diş eti çekilmesine odaklan.',
+  },
+  left: {
+    label:   'Sol yan görünüm (left)',
+    focus:   'Sol taraftaki dişlerdeki çürük belirtileri, eksik diş ve ısırma düzlemine odaklan.',
+  },
+  right: {
+    label:   'Sağ yan görünüm (right)',
+    focus:   'Sağ taraftaki dişlerdeki çürük belirtileri, eksik diş ve ısırma düzlemine odaklan.',
+  },
+  upper: {
+    label:   'Üst çene (upper)',
+    focus:   'Üst dişlerdeki çürük lekeleri, diş eti durumu ve genel hijyene odaklan.',
+  },
+  lower: {
+    label:   'Alt çene (lower)',
+    focus:   'Alt dişlerdeki çürük lekeleri, diş taşı birikimi ve diş eti sağlığına odaklan.',
+  },
+  general: {
+    label:   'Genel ağız görünümü',
+    focus:   'Olası çürük, eksik diş, dizilim sorunu ve dişeti durumuna eşit ağırlıkla odaklan.',
+  },
+};
+
+/**
+ * Generates a production-ready system+user prompt for dental photo analysis.
+ * @param {string} photoType  'front' | 'left' | 'right' | 'upper' | 'lower' | 'general'
  */
 function generateDentalAnalysisPrompt(photoType = 'general') {
-  const context = photoType === 'intraoral'
-    ? 'Bu bir ağız içi (intraoral) fotoğraftır. Diş ve dişeti durumuna odaklan.'
-    : 'Bu bir ağız/diş fotoğrafıdır.';
+  const ctx = PHOTO_TYPE_CONTEXT[photoType] || PHOTO_TYPE_CONTEXT.general;
 
-  return `${context}
-Görünür durumları dikkatle analiz et. Yanıtı YALNIZCA aşağıdaki JSON formatında ver, başka metin ekleme:
+  // System role sets hard safety rules; user role provides the task + output spec.
+  return {
+    system: `Sen yardımcı bir diş sağlığı AI asistanısın.
+Görevin: Diş fotoğraflarını analiz edip kullanıcıya anlaşılır, samimi ve GÜVENLİ geri bildirim vermek.
+
+ZORUNLU KURALLAR (ihlal edilemez):
+1. KESİN tıbbi teşhis KOYMA — "X hastalığınız var" gibi ifadeler YASAK
+2. HER ZAMAN yumuşatıcı dil kullan: "olabilir", "görünüyor", "gibi görünüyor", "olası"
+3. Tedavi garantisi VERME
+4. Yalnızca görüntüde görünür olan unsurları değerlendir
+5. Basit, teknik olmayan, samimi Türkçe kullan`,
+
+    user: `Fotoğraf türü: ${ctx.label}
+Analiz odağı: ${ctx.focus}
+
+Fotoğrafı dikkatle incele ve yanıtı YALNIZCA aşağıdaki JSON formatında ver. Başka hiçbir metin ekleme:
 {
-  "insights": ["gözlem 1", "gözlem 2", "gözlem 3"],
-  "confidence": "low",
-  "summary": "Genel değerlendirme (1 cümle)",
-  "recommendation": "Hastanın yapması gereken bir sonraki adım"
+  "insights": ["gözlem 1", "gözlem 2"],
+  "confidence": "medium",
+  "summary": "1 cümlelik genel değerlendirme",
+  "recommendation": "Kullanıcının yapması gereken somut bir sonraki adım"
 }
+
 Kurallar:
-- "olabilir", "görünüyor", "olası", "gibi görünüyor" gibi yumuşatıcı ifadeler kullan
-- KESİN tıbbi teşhis YAPMA, garantili ifade KULLANMA
-- insights: en fazla 3 madde, her biri en fazla 1 cümle
-- Şunlara odaklan: olası çürük, eksik diş, dizilim sorunu, dişeti durumu
-- confidence: görüntü belirsizse "low", sorunlar net görünüyorsa "high", diğerleri "medium"
-- recommendation: diş hekimine başvurmayı öner, kısa ve samimi
-- Basit, samimi, teknik olmayan Türkçe kullan`;
+- insights: en fazla 3 madde, her biri en fazla 1 cümle, yumuşatıcı dil zorunlu
+- confidence: görüntü bulanık/karanlıksa "low" | kısmen görünüyorsa "medium" | net ve iyi ışıklıysa "high"
+- summary: tarafsız, 1 cümle, ne olduğunu özetler
+- recommendation: "Diş hekimine danışın" gibi kısa ve nazik, kliniğe yönlendirici bir öneri`,
+  };
 }
 
 /**
- * Calls OpenAI Vision and returns structured dental analysis.
- * Throws on HTTP error (caller handles timeout via AbortSignal).
+ * Calls OpenAI Vision with a two-role prompt and returns validated dental analysis.
+ * Never throws on parse/validation failure — returns DENTAL_AI_FALLBACK instead.
+ * Still throws on HTTP / network errors so the caller can return 502/504.
  */
 async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, timeoutMs = 30000 } = {}) {
-  const prompt = generateDentalAnalysisPrompt(photoType);
+  const { system, user } = generateDentalAnalysisPrompt(photoType);
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type':  'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: 'gpt-4o',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
-        ],
-      }],
+      messages: [
+        { role: 'system', content: system },
+        {
+          role: 'user',
+          content: [
+            { type: 'text',      text: user },
+            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
+          ],
+        },
+      ],
       max_tokens: 500,
       response_format: { type: 'json_object' },
     }),
@@ -15162,20 +15216,32 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 
   const data    = await res.json();
   const content = data.choices?.[0]?.message?.content || '{}';
-  let parsed = {};
-  try { parsed = JSON.parse(content); } catch { /* malformed — use defaults */ }
 
-  const insights = Array.isArray(parsed.insights)
+  // ── Parse + validate ────────────────────────────────────────────────
+  let parsed = {};
+  try { parsed = JSON.parse(content); } catch { /* fall through to fallback */ }
+
+  const rawInsights = Array.isArray(parsed.insights)
     ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
     : [];
+  const validConf   = ['low', 'medium', 'high'].includes(parsed.confidence);
+  const rawSummary  = String(parsed.summary        || '').trim();
+  const rawRec      = String(parsed.recommendation || '').trim();
+
+  // ── Safety validation: if critical fields missing, use fallback ─────
+  const isValid = rawInsights.length > 0 && validConf && rawSummary && rawRec;
+  if (!isValid) {
+    return { ...DENTAL_AI_FALLBACK, _usage: data.usage, _model: data.model || 'gpt-4o', _fallback: true };
+  }
 
   return {
-    insights:       insights.length > 0 ? insights : ['Fotoğraf başarıyla analiz edildi.'],
-    confidence:     ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
-    summary:        String(parsed.summary        || '').trim(),
-    recommendation: String(parsed.recommendation || '').trim(),
-    _usage: data.usage,
-    _model: data.model || 'gpt-4o',
+    insights:       rawInsights,
+    confidence:     parsed.confidence,
+    summary:        rawSummary,
+    recommendation: rawRec,
+    _usage:    data.usage,
+    _model:    data.model || 'gpt-4o',
+    _fallback: false,
   };
 }
 
@@ -15266,13 +15332,15 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
 
     logAI('info', 'openai_response', {
       patientId,
-      insightCount:    insights.length,
+      photoType,
+      insightCount:      insights.length,
       confidence,
-      hasSummary:      !!summary,
+      hasSummary:        !!summary,
       hasRecommendation: !!recommendation,
-      model:           _model,
-      promptTokens:    _usage?.prompt_tokens,
-      completionTokens: _usage?.completion_tokens,
+      fallback:          aiAnalysis._fallback,
+      model:             _model,
+      promptTokens:      _usage?.prompt_tokens,
+      completionTokens:  _usage?.completion_tokens,
       elapsedMs: Date.now() - _t0,
     });
 
