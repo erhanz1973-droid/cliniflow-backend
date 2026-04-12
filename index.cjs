@@ -16014,24 +16014,32 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     throw new Error('Still using signed URL!');
   }
 
-  // ── Step 2: run all 3 predictions in parallel ───────────────────────
-  const results = await Promise.allSettled(
-    SIM_VARIATIONS.map(v => replicatePrediction(replicateImageUrl, v, token))
-  );
+  // ── Step 2: run variations SEQUENTIALLY with 2 s gap ───────────────
+  // Parallel calls immediately hit the free-tier burst limit (1 req/min).
+  // Sequential with a small delay stays within limits even without billing.
+  const variations  = [];
+  const failReasons = [];
 
-  const variations = SIM_VARIATIONS
-    .map((v, i) => {
-      const r = results[i].status === 'fulfilled' ? results[i].value : { url: null, failReason: 'rejected' };
-      return { id: v.id, label: v.label, url: r?.url ?? null, failReason: r?.failReason ?? null };
-    })
-    .filter(v => v.url);
+  for (const v of SIM_VARIATIONS) {
+    const r = await replicatePrediction(replicateImageUrl, v, token);
 
-  const failReasons = SIM_VARIATIONS
-    .map((v, i) => {
-      const r = results[i].status === 'fulfilled' ? results[i].value : { failReason: 'rejected' };
-      return r?.failReason ? `${v.id}: ${r.failReason}` : null;
-    })
-    .filter(Boolean);
+    if (r.url) {
+      variations.push({ id: v.id, label: v.label, url: r.url });
+    } else {
+      failReasons.push(`${v.id}: ${r.failReason}`);
+      // Billing errors (402) → no point running more; surface immediately
+      if (r.failReason?.includes('402')) {
+        console.error('[SIM] Replicate billing required (HTTP 402) — stopping early');
+        failReasons.push('...remaining variations skipped: add payment method at replicate.com/account/billing');
+        break;
+      }
+      // Rate-limited (429) → wait before next attempt
+      if (r.failReason?.includes('429')) {
+        console.warn('[SIM] Rate limited (429) — waiting 12 s before next variation');
+        await new Promise(r => setTimeout(r, 12_000));
+      }
+    }
+  }
 
   const succeeded = variations.length;
   console.log(`[SIM] Done: ${succeeded}/3 variations succeeded`);
@@ -16039,15 +16047,17 @@ async function runSmileSimulation({ imageUrl, patientId }) {
 
   // ── Step 3: fallback to original image so the UI is never empty ────
   if (!succeeded) {
-    console.warn('[SIM] All variations failed — returning original image as fallback');
-    logAI('warn', 'sim_all_failed_fallback', { patientId });
+    const billingRequired = failReasons.some(r => r.includes('402'));
+    console.warn('[SIM] All variations failed | billingRequired:', billingRequired);
+    logAI('warn', 'sim_all_failed_fallback', { patientId, billingRequired });
     return {
-      variations:  [{ id: 'original', label: 'Fotoğrafınız', url: imageUrl }],
-      url:         imageUrl,
-      provider:    'fallback',
-      error:       null,
-      fallback:    true,
-      debugInfo:   failReasons,   // ← visible in frontend logs
+      variations:      [{ id: 'original', label: 'Fotoğrafınız', url: imageUrl }],
+      url:             imageUrl,
+      provider:        'fallback',
+      error:           billingRequired ? 'billing_required' : null,
+      fallback:        true,
+      billingRequired,
+      debugInfo:       failReasons,
     };
   }
 
@@ -16070,7 +16080,7 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   }
 
   try {
-    const { variations, url, provider, error: simErr, fallback, debugInfo } = await runSmileSimulation({
+    const { variations, url, provider, error: simErr, fallback, debugInfo, billingRequired } = await runSmileSimulation({
       imageUrl,
       patientId,
     });
@@ -16092,7 +16102,8 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       simulationProvider: provider,
       variations,
       fallback:           fallback ?? false,
-      debugInfo:          debugInfo ?? [],   // ← app logs show exact Replicate error
+      billingRequired:    billingRequired ?? false,
+      debugInfo:          debugInfo ?? [],
     });
   } catch (err) {
     console.error('[SMILE SIM ENDPOINT ERROR]:', err?.message, err?.stack);
