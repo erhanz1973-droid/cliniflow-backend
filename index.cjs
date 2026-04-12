@@ -15801,107 +15801,116 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Smile Simulation — Replicate SDXL img2img ───────────────────────────────
-// Model: stability-ai/sdxl img2img (ac732df8...)
-// Input: image URL + dental enhancement prompt + strength 0.35
-// Auth:  "Token <token>"  (Replicate's required format)
-// Flow:  create → sleep 1 s → poll × 12 → return output[0]
-//
-// @param {string} imageUrl   Supabase signed URL of the patient photo
-// @param {string} patientId  for logging
-// @returns {{ url: string|null, provider: string|null, error: string|null }}
-async function runSmileSimulation({ imageUrl, patientId }) {
-  const token = process.env.REPLICATE_API_TOKEN;
+// ─── Smile Simulation — 3 variations via Replicate stable-diffusion-img2img ──
+// Model : stability-ai/stable-diffusion-img2img (ddd4eb44, confirmed working)
+// Flow  : create 3 predictions in parallel → poll each → return all results
+// Auth  : "Token <token>"  (Replicate's required format)
 
-  if (!token) {
-    console.warn('[SIM] Missing REPLICATE_API_TOKEN');
-    return { url: null, provider: null, error: 'no_providers_configured' };
-  }
+const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
+const SIM_NEGATIVE = 'blurry, fake teeth, extra teeth, distorted face, cartoon, unrealistic';
 
-  console.log('[SIM] Starting Replicate img2img for patientId:', patientId);
+const SIM_VARIATIONS = [
+  {
+    id:              'natural',
+    label:           'Doğal',
+    prompt:          'natural healthy teeth, slight whitening, minimal correction, realistic smile, keep face unchanged, photorealistic',
+    prompt_strength: 0.45,
+  },
+  {
+    id:              'balanced',
+    label:           'Önerilen',
+    prompt:          'perfect white aligned natural teeth, dental aesthetic, realistic smile, keep face unchanged, only improve teeth, photorealistic',
+    prompt_strength: 0.6,
+  },
+  {
+    id:              'hollywood',
+    label:           'Hollywood',
+    prompt:          'ultra white perfect teeth, cosmetic dentistry, hollywood smile, perfectly aligned, keep face unchanged, photorealistic',
+    prompt_strength: 0.75,
+  },
+];
 
-  // ── Step 1: Create prediction ──────────────────────────────────────
-  let createData;
+/** Creates one Replicate prediction and polls to completion. Returns output URL or null. */
+async function replicatePrediction(imageUrl, { prompt, prompt_strength }, token) {
+  // Create
+  let predId;
   try {
-    // stability-ai/stable-diffusion-img2img — confirmed working on Replicate.
-    // Version: ddd4eb44 (latest as of 2025).
-    // Docs: https://replicate.com/stability-ai/stable-diffusion-img2img/api
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${token}`,
-        'Content-Type':  'application/json',
-      },
+    const res  = await fetch('https://api.replicate.com/v1/predictions', {
+      method:  'POST',
+      headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        version: 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7',
-        input: {
-          image:               imageUrl,
-          prompt:              'A realistic improved dental smile, natural teeth whitening, slightly straighter teeth, same face, same lighting, not artificial',
-          prompt_strength:     0.35,
-          num_inference_steps: 30,
-        },
+        version: SIM_VERSION,
+        input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 },
       }),
       signal: AbortSignal.timeout(10_000),
     });
-
-    createData = await createRes.json();
-    console.log('[SIM] Create status:', createRes.status, '| id:', createData?.id);
-
-    if (!createRes.ok || !createData?.id) {
-      const err = `replicate_create_${createRes.status}: ${createData?.detail ?? createData?.error ?? ''}`;
-      console.error('[SIM] Create failed:', err);
-      return { url: null, provider: null, error: err };
+    const data = await res.json();
+    if (!res.ok || !data?.id) {
+      console.warn('[SIM] Create failed:', res.status, data?.detail ?? data?.error);
+      return null;
     }
+    predId = data.id;
+    console.log('[SIM] Created:', predId.slice(0, 8), '| strength:', prompt_strength);
   } catch (e) {
-    const err = `replicate_create_exception: ${e?.message}`;
-    console.error('[SIM] Create exception:', e?.message);
-    return { url: null, provider: null, error: err };
+    console.warn('[SIM] Create exception:', e?.message);
+    return null;
   }
 
-  const predictionId = createData.id;
-
-  // ── Step 2: Poll every 1 s, up to 12 attempts ─────────────────────
+  // Poll
   for (let i = 0; i < 12; i++) {
-    await new Promise(r => setTimeout(r, 1000)); // sleep first, then check
-
-    let pollData;
+    await new Promise(r => setTimeout(r, 1000));
     try {
-      const pollRes = await fetch(
-        `https://api.replicate.com/v1/predictions/${predictionId}`,
-        {
-          headers: { 'Authorization': `Token ${token}` },
-          signal:  AbortSignal.timeout(8_000),
-        }
-      );
-      pollData = await pollRes.json();
-    } catch (e) {
-      console.warn(`[SIM] Poll ${i + 1} network error:`, e?.message);
-      continue;
-    }
-
-    console.log(`[SIM POLL] ${i + 1}/12: status=${pollData.status}`);
-
-    if (pollData.status === 'succeeded') {
-      const url = pollData.output?.[0] ?? null;
-      if (url) {
-        console.log('[SIM] Succeeded:', url.slice(0, 80));
-        logAI('info', 'replicate_success', { patientId, polls: i + 1 });
-        return { url, provider: 'replicate', error: null };
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+        headers: { 'Authorization': `Token ${token}` },
+        signal:  AbortSignal.timeout(8_000),
+      });
+      const pd = await pollRes.json();
+      console.log(`[SIM POLL] ${predId.slice(0, 8)} ${i + 1}/12: ${pd.status}`);
+      if (pd.status === 'succeeded')                              return pd.output?.[0] ?? null;
+      if (pd.status === 'failed' || pd.status === 'canceled') {
+        console.warn('[SIM] Prediction', pd.status, pd.error);   return null;
       }
-      console.warn('[SIM] Succeeded but output empty:', pollData.output);
-      return { url: null, provider: null, error: 'replicate_succeeded_empty_output' };
-    }
-
-    if (pollData.status === 'failed' || pollData.status === 'canceled') {
-      const err = `replicate_${pollData.status}: ${pollData.error ?? ''}`;
-      console.warn('[SIM] Prediction', pollData.status, ':', pollData.error);
-      return { url: null, provider: null, error: err };
-    }
-    // 'starting' | 'processing' → continue polling
+    } catch (e) { console.warn(`[SIM] Poll ${i + 1} error:`, e?.message); }
   }
+  console.warn('[SIM] Timeout for predId:', predId);
+  return null;
+}
 
-  console.warn('[SIM] Timeout — 12 polls exhausted, predId:', predictionId);
-  return { url: null, provider: null, error: 'replicate_timeout' };
+/**
+ * Runs all 3 smile variations in parallel.
+ * Returns { variations, url, provider, error }
+ * `url` = Balanced URL (backward-compat with single-URL callers).
+ */
+async function runSmileSimulation({ imageUrl, patientId }) {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) {
+    console.error('[SIM] REPLICATE_API_TOKEN not set');
+    return { variations: [], url: null, provider: null, error: 'no_providers_configured' };
+  }
+  console.log('[SIM] 3 variations in parallel for patientId:', patientId);
+
+  const results = await Promise.allSettled(
+    SIM_VARIATIONS.map(v => replicatePrediction(imageUrl, v, token))
+  );
+
+  const variations = SIM_VARIATIONS
+    .map((v, i) => ({
+      id:    v.id,
+      label: v.label,
+      url:   results[i].status === 'fulfilled' ? (results[i].value ?? null) : null,
+    }))
+    .filter(v => v.url);
+
+  const succeeded = variations.length;
+  console.log(`[SIM] Done: ${succeeded}/3 variations`);
+
+  if (!succeeded) {
+    return { variations: [], url: null, provider: null, error: 'all_variations_failed' };
+  }
+  logAI('info', 'sim_variations_done', { patientId, succeeded });
+
+  const primary = variations.find(v => v.id === 'balanced') ?? variations[0];
+  return { variations, url: primary.url, provider: 'replicate', error: null };
 }
 
 // POST /api/chat/smile-simulation
@@ -15918,24 +15927,24 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   }
 
   try {
-    const { url, provider, error: simErr } = await runSmileSimulation({
+    const { variations, url, provider, error: simErr } = await runSmileSimulation({
       imageUrl,
       patientId,
-      timeoutMs: 28_000,
     });
 
     if (!url) {
-      // Return ok:false so the frontend can surface the real reason
       return res.status(503).json({
-        ok: false,
-        error: simErr ?? 'no_image_produced',
+        ok:      false,
+        error:   simErr ?? 'no_image_produced',
         message: simErr === 'no_providers_configured'
-          ? 'Smile simulation is not configured. Set REPLICATE_API_TOKEN on Render.'
-          : 'Smile simulation did not produce an image. Check server logs.',
+          ? 'Set REPLICATE_API_TOKEN on Render.'
+          : 'Smile simulation produced no images. Check server logs.',
       });
     }
 
-    return res.json({ ok: true, simulatedImageUrl: url, simulationProvider: provider });
+    // variations: [{id, label, url}] — frontend uses for 3-tab selector
+    // simulatedImageUrl: backward-compat (Balanced URL)
+    return res.json({ ok: true, simulatedImageUrl: url, simulationProvider: provider, variations });
   } catch (err) {
     console.error('[SMILE SIM ENDPOINT ERROR]:', err?.message, err?.stack);
     return res.status(500).json({ ok: false, error: 'simulation_failed', message: err?.message });
