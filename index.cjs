@@ -15950,57 +15950,102 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       elapsedMs: Date.now() - _t0,
     });
 
-    // ── Optional: Replicate GFPGAN — image enhancement ────────────────
+    // ── Optional: Gemini — smile simulation (before → after) ──────────
     let simulatedImageUrl = null;
-    const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
-    if (ENABLE_SMILE_SIMULATION && REPLICATE_TOKEN) {
-      const repTimeout   = Math.min(AI_TIMEOUT_MS, 12000);   // create call capped at 12 s
-      const pollDeadline = Date.now() + Math.min(AI_TIMEOUT_MS, 28000);
+    if (ENABLE_SMILE_SIMULATION && GEMINI_KEY && imageDataUrl) {
+      const geminiTimeoutMs = Math.min(AI_TIMEOUT_MS, 25_000);
 
       try {
-        const repRes = await fetch('https://api.replicate.com/v1/predictions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-          },
-          body: JSON.stringify({
-            version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
-            input: {
-              img:     imageDataUrl,
-              scale:   2,
-              version: 'v1.4',
-            },
-          }),
-          signal: AbortSignal.timeout(repTimeout),
-        });
+        // Build the image-editing prompt — insights make it targeted
+        const insightHints = insights.length > 0
+          ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
+          : '';
 
-        if (repRes.ok) {
-          const repData = await repRes.json();
-          const predId  = repData.id;
-          if (predId) {
-            while (Date.now() < pollDeadline) {
-              await new Promise(r => setTimeout(r, 2500));
-              const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-                signal: AbortSignal.timeout(5000),
-              });
-              if (!poll.ok) break;
-              const pd = await poll.json();
-              if (pd.status === 'succeeded') {
-                simulatedImageUrl = Array.isArray(pd.output) ? pd.output[0] : pd.output;
-                break;
+        const smilePrompt =
+          `Enhance this dental photo to simulate a natural, healthy smile.\n\n` +
+          `Improve:\n` +
+          `- Tooth alignment (slightly straighter)\n` +
+          `- Tooth color (natural whitening, not artificial)\n` +
+          `- Remove visible stains or minor decay marks\n` +
+          `- Keep realistic proportions and lighting\n\n` +
+          `IMPORTANT:\n` +
+          `- Do NOT create a perfect Hollywood smile\n` +
+          `- Keep it subtle and believable\n` +
+          `- Preserve facial structure and identity\n` +
+          `- Make minimal, realistic improvements only` +
+          insightHints;
+
+        // Split data URL → mime + raw base64
+        const [dataHeader, base64Raw] = imageDataUrl.split(',');
+        const inputMime = dataHeader.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: smilePrompt },
+                  { inline_data: { mime_type: inputMime, data: base64Raw } },
+                ],
+              }],
+              generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+            }),
+            signal: AbortSignal.timeout(geminiTimeoutMs),
+          }
+        );
+
+        if (!geminiRes.ok) {
+          const errBody = await geminiRes.json().catch(() => ({}));
+          logAI('warn', 'gemini_http_error', { patientId, status: geminiRes.status, message: errBody?.error?.message });
+        } else {
+          const geminiData = await geminiRes.json();
+          const parts = geminiData?.candidates?.[0]?.content?.parts || [];
+          const imgPart = parts.find(p => p.inline_data?.data);
+
+          if (imgPart?.inline_data?.data) {
+            // Upload the generated image to Supabase Storage
+            const simBuffer  = Buffer.from(imgPart.inline_data.data, 'base64');
+            const simMime    = imgPart.inline_data.mime_type || 'image/jpeg';
+            const simExt     = simMime.includes('png') ? 'png' : 'jpg';
+            const simPath    = `ai-simulations/${patientId}/${Date.now()}-sim.${simExt}`;
+
+            if (isSupabaseEnabled()) {
+              const { error: simUploadErr } = await supabase.storage
+                .from('patient-files')
+                .upload(simPath, simBuffer, { contentType: simMime, upsert: false });
+
+              if (!simUploadErr) {
+                const { data: simSigned } = await supabase.storage
+                  .from('patient-files')
+                  .createSignedUrl(simPath, 365 * 24 * 3600); // 1-year URL
+                simulatedImageUrl = simSigned?.signedUrl || null;
+              } else {
+                logAI('warn', 'gemini_sim_upload_failed', { patientId, message: simUploadErr.message });
               }
-              if (pd.status === 'failed' || pd.status === 'canceled') break;
+            } else {
+              // Fallback for local dev: return as data URL (not for production)
+              simulatedImageUrl = `data:${simMime};base64,${imgPart.inline_data.data}`;
             }
+
+            if (simulatedImageUrl) {
+              logAI('info', 'gemini_simulation_success', {
+                patientId,
+                simPath,
+                simSizeKB: Math.round(simBuffer.length / 1024),
+                elapsedMs: Date.now() - _t0,
+              });
+            }
+          } else {
+            logAI('warn', 'gemini_no_image_in_response', { patientId, parts: parts.map(p => Object.keys(p)) });
           }
         }
-      } catch (repErr) {
-        logAI('warn', 'replicate_error', { patientId, message: repErr?.message });
-      }
-      if (simulatedImageUrl) {
-        logAI('info', 'replicate_success', { patientId, simulatedImageUrl, elapsedMs: Date.now() - _t0 });
+      } catch (geminiErr) {
+        logAI('warn', 'gemini_error', { patientId, message: geminiErr?.message });
       }
     }
 
