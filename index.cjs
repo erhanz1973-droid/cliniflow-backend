@@ -15801,127 +15801,112 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Smile Simulation — Replicate GFPGAN only ────────────────────────────────
-// Uses GFPGAN v1.4 (image-to-image face/tooth restoration).
-// Gemini removed: unreliable image output, frequent 404s on model changes.
+// ─── Smile Simulation — Replicate SDXL img2img ───────────────────────────────
+// Model: stability-ai/sdxl img2img (ac732df8...)
+// Input: image URL + dental enhancement prompt + strength 0.35
+// Auth:  "Token <token>"  (Replicate's required format)
+// Flow:  create → sleep 1 s → poll × 12 → return output[0]
 //
-// @param {string} imageUrl   remote URL of the patient photo (Supabase signed URL)
+// @param {string} imageUrl   Supabase signed URL of the patient photo
 // @param {string} patientId  for logging
-// @param {number} timeoutMs  total budget (create + polling)
 // @returns {{ url: string|null, provider: string|null, error: string|null }}
-async function runSmileSimulation({ imageUrl, patientId, timeoutMs = 25_000 }) {
-  const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
+async function runSmileSimulation({ imageUrl, patientId }) {
+  const token = process.env.REPLICATE_API_TOKEN;
 
-  if (!REPLICATE_TOKEN) {
-    console.error('[SIM] REPLICATE_API_TOKEN not set');
+  if (!token) {
+    console.warn('[SIM] Missing REPLICATE_API_TOKEN');
     return { url: null, provider: null, error: 'no_providers_configured' };
   }
 
-  console.log('[SIM] Starting Replicate GFPGAN for patientId:', patientId);
+  console.log('[SIM] Starting Replicate img2img for patientId:', patientId);
 
-  let url       = null;
-  let lastError = null;
-
+  // ── Step 1: Create prediction ──────────────────────────────────────
+  let createData;
   try {
-    // ── Step 1: Create prediction ────────────────────────────────────
-    const repRes = await fetch('https://api.replicate.com/v1/predictions', {
+    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
+        'Authorization': `Token ${token}`,
         'Content-Type':  'application/json',
-        'Authorization': `Bearer ${REPLICATE_TOKEN}`,
       },
       body: JSON.stringify({
-        version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
-        input: { img: imageUrl, scale: 2, version: 'v1.4' },
+        version: 'ac732df83cea7fff1a1a1e0bcb0b9c1e5d295df1c548d652e1bdf4cf0a1d57e4',
+        input: {
+          image:    imageUrl,
+          prompt:   [
+            'A realistic improved dental smile.',
+            'slightly straighten teeth',
+            'natural whitening (NOT bright white)',
+            'remove visible stains',
+            'keep same face, same lighting',
+            'do NOT change identity',
+            'do NOT create perfect Hollywood smile',
+            'keep result subtle and believable',
+          ].join('\n'),
+          strength: 0.35,
+        },
       }),
       signal: AbortSignal.timeout(10_000),
     });
 
-    console.log('[REPLICATE] Create status:', repRes.status);
+    createData = await createRes.json();
+    console.log('[SIM] Create status:', createRes.status, '| id:', createData?.id);
 
-    if (!repRes.ok) {
-      const body = await repRes.json().catch(() => ({}));
-      lastError  = `replicate_create_${repRes.status}: ${body?.detail ?? body?.error ?? ''}`;
-      console.error('[REPLICATE] Create failed:', lastError);
-      return { url: null, provider: null, error: lastError };
+    if (!createRes.ok || !createData?.id) {
+      const err = `replicate_create_${createRes.status}: ${createData?.detail ?? createData?.error ?? ''}`;
+      console.error('[SIM] Create failed:', err);
+      return { url: null, provider: null, error: err };
     }
+  } catch (e) {
+    const err = `replicate_create_exception: ${e?.message}`;
+    console.error('[SIM] Create exception:', e?.message);
+    return { url: null, provider: null, error: err };
+  }
 
-    const created = await repRes.json();
-    const predId  = created?.id;
-    console.log('[REPLICATE] Prediction id:', predId, '| initial status:', created?.status);
+  const predictionId = createData.id;
 
-    if (!predId) {
-      lastError = 'replicate_no_prediction_id';
-      console.error('[REPLICATE] No id in response:', JSON.stringify(created).slice(0, 200));
-      return { url: null, provider: null, error: lastError };
-    }
+  // ── Step 2: Poll every 1 s, up to 12 attempts ─────────────────────
+  for (let i = 0; i < 12; i++) {
+    await new Promise(r => setTimeout(r, 1000)); // sleep first, then check
 
-    // ── Step 2: Poll every 1 s, max 10 attempts ──────────────────────
-    const MAX_POLLS     = 10;
-    const POLL_INTERVAL = 1_000;
-
-    for (let i = 0; i < MAX_POLLS; i++) {
-      const poll = await fetch(
-        `https://api.replicate.com/v1/predictions/${predId}`,
+    let pollData;
+    try {
+      const pollRes = await fetch(
+        `https://api.replicate.com/v1/predictions/${predictionId}`,
         {
-          headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+          headers: { 'Authorization': `Token ${token}` },
           signal:  AbortSignal.timeout(8_000),
         }
-      ).catch(e => {
-        console.warn('[REPLICATE] Poll network error:', e?.message);
-        return null;
-      });
-
-      if (!poll?.ok) {
-        lastError = `replicate_poll_non_ok_attempt_${i + 1}`;
-        console.warn('[REPLICATE] Poll non-ok, attempt', i + 1);
-        break;
-      }
-
-      const pd = await poll.json();
-      console.log(`[REPLICATE] Poll ${i + 1}/${MAX_POLLS}: status=${pd.status}`);
-
-      if (pd.status === 'succeeded') {
-        url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
-        if (url) {
-          console.log('[REPLICATE] Succeeded:', url.slice(0, 80));
-          logAI('info', 'replicate_success', { patientId, polls: i + 1 });
-        } else {
-          lastError = 'replicate_succeeded_empty_output';
-          console.warn('[REPLICATE] Succeeded but output empty:', pd.output);
-        }
-        break;
-      }
-
-      if (pd.status === 'failed' || pd.status === 'canceled') {
-        lastError = `replicate_${pd.status}: ${pd.error ?? ''}`;
-        console.error('[REPLICATE] Prediction', pd.status, ':', pd.error);
-        break;
-      }
-
-      // Still processing — wait before next poll (skip sleep on last attempt)
-      if (i < MAX_POLLS - 1) {
-        await new Promise(r => setTimeout(r, POLL_INTERVAL));
-      }
+      );
+      pollData = await pollRes.json();
+    } catch (e) {
+      console.warn(`[SIM] Poll ${i + 1} network error:`, e?.message);
+      continue;
     }
 
-    if (!url && !lastError) {
-      lastError = 'replicate_timeout_no_result';
-      console.warn('[REPLICATE] Max polls reached without result, predId:', predId);
+    console.log(`[SIM POLL] ${i + 1}/12: status=${pollData.status}`);
+
+    if (pollData.status === 'succeeded') {
+      const url = pollData.output?.[0] ?? null;
+      if (url) {
+        console.log('[SIM] Succeeded:', url.slice(0, 80));
+        logAI('info', 'replicate_success', { patientId, polls: i + 1 });
+        return { url, provider: 'replicate', error: null };
+      }
+      console.warn('[SIM] Succeeded but output empty:', pollData.output);
+      return { url: null, provider: null, error: 'replicate_succeeded_empty_output' };
     }
 
-  } catch (e) {
-    lastError = `replicate_exception: ${e?.message}`;
-    console.error('[REPLICATE] Exception:', e?.message);
-    logAI('warn', 'replicate_exception', { patientId, message: e?.message });
+    if (pollData.status === 'failed' || pollData.status === 'canceled') {
+      const err = `replicate_${pollData.status}: ${pollData.error ?? ''}`;
+      console.warn('[SIM] Prediction', pollData.status, ':', pollData.error);
+      return { url: null, provider: null, error: err };
+    }
+    // 'starting' | 'processing' → continue polling
   }
 
-  if (url) {
-    console.log('[SIM] Done: replicate | url: ok');
-  } else {
-    console.warn('[SIM] Failed:', lastError);
-  }
-  return { url, provider: url ? 'replicate' : null, error: url ? null : lastError };
+  console.warn('[SIM] Timeout — 12 polls exhausted, predId:', predictionId);
+  return { url: null, provider: null, error: 'replicate_timeout' };
 }
 
 // POST /api/chat/smile-simulation
