@@ -15951,14 +15951,18 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     });
 
     // ── Optional: Gemini — smile simulation (before → after) ──────────
+    // Model: gemini-2.0-flash-exp (NOT gemini-1.5-pro — that model cannot
+    // generate images, only accepts them as input).
+    // responseModalities: ['IMAGE','TEXT'] is required for image output.
     let simulatedImageUrl = null;
     const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    // Allow overriding via env (e.g. when Google releases a stable image-gen model)
+    const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
 
     if (ENABLE_SMILE_SIMULATION && GEMINI_KEY && imageDataUrl) {
       const geminiTimeoutMs = Math.min(AI_TIMEOUT_MS, 25_000);
 
       try {
-        // Build the image-editing prompt — insights make it targeted
         const insightHints = insights.length > 0
           ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
           : '';
@@ -15977,12 +15981,11 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
           `- Make minimal, realistic improvements only` +
           insightHints;
 
-        // Split data URL → mime + raw base64
         const [dataHeader, base64Raw] = imageDataUrl.split(',');
         const inputMime = dataHeader.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
 
         const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GEMINI_KEY}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -15993,26 +15996,48 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
                   { inline_data: { mime_type: inputMime, data: base64Raw } },
                 ],
               }],
+              // responseModalities is REQUIRED to get image output back.
+              // Without it, Gemini returns only text — simulatedImageUrl stays null.
               generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
             }),
             signal: AbortSignal.timeout(geminiTimeoutMs),
           }
         );
 
+        console.log('[GEMINI STATUS]:', geminiRes.status, '| model:', GEMINI_IMAGE_MODEL);
+
         if (!geminiRes.ok) {
           const errBody = await geminiRes.json().catch(() => ({}));
+          console.error('[GEMINI ERROR]:', JSON.stringify(errBody).slice(0, 500));
           logAI('warn', 'gemini_http_error', { patientId, status: geminiRes.status, message: errBody?.error?.message });
         } else {
           const geminiData = await geminiRes.json();
+
+          // Log raw response summary — critical for diagnosing text-only returns
+          const rawSummary = JSON.stringify(geminiData).slice(0, 600);
+          console.log('[GEMINI RAW]:', rawSummary);
+
           const parts = geminiData?.candidates?.[0]?.content?.parts || [];
           const imgPart = parts.find(p => p.inline_data?.data);
+          const textPart = parts.find(p => p.text);
 
-          if (imgPart?.inline_data?.data) {
-            // Upload the generated image to Supabase Storage
-            const simBuffer  = Buffer.from(imgPart.inline_data.data, 'base64');
-            const simMime    = imgPart.inline_data.mime_type || 'image/jpeg';
-            const simExt     = simMime.includes('png') ? 'png' : 'jpg';
-            const simPath    = `ai-simulations/${patientId}/${Date.now()}-sim.${simExt}`;
+          if (!imgPart) {
+            // Gemini sometimes returns only text even with IMAGE modality requested.
+            // Log the text response to understand why, then fall through gracefully.
+            console.warn('[GEMINI] No image in response. Text parts:', textPart?.text?.slice(0, 200) ?? '(none)');
+            logAI('warn', 'gemini_no_image_in_response', {
+              patientId,
+              model: GEMINI_IMAGE_MODEL,
+              partTypes: parts.map(p => Object.keys(p).join('+')),
+              textSnippet: textPart?.text?.slice(0, 100),
+            });
+          } else {
+            const simBuffer = Buffer.from(imgPart.inline_data.data, 'base64');
+            const simMime   = imgPart.inline_data.mime_type || 'image/jpeg';
+            const simExt    = simMime.includes('png') ? 'png' : 'jpg';
+            const simPath   = `ai-simulations/${patientId}/${Date.now()}-sim.${simExt}`;
+
+            console.log('[GEMINI] Image received:', Math.round(simBuffer.length / 1024), 'KB | mime:', simMime);
 
             if (isSupabaseEnabled()) {
               const { error: simUploadErr } = await supabase.storage
@@ -16022,26 +16047,22 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
               if (!simUploadErr) {
                 const { data: simSigned } = await supabase.storage
                   .from('patient-files')
-                  .createSignedUrl(simPath, 365 * 24 * 3600); // 1-year URL
+                  .createSignedUrl(simPath, 365 * 24 * 3600);
                 simulatedImageUrl = simSigned?.signedUrl || null;
               } else {
                 logAI('warn', 'gemini_sim_upload_failed', { patientId, message: simUploadErr.message });
               }
             } else {
-              // Fallback for local dev: return as data URL (not for production)
               simulatedImageUrl = `data:${simMime};base64,${imgPart.inline_data.data}`;
             }
 
             if (simulatedImageUrl) {
               logAI('info', 'gemini_simulation_success', {
-                patientId,
-                simPath,
+                patientId, simPath,
                 simSizeKB: Math.round(simBuffer.length / 1024),
                 elapsedMs: Date.now() - _t0,
               });
             }
-          } else {
-            logAI('warn', 'gemini_no_image_in_response', { patientId, parts: parts.map(p => Object.keys(p)) });
           }
         }
       } catch (geminiErr) {
