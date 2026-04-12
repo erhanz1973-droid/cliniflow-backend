@@ -15823,14 +15823,14 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   // ── Step 1: Create prediction ──────────────────────────────────────
   let createData;
   try {
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+    // Use model endpoint (no version hash) — Replicate auto-picks latest version.
+    const createRes = await fetch('https://api.replicate.com/v1/models/stability-ai/sdxl/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Token ${token}`,
         'Content-Type':  'application/json',
       },
       body: JSON.stringify({
-        version: 'ac732df83cea7fff1a1a1e0bcb0b9c1e5d295df1c548d652e1bdf4cf0a1d57e4',
         input: {
           image:    imageUrl,
           prompt:   [
