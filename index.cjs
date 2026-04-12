@@ -15430,6 +15430,7 @@ const DENTAL_AI_FALLBACK = {
 
 // ── Vague / generic phrases to reject (Turkish + English, case-insensitive) ──
 const VAGUE_PATTERNS = [
+  // Generic non-answers
   /\bsome issue\b/i,
   /\bproblem detected\b/i,
   /\bsomething wrong\b/i,
@@ -15440,6 +15441,15 @@ const VAGUE_PATTERNS = [
   /\bgenel (bir )?sorun\b/i,
   /\biyi görünüyor\b/i,            // "looks fine" without specifics
   /^(ok|iyi|normal|tamam|güzel)\.?$/i,  // single-word non-answers
+  // Forbidden refusal phrases
+  /\bcannot (analyze|analyse|assess|evaluate)\b/i,
+  /\bunable to (analyze|analyse|assess|evaluate|determine)\b/i,
+  /\bimage (is )?(too )?(blurry|unclear|dark|low quality|not clear)\b/i,
+  /\bnot (possible|able) to (analyze|see|determine)\b/i,
+  /\banaliz (edilemez|yapılamaz|mümkün değil)\b/i,
+  /\bgörüntü (net değil|bulanık|karanlık|kalitesiz|analiz edilemez)\b/i,
+  /\bnet (bir |görüntü )?(analiz|değerlendirme) (yapılamadı|mümkün değil)\b/i,
+  /\bfotoğraf (yetersiz|net değil|analiz için uygun değil)\b/i,
 ];
 
 /**
@@ -15500,6 +15510,8 @@ function validateDentalAIQuality(parsed) {
 
   if (insights.length === 0) {
     reasons.push('no_insights');
+  } else if (insights.length < 2) {
+    reasons.push('insufficient_insights');  // require at least 2
   } else {
     insights.forEach((t, i) => {
       if (t.length < 10)   reasons.push(`insight_${i}_too_short`);
@@ -15564,34 +15576,42 @@ const PHOTO_TYPE_CONTEXT = {
 function generateDentalAnalysisPrompt(photoType = 'general') {
   const ctx = PHOTO_TYPE_CONTEXT[photoType] || PHOTO_TYPE_CONTEXT.general;
 
-  // System role sets hard safety rules; user role provides the task + output spec.
   return {
-    system: `Sen yardımcı bir diş sağlığı AI asistanısın.
-Görevin: Diş fotoğraflarını analiz edip kullanıcıya anlaşılır, samimi ve GÜVENLİ geri bildirim vermek.
+    system: `You are a dental AI assistant analyzing intraoral photos for a patient-facing app.
 
-ZORUNLU KURALLAR (ihlal edilemez):
-1. KESİN tıbbi teşhis KOYMA — "X hastalığınız var" gibi ifadeler YASAK
-2. HER ZAMAN yumuşatıcı dil kullan: "olabilir", "görünüyor", "gibi görünüyor", "olası"
-3. Tedavi garantisi VERME
-4. Yalnızca görüntüde görünür olan unsurları değerlendir
-5. Basit, teknik olmayan, samimi Türkçe kullan`,
+STRICT RULES — never break these:
+1. You MUST provide at least 2 specific observations if ANY teeth are visible in the image.
+2. NEVER say "cannot analyze", "image is unclear", "unable to assess", or any refusal phrase.
+3. If the image is blurry or dark, still describe what you CAN see — make your best assessment.
+4. NEVER give a definitive diagnosis — always use cautious language: "may indicate", "appears to", "could be", "seems like", "olabilir", "görünüyor".
+5. NEVER guarantee treatment outcomes.
+6. ONLY describe conditions that are visually observable.
+7. Write insights in natural, friendly Turkish — avoid clinical jargon.
+8. If teeth are barely visible, describe tooth shape, color range, or gum line — do not refuse.
 
-    user: `Fotoğraf türü: ${ctx.label}
-Analiz odağı: ${ctx.focus}
+FORBIDDEN OUTPUT (will be rejected):
+• "cannot analyze"  • "image unclear"  • "unable to determine"
+• "görüntü net değil"  • "analiz edilemez"  • empty insights array
+• single vague insight with no specifics`,
 
-Fotoğrafı dikkatle incele ve yanıtı YALNIZCA aşağıdaki JSON formatında ver. Başka hiçbir metin ekleme:
+    user: `Photo type: ${ctx.label}
+Focus area: ${ctx.focus}
+
+Carefully examine this dental image and return ONLY valid JSON — no markdown, no extra text:
 {
-  "insights": ["gözlem 1", "gözlem 2"],
-  "confidence": "medium",
-  "summary": "1 cümlelik genel değerlendirme",
-  "recommendation": "Kullanıcının yapması gereken somut bir sonraki adım"
+  "insights": ["specific observation 1 in Turkish", "specific observation 2 in Turkish"],
+  "confidence": "low" | "medium" | "high",
+  "summary": "1-sentence overall assessment in Turkish",
+  "recommendation": "1 concrete next step for the patient in Turkish"
 }
 
-Kurallar:
-- insights: en fazla 3 madde, her biri en fazla 1 cümle, yumuşatıcı dil zorunlu
-- confidence: görüntü bulanık/karanlıksa "low" | kısmen görünüyorsa "medium" | net ve iyi ışıklıysa "high"
-- summary: tarafsız, 1 cümle, ne olduğunu özetler
-- recommendation: "Diş hekimine danışın" gibi kısa ve nazik, kliniğe yönlendirici bir öneri`,
+RULES:
+- insights: MINIMUM 2 items, MAXIMUM 3 items. Each must be 1 sentence. Use cautious language ("görünüyor", "olabilir").
+- Inspect specifically: tooth alignment, color/staining (decay risk), gum condition, missing/broken teeth, calculus buildup.
+- confidence: "low" = blurry/dark image | "medium" = partially visible | "high" = clear and well-lit.
+- summary: neutral 1 sentence, summarises what you observed.
+- recommendation: short, polite, directs patient to a dentist. Example: "Ön dişlerdeki renk değişikliği için bir diş hekimiyle görüşmenizi öneririz."
+- Even if image quality is poor, ALWAYS fill insights with your best observations. Never leave it empty.`,
   };
 }
 
@@ -15617,11 +15637,11 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
           role: 'user',
           content: [
             { type: 'text',      text: user },
-            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
+            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
           ],
         },
       ],
-      max_tokens: 500,
+      max_tokens: 800,
       response_format: { type: 'json_object' },
     }),
     signal: AbortSignal.timeout(timeoutMs),
