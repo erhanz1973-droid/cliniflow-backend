@@ -15967,13 +15967,27 @@ async function replicatePrediction(imageUrl, { prompt, prompt_strength }, token)
 }
 
 /**
+ * Convert a Supabase signed URL to its public equivalent.
+ * /storage/v1/object/sign/bucket/path?token=xxx
+ * → /storage/v1/object/public/bucket/path
+ *
+ * The `patient-files` bucket must have public access enabled in Supabase.
+ * A public URL is a plain https:// link with no auth/expiry — Replicate can
+ * always fetch it.
+ */
+function toPublicUrl(signedUrl) {
+  return signedUrl
+    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+    .split('?')[0];
+}
+
+/**
  * Runs all 3 smile variations in parallel.
  *
  * Flow:
- *   1. Fetch image server-side (Supabase signed URL is accessible from backend)
- *   2. Upload to Replicate /v1/files → get an https:// URL the model can read
- *   3. Run Natural / Balanced / Hollywood predictions in parallel
- *   4. If everything fails → return original image as fallback (UI never empty)
+ *   1. Convert Supabase signed URL → public URL (no expiry, no auth headers)
+ *   2. Run Natural / Balanced / Hollywood predictions in parallel
+ *   3. If everything fails → return original image as fallback (UI never empty)
  */
 async function runSmileSimulation({ imageUrl, patientId }) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -15984,13 +15998,14 @@ async function runSmileSimulation({ imageUrl, patientId }) {
 
   console.log('[SIM] Starting 3-variation simulation | patientId:', patientId);
 
-  // ── Step 1: make image accessible to Replicate ─────────────────────
-  let replicateImageUrl;
-  try {
-    replicateImageUrl = await uploadImageToReplicate(imageUrl, token);
-  } catch (e) {
-    console.error('[SIM] uploadImageToReplicate threw:', e?.message);
-    replicateImageUrl = imageUrl; // last-resort: pass signed URL directly
+  // ── Step 1: convert to public URL so Replicate can access it ───────
+  const replicateImageUrl = toPublicUrl(imageUrl);
+  console.log('[SIM] USING PUBLIC URL:', replicateImageUrl);
+
+  if (replicateImageUrl.includes('/sign/')) {
+    // This should never happen — guard catches conversion failures early
+    console.error('[SIM] STILL USING SIGNED URL — toPublicUrl conversion failed for:', imageUrl);
+    throw new Error('sim_still_signed_url');
   }
 
   // ── Step 2: run all 3 predictions in parallel ───────────────────────
