@@ -15821,8 +15821,18 @@ async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights 
   const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
   const GEMINI_MODEL    = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
 
+  // Surface provider availability early so callers can give clear errors.
+  const hasGemini    = !!GEMINI_KEY;
+  const hasReplicate = !!REPLICATE_TOKEN;
+  console.log('[SIM] Providers:', { gemini: hasGemini, replicate: hasReplicate, patientId });
+  if (!hasGemini && !hasReplicate) {
+    console.error('[SIM] No providers configured — set GEMINI_API_KEY and/or REPLICATE_API_TOKEN');
+    return { url: null, provider: null, error: 'no_providers_configured' };
+  }
+
   let url      = null;
   let provider = null;
+  let lastError = null; // last provider-level error string
 
   // ── Helper: upload buffer → Supabase signed URL ──────────────────────
   async function uploadSim(buffer, mime, label) {
@@ -15883,18 +15893,21 @@ async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights 
           url = await uploadSim(buf, outMime, 'gemini');
           if (url) provider = 'gemini';
         } else {
-          console.warn('[GEMINI SIM] No image. Text:', txtPart?.text?.slice(0, 120) ?? '(none)');
-          logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_MODEL });
-        }
-      } else {
-        const errBody = await gemRes.json().catch(() => ({}));
-        console.error('[GEMINI SIM ERROR]:', gemRes.status, JSON.stringify(errBody).slice(0, 300));
-        logAI('warn', 'gemini_http_error', { patientId, status: gemRes.status, message: errBody?.error?.message });
+      console.warn('[GEMINI SIM] No image. Text:', txtPart?.text?.slice(0, 120) ?? '(none)');
+        lastError = 'gemini_no_image';
+        logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_MODEL });
       }
-    } catch (e) {
-      console.warn('[GEMINI SIM FAILED]:', e?.message);
-      logAI('warn', 'gemini_exception', { patientId, message: e?.message });
+    } else {
+      const errBody = await gemRes.json().catch(() => ({}));
+      lastError = `gemini_http_${gemRes.status}`;
+      console.error('[GEMINI SIM ERROR]:', gemRes.status, JSON.stringify(errBody).slice(0, 300));
+      logAI('warn', 'gemini_http_error', { patientId, status: gemRes.status, message: errBody?.error?.message });
     }
+  } catch (e) {
+    lastError = `gemini_exception: ${e?.message}`;
+    console.warn('[GEMINI SIM FAILED]:', e?.message);
+    logAI('warn', 'gemini_exception', { patientId, message: e?.message });
+  }
   }
 
   // ── 2. Replicate GFPGAN fallback ─────────────────────────────────────
@@ -15936,13 +15949,18 @@ async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights 
       }
       if (url) logAI('info', 'replicate_fallback_success', { patientId });
     } catch (e) {
+      lastError = `replicate_exception: ${e?.message}`;
       console.warn('[REPLICATE SIM FAILED]:', e?.message);
       logAI('warn', 'replicate_exception', { patientId, message: e?.message });
     }
   }
 
-  console.log('[SIMULATION RESULT]:', provider ?? 'none', '| url:', url ? 'ok' : 'null');
-  return { url, provider };
+  if (url) {
+    console.log('[SIMULATION RESULT]:', provider, '| url: ok');
+  } else {
+    console.warn('[SIMULATION RESULT]: none | lastError:', lastError ?? 'unknown');
+  }
+  return { url, provider, error: url ? null : (lastError ?? 'no_image_produced') };
 }
 
 // POST /api/chat/smile-simulation
@@ -15972,13 +15990,24 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       console.warn('[SMILE SIM] Could not fetch image for Gemini, will rely on Replicate only:', fetchErr?.message);
     }
 
-    const { url, provider } = await runSmileSimulation({
+    const { url, provider, error: simErr } = await runSmileSimulation({
       imageDataUrl,
       imageUrl,
       patientId,
       insights: Array.isArray(insights) ? insights.slice(0, 2) : [],
       timeoutMs: 28_000,
     });
+
+    if (!url) {
+      // Return ok:false so the frontend can surface the real reason
+      return res.status(503).json({
+        ok: false,
+        error: simErr ?? 'no_image_produced',
+        message: simErr === 'no_providers_configured'
+          ? 'Smile simulation is not configured. Set GEMINI_API_KEY and/or REPLICATE_API_TOKEN.'
+          : 'Smile simulation did not produce an image. Check server logs.',
+      });
+    }
 
     return res.json({ ok: true, simulatedImageUrl: url, simulationProvider: provider });
   } catch (err) {
