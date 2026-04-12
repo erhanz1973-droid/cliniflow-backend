@@ -15823,16 +15823,21 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   // ── Step 1: Create prediction ──────────────────────────────────────
   let createData;
   try {
-    const createRes = await fetch('https://api.replicate.com/v1/models/lucataco/sdxl-controlnet/predictions', {
+    // stability-ai/stable-diffusion-img2img — confirmed working on Replicate.
+    // Version: ddd4eb44 (latest as of 2025).
+    // Docs: https://replicate.com/stability-ai/stable-diffusion-img2img/api
+    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Token ${token}`,
         'Content-Type':  'application/json',
       },
       body: JSON.stringify({
+        version: 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7',
         input: {
           image:               imageUrl,
           prompt:              'A realistic improved dental smile, natural teeth whitening, slightly straighter teeth, same face, same lighting, not artificial',
+          prompt_strength:     0.35,
           num_inference_steps: 30,
         },
       }),
