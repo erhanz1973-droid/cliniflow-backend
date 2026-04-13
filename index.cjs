@@ -16069,7 +16069,10 @@ async function uploadImageToReplicate(imageUrl, token) {
 }
 
 // Returns { url: string|null, failReason: string|null }
-async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, token) {
+async function replicatePrediction(rawImageUrl, { prompt, negative_prompt, prompt_strength }, token) {
+  // negative_prompt defaults to SIM_NEGATIVE when not explicitly provided
+  const negPrompt = negative_prompt ?? SIM_NEGATIVE;
+
   // ── Convert to public URL (no expiry / no auth) ─────────────────────
   const imageUrl = rawImageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
@@ -16088,7 +16091,7 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
   try {
     const created = await replicateCreate(
       'https://api.replicate.com/v1/predictions',
-      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30, disable_safety_checker: true } },
+      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: negPrompt, prompt_strength, num_inference_steps: 30, disable_safety_checker: true } },
       token,
     );
     predId = created.id;
@@ -16261,21 +16264,64 @@ async function uploadBufferToReplicate(buffer, contentType, filename, token) {
  *
  * Steps:
  *  1. Fetch original image bytes
- *  2. Crop to mouth region (Y 52–82 %, X 15–85 %)
+ *  2. Crop to lower-face / mouth region (Y 55–90 %, X 15–85 %)
  *  3. Resize crop to 512 px wide for the model
  *  4. Upload crop → Replicate files
- *  5. Run img2img with low prompt_strength (0.4)
- *  6. Download AI result and resize it back to the original crop dimensions
- *  7. Composite AI result onto original image at the exact crop coordinates
- *  8. Upload composited image → Replicate files and return that URL
+ *  5. Run img2img with very low prompt_strength (0.25) — minimal change
+ *  6. Safety-check AI result: reject if too many dark/artifact pixels
+ *  7. Download AI result and resize back to original crop dimensions
+ *  8. Composite AI result onto original image at the exact crop coordinates
+ *  9. Upload composited image to Supabase and return public URL
  *
  * Because only the crop is sent to the AI, the beard / skin / lips that lie
  * outside the crop rectangle are never touched — they come straight from the
- * original image bytes in step 7.
+ * original image bytes in step 8.
  *
  * Returns { url: string|null, failReason: string|null }
  */
-async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength }, token, patientId) {
+
+// Dedicated teeth-only prompt for the crop (the crop IS the mouth, so no need
+// to repeat "keep face unchanged" — the face is never in the crop at all).
+const CROP_PROMPT = [
+  'natural white teeth, clean alignment, full dental structure visible,',
+  'ALL teeth present and complete, no gaps, no missing teeth,',
+  'upper and lower teeth both fully visible, photorealistic close-up,',
+  'professional dental photo, teeth only',
+].join(' ');
+
+const CROP_NEGATIVE = [
+  'missing teeth', 'removed teeth', 'gaps between teeth', 'dark artifacts',
+  'broken teeth', 'extra teeth', 'doubled teeth', 'distorted teeth',
+  'cartoon', 'blurry', 'overexposed', 'dark background', 'black mouth',
+].join(', ');
+
+// How aggressively the AI changes the teeth region.
+// 0.25 = very subtle (safe for dental close-ups, minimal distortion risk).
+const CROP_STRENGTH = 0.25;
+
+/**
+ * Pixel-quality safety check on the AI crop result.
+ * Rejects the result if more than MAX_DARK_RATIO of the pixels are near-black
+ * (a reliable signal of a collapsed / artifact-filled generation).
+ */
+async function isCropAcceptable(aiBuf) {
+  const MAX_DARK_RATIO = 0.20; // reject if >20 % of pixels are very dark
+  try {
+    const { data, info } = await sharp(aiBuf)
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let dark = 0;
+    for (let i = 0; i < data.length; i++) { if (data[i] < 25) dark++; }
+    const ratio = dark / info.width / info.height;
+    console.log(`[SIM CROP] dark-pixel ratio: ${(ratio * 100).toFixed(1)} %`);
+    return ratio < MAX_DARK_RATIO;
+  } catch {
+    return true; // if check fails, don't block the result
+  }
+}
+
+async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) {
   // ── 1. Fetch original ────────────────────────────────────────────────────
   let origBuf, origW, origH;
   try {
@@ -16291,13 +16337,13 @@ async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength
   }
 
   // ── 2. Calculate crop rectangle ─────────────────────────────────────────
-  // Mouth region heuristic for a portrait / selfie photo:
-  //   Y: 52 % – 82 % from top  (captures full mouth incl. chin margin)
-  //   X: 15 % – 85 % from left (generous width to include corners of mouth)
+  // Lower-face region for a portrait/selfie photo:
+  //   Y: 55 % – 90 % from top  → captures full mouth + chin margin
+  //   X: 15 % – 85 % from left → wide enough for corners of the mouth
   const cropLeft   = Math.round(origW * 0.15);
-  const cropTop    = Math.round(origH * 0.52);
+  const cropTop    = Math.round(origH * 0.55);
   const cropWidth  = Math.round(origW * 0.70);
-  const cropHeight = Math.round(origH * 0.30);
+  const cropHeight = Math.round(origH * 0.35);
   console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
   // ── 3. Extract and resize crop to 512 px wide ────────────────────────────
@@ -16325,25 +16371,46 @@ async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength
   }
 
   // ── 5. Run img2img on the crop only ─────────────────────────────────────
-  const r = await replicatePrediction(cropUrl, { prompt, prompt_strength }, token);
+  // Use CROP_PROMPT/CROP_NEGATIVE/CROP_STRENGTH — not the full-image balanced
+  // variation prompt.  The crop IS the mouth already, so there is no need to
+  // say "keep face unchanged"; the face was never included in the crop.
+  const r = await replicatePrediction(
+    cropUrl,
+    { prompt: CROP_PROMPT, negative_prompt: CROP_NEGATIVE, prompt_strength: CROP_STRENGTH },
+    token,
+  );
   if (!r.url) {
     return { url: null, failReason: 'crop_img2img: ' + r.failReason };
   }
   console.log('[SIM CROP] img2img result:', r.url.slice(0, 80));
 
-  // ── 6. Download AI result and resize back to original crop dimensions ────
-  let aiResizedBuf;
+  // ── 6. Download AI result ────────────────────────────────────────────────
+  let aiBuf;
   try {
     const aiRes = await fetch(r.url, { signal: AbortSignal.timeout(30_000) });
     if (!aiRes.ok) throw new Error(`fetch_ai_http_${aiRes.status}`);
-    const aiBuf = Buffer.from(await aiRes.arrayBuffer());
+    aiBuf = Buffer.from(await aiRes.arrayBuffer());
+  } catch (e) {
+    return { url: null, failReason: 'crop_dl: ' + e?.message };
+  }
+
+  // ── 6b. Safety check — reject obviously broken results ───────────────────
+  const acceptable = await isCropAcceptable(aiBuf);
+  if (!acceptable) {
+    console.warn('[SIM CROP] ❌ Safety check failed (too many dark pixels) — rejecting result');
+    return { url: null, failReason: 'crop_safety_check_failed' };
+  }
+
+  // ── 6c. Resize AI result back to original crop dimensions ───────────────
+  let aiResizedBuf;
+  try {
     aiResizedBuf = await sharp(aiBuf)
       .resize(cropWidth, cropHeight)
       .jpeg({ quality: 90 })
       .toBuffer();
     console.log(`[SIM CROP] AI resized to ${cropWidth}×${cropHeight}`);
   } catch (e) {
-    return { url: null, failReason: 'crop_dl_resize: ' + e?.message };
+    return { url: null, failReason: 'crop_resize: ' + e?.message };
   }
 
   // ── 7. Composite AI result onto original ────────────────────────────────
