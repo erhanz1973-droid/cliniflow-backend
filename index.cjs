@@ -15796,41 +15796,63 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 // first and pass it to Replicate as a base64 data URI so the URL is never
 // exposed externally.
 
-// img2img fallback (used if inpainting is unavailable)
+// img2img model — used ONLY as last-resort fallback when inpainting is unavailable
 const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
-// inpainting model (no version hash – always uses latest deployment)
+// inpainting model — primary path (edits ONLY the masked teeth region)
 const SIM_INPAINT_MODEL = 'stability-ai/stable-diffusion-inpainting';
 
+// Shared negative prompt — explicitly blocks any face/beard/skin changes
 const SIM_NEGATIVE = [
-  'changed face', 'altered skin', 'different lips', 'modified nose', 'changed eyes',
-  'fake teeth', 'extra teeth', 'duplicated teeth', 'mismatched teeth', 'cartoon teeth',
-  'blurry', 'cartoon', 'distorted', 'deformed', 'artifacts', 'overexposed',
+  // face structure must not change
+  'beard removed', 'beard changed', 'beard altered', 'no beard',
+  'lips changed', 'lips altered', 'lip shape changed',
+  'skin changed', 'skin colour changed',
+  'face modified', 'face structure changed', 'nose changed', 'eyes changed',
+  // dental artifacts
+  'fake teeth', 'extra teeth', 'duplicated teeth', 'mismatched teeth',
   'upper teeth on lower jaw', 'wrong dental anatomy',
+  // general quality
+  'blurry', 'cartoon', 'distorted', 'deformed', 'artifacts', 'overexposed',
 ].join(', ');
 
 const SIM_VARIATIONS = [
   {
-    id:               'natural',
-    label:            'Doğal',
-    // img2img strength (lower = more face preservation)
-    prompt_strength:  0.35,
-    // inpainting strength for the masked teeth region
-    inpaint_strength: 0.65,
-    prompt: 'natural white healthy teeth only, slight whitening and alignment, upper teeth larger than lower teeth, anatomically correct dental result, keep face lips skin eyes nose exactly the same, photorealistic portrait',
+    id:              'natural',
+    label:           'Doğal',
+    prompt_strength: 0.3,   // img2img fallback strength (very low — minimal whole-image change)
+    prompt: [
+      'Keep the original face EXACTLY the same.',
+      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
+      'ONLY the teeth: natural white color, slight alignment improvement.',
+      'Beard must remain identical. Lips must remain identical.',
+      'Photorealistic dental photo.',
+    ].join(' '),
   },
   {
-    id:               'balanced',
-    label:            'Önerilen',
-    prompt_strength:  0.4,
-    inpaint_strength: 0.75,
-    prompt: 'perfect natural white teeth only, improved dental aesthetics, upper teeth naturally larger than lower teeth, anatomically correct smile, do not change face lips skin eyes nose at all, photorealistic portrait',
+    id:              'balanced',
+    label:           'Önerilen',
+    prompt_strength: 0.35,
+    prompt: [
+      'Keep the original face EXACTLY the same.',
+      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
+      'ONLY improve the teeth: natural white color, better alignment,',
+      'upper teeth naturally larger than lower teeth.',
+      'Beard must remain identical. Lips must remain identical.',
+      'Photorealistic dental photo.',
+    ].join(' '),
   },
   {
-    id:               'hollywood',
-    label:            'Hollywood',
-    prompt_strength:  0.5,
-    inpaint_strength: 0.85,
-    prompt: 'ultra white perfect veneer teeth only, hollywood smile, upper teeth prominently larger than lower teeth, anatomically correct dental result, face lips skin eyes nose completely unchanged, photorealistic portrait',
+    id:              'hollywood',
+    label:           'Hollywood',
+    prompt_strength: 0.4,
+    prompt: [
+      'Keep the original face EXACTLY the same.',
+      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
+      'ONLY the teeth: ultra white perfect veneers, hollywood smile,',
+      'upper teeth prominently larger than lower teeth, anatomically correct.',
+      'Beard must remain identical. Lips must remain identical.',
+      'Photorealistic dental photo.',
+    ].join(' '),
   },
 ];
 
@@ -15918,10 +15940,15 @@ function _pngChunk(type, data) {
 }
 
 function generateMouthMaskPng(W = 512, H = 512) {
-  const y1 = Math.round(H * 0.55);
-  const y2 = Math.round(H * 0.80);
-  const x1 = Math.round(W * 0.20);
-  const x2 = Math.round(W * 0.80);
+  // Teeth-only region (excludes the outer lip border):
+  //   Y: 63 % – 78 % from top  (inner mouth / visible tooth area)
+  //   X: 30 % – 70 % from left (centred, narrower than the full mouth width)
+  // Making this region tight is critical — if it overlaps the lips or beard
+  // the inpainting model will modify those areas too.
+  const y1 = Math.round(H * 0.63);
+  const y2 = Math.round(H * 0.78);
+  const x1 = Math.round(W * 0.30);
+  const x2 = Math.round(W * 0.70);
 
   // Each row: 1 filter byte (0 = None) followed by W grey pixels
   const raw = Buffer.alloc(H * (1 + W), 0);
@@ -15950,6 +15977,7 @@ function generateMouthMaskPng(W = 512, H = 512) {
 }
 
 // Upload the mask once per server lifetime and cache the Replicate URL.
+// Reset to null on each deploy so the tighter mask is always re-uploaded.
 let _cachedMaskUrl = null;
 
 async function getOrUploadMask(token) {
@@ -16115,7 +16143,7 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
  *
  * Returns { url: string|null, failReason: string|null }
  */
-async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt, inpaint_strength = 0.75 }, token) {
+async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt }, token) {
   let predId;
   try {
     const created = await replicateCreate(
@@ -16126,9 +16154,10 @@ async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt, inpaint_s
           mask:                maskUrl,
           prompt,
           negative_prompt:     SIM_NEGATIVE,
-          num_inference_steps: 40,
-          guidance_scale:      7.5,
-          strength:            inpaint_strength,
+          num_inference_steps: 30,   // fast enough; inpainting is lighter than img2img
+          guidance_scale:      8.0,  // higher = prompt follows more strictly
+          // NOTE: no 'strength' param — that is img2img-only; sending it to an
+          // inpainting model causes input validation errors on some versions.
         },
       },
       token,
@@ -16217,36 +16246,42 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   const debugInfo = [];
   let r = { url: null, failReason: 'not_attempted' };
 
-  // ── Attempt 1: Inpainting with teeth mask (face-preserving) ─────────
-  // Uploads a 512×512 PNG mask (white = teeth area) to Replicate files.
-  // The inpainting model modifies ONLY the white region; black regions are
-  // copied pixel-perfect from the original, so the face stays unchanged.
+  // ── Attempt 1: Inpainting with teeth mask (PRIMARY — face-preserving) ──────
+  // The inpainting model edits ONLY the white (teeth) area of the mask.
+  // Black pixels are copied pixel-perfect from the original, so the beard,
+  // lips, skin, and the rest of the face are guaranteed to stay unchanged.
+  let maskAvailable = false;
   try {
     const maskUrl = await getOrUploadMask(token);
     if (maskUrl) {
+      maskAvailable = true;
       console.log('[SIM] Trying inpainting with teeth mask…');
       r = await replicateInpaintPrediction(publicImageUrl, maskUrl, balanced, token);
       if (r.url) {
         console.log('[SIM] Inpainting ✅ | url:', r.url.slice(0, 80));
       } else {
         debugInfo.push('inpaint: ' + r.failReason);
-        console.warn('[SIM] Inpainting failed:', r.failReason, '→ falling back to img2img');
+        console.warn('[SIM] Inpainting failed:', r.failReason);
       }
     } else {
       debugInfo.push('inpaint: mask_upload_failed');
-      console.warn('[SIM] Mask upload failed → img2img fallback');
+      console.warn('[SIM] Mask upload failed');
     }
   } catch (e) {
     debugInfo.push('inpaint_exception: ' + e?.message);
     console.warn('[SIM] Inpainting exception:', e?.message);
   }
 
-  // ── Attempt 2: img2img fallback (if inpainting failed for a non-rate-limit reason) ──
-  // Skip the fallback when we were rate-limited — both models share the same
-  // Replicate account quota, so hammering it again immediately just wastes the
-  // one retry budget we already spent inside replicateCreate.
-  if (!r.url && !r.isRateLimit) {
-    console.log('[SIM] Running img2img fallback (strength:', balanced.prompt_strength, ')…');
+  // ── Attempt 2: img2img fallback — ONLY if the mask could not be uploaded ──
+  // We do NOT fall back to img2img when inpainting was attempted but failed
+  // (e.g. rate-limit, model error) because img2img always transforms the whole
+  // face — beard, lips, and skin all change, which is worse than no result.
+  //
+  // We only fall back when the mask upload itself failed, meaning inpainting
+  // was never possible for this request.
+  if (!r.url && !maskAvailable && !r.isRateLimit) {
+    console.warn('[SIM] Mask unavailable — using img2img fallback (NOTE: may modify whole face)');
+    debugInfo.push('img2img_fallback: mask_unavailable');
     r = await replicatePrediction(imageUrl, balanced, token);
     if (r.url) {
       console.log('[SIM] img2img ✅ | url:', r.url.slice(0, 80));
@@ -16254,8 +16289,11 @@ async function runSmileSimulation({ imageUrl, patientId }) {
       debugInfo.push('img2img: ' + r.failReason);
     }
   } else if (!r.url && r.isRateLimit) {
-    console.warn('[SIM] Rate-limited — skipping img2img fallback to avoid double-penalising account');
-    debugInfo.push('img2img: skipped_due_to_rate_limit');
+    console.warn('[SIM] Rate-limited — skipping all fallbacks');
+    debugInfo.push('fallback: skipped_due_to_rate_limit');
+  } else if (!r.url && maskAvailable) {
+    console.warn('[SIM] Inpainting failed — NOT falling back to img2img (would modify whole face)');
+    debugInfo.push('img2img_fallback: skipped_to_preserve_face');
   }
 
   const isRateLimitError = !r.url && (r.isRateLimit || debugInfo.some(d => d.includes('429')));
