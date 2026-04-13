@@ -16363,15 +16363,35 @@ async function blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, w, h) {
   for (let i = 0; i < w * h; i++) {
     const alpha = maskRaw[i] / 255;
     for (let c = 0; c < 3; c++) {
-      result[i * 3 + c] = Math.round(
-        origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha,
-      );
+      const blended = Math.round(origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha);
+      // Brightness floor: result can NEVER be darker than original.
+      result[i * 3 + c] = Math.max(origRaw[i * 3 + c], blended);
     }
   }
 
-  return sharp(result, { raw: { width: w, height: h, channels: 3 } })
+  const blendedBuf = await sharp(result, { raw: { width: w, height: h, channels: 3 } })
     .jpeg({ quality: 92 })
     .toBuffer();
+
+  // Post-blend validation: if teeth region is significantly darker, revert to original.
+  let origBright = 0, resultBright = 0, count = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] > 64) {
+      origBright   += (origRaw[i*3] + origRaw[i*3+1] + origRaw[i*3+2]) / 3;
+      resultBright += (result[i*3]  + result[i*3+1]  + result[i*3+2])  / 3;
+      count++;
+    }
+  }
+  if (count > 0) {
+    const ratio = resultBright / origBright;
+    console.log(`[SIM BLEND] Brightness ratio (result/orig): ${ratio.toFixed(3)}  (${count} tooth px)`);
+    if (ratio < 0.95) {
+      console.warn('[SIM BLEND] ⚠️  Result darker than original — reverting to original crop');
+      return origCropBuf;
+    }
+  }
+
+  return blendedBuf;
 }
 
 async function cropCompositeSimulation(publicImageUrl, _opts, _token, patientId) {
