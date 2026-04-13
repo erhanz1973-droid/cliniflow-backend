@@ -15798,8 +15798,12 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 
 // img2img model — used ONLY as last-resort fallback when inpainting is unavailable
 const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
-// inpainting model — primary path (edits ONLY the masked teeth region)
-const SIM_INPAINT_MODEL = 'stability-ai/stable-diffusion-inpainting';
+
+// stability-ai/stable-diffusion-inpainting — primary path (edits ONLY the masked teeth region)
+// This is a VERSIONED model (not a deployment) so it MUST be called via
+// POST /v1/predictions with { version: SIM_INPAINT_VERSION, input: {...} }.
+// Using the /v1/models/.../predictions (deployment) endpoint returns 404.
+const SIM_INPAINT_VERSION = '95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3';
 
 // Shared negative prompt — explicitly blocks any face/beard/skin changes
 const SIM_NEGATIVE = [
@@ -16147,17 +16151,20 @@ async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt }, token) 
   let predId;
   try {
     const created = await replicateCreate(
-      `https://api.replicate.com/v1/models/${SIM_INPAINT_MODEL}/predictions`,
+      'https://api.replicate.com/v1/predictions',
       {
+        // Use the versioned endpoint — stability-ai/stable-diffusion-inpainting is a
+        // versioned model (not a deployment), so the /v1/models/.../predictions path
+        // returns 404. We must supply an explicit version hash here.
+        version: SIM_INPAINT_VERSION,
         input: {
           image:               imageUrl,
           mask:                maskUrl,
           prompt,
           negative_prompt:     SIM_NEGATIVE,
-          num_inference_steps: 30,   // fast enough; inpainting is lighter than img2img
-          guidance_scale:      8.0,  // higher = prompt follows more strictly
-          // NOTE: no 'strength' param — that is img2img-only; sending it to an
-          // inpainting model causes input validation errors on some versions.
+          num_inference_steps: 30,
+          guidance_scale:      8.0,
+          // NOTE: no 'strength' param — img2img-only; not valid for inpainting models.
         },
       },
       token,
