@@ -16445,6 +16445,19 @@ async function cropCompositeSimulation(publicImageUrl, _opts, _token, patientId)
     return { url: null, failReason: 'crop_blend: ' + e?.message };
   }
 
+  // ── 5b. Sharpen — keep inter-tooth gaps and enamel texture crisp ─────────
+  // Unsharp mask (sigma=1.2, m1=0.5 flat, m2=10 edge) makes tooth boundaries
+  // and gap lines more visible without over-sharpening the enamel surface.
+  try {
+    blendedCropBuf = await sharp(blendedCropBuf)
+      .sharpen({ sigma: 1.2, m1: 0.5, m2: 10 })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    console.log('[SIM CROP] Sharpened');
+  } catch (e) {
+    console.warn('[SIM CROP] Sharpen failed (non-fatal):', e?.message);
+  }
+
   // ── 6. Composite blended crop onto the full original ────────────────────
   let compositedBuf;
   try {
