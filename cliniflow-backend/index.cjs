@@ -32561,8 +32561,10 @@ server.on("error", (err) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v7');
-  console.log('🚀  SIM: async job pattern (POST→jobId, GET poll)');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v8');
+  console.log('🚀  SIM: programmatic teeth whitening (NO AI / NO Replicate)');
+  console.log('🚀  SIM: brightness floor + post-blend validation active');
+  console.log('🚀  commit: e8ff58b3');
   console.log('🚀 ============================================');
 
 
