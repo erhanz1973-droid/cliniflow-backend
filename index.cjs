@@ -16274,7 +16274,7 @@ async function uploadBufferToReplicate(buffer, contentType, filename, token) {
  *
  * Returns { url: string|null, failReason: string|null }
  */
-async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength }, token) {
+async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength }, token, patientId) {
   // ── 1. Fetch original ────────────────────────────────────────────────────
   let origBuf, origW, origH;
   try {
@@ -16357,13 +16357,28 @@ async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength
     return { url: null, failReason: 'crop_composite: ' + e?.message };
   }
 
-  // ── 8. Upload composited result ──────────────────────────────────────────
+  // ── 8. Upload composited result to Supabase (public URL) ────────────────
+  // We MUST use Supabase here (not Replicate /v1/files) because Replicate
+  // file URLs are authenticated — React Native's Image component cannot
+  // load them without an Authorization header.  Supabase public URLs have
+  // no auth requirement and load directly in the app.
   try {
-    const finalUrl = await uploadBufferToReplicate(compositedBuf, 'image/jpeg', 'smile-result.jpg', token);
-    console.log('[SIM CROP] Final URL:', finalUrl.slice(0, 80));
+    const storagePath = `sim-results/${patientId}/sim-${Date.now()}.jpg`;
+    const { error: upErr } = await supabaseAdmin.storage
+      .from('patient-files')
+      .upload(storagePath, compositedBuf, { contentType: 'image/jpeg', upsert: false });
+    if (upErr) throw new Error(upErr.message);
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from('patient-files')
+      .getPublicUrl(storagePath);
+    const finalUrl = urlData?.publicUrl;
+    if (!finalUrl) throw new Error('getPublicUrl returned nothing');
+
+    console.log('[SIM CROP] Supabase public URL:', finalUrl.slice(0, 80));
     return { url: finalUrl, failReason: null };
   } catch (e) {
-    return { url: null, failReason: 'crop_upload_final: ' + e?.message };
+    return { url: null, failReason: 'crop_upload_supabase: ' + e?.message };
   }
 }
 
@@ -16403,7 +16418,7 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   //  4. Paste the AI result back onto the original at the same coordinates
   //  5. Upload the composited image and return its URL
   console.log('[SIM] Trying crop-composite (teeth-only)…');
-  r = await cropCompositeSimulation(publicImageUrl, balanced, token);
+  r = await cropCompositeSimulation(publicImageUrl, balanced, token, patientId);
   if (r.url) {
     console.log('[SIM] Crop-composite ✅ | url:', r.url.slice(0, 80));
   } else {
