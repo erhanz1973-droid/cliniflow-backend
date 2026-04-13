@@ -15984,6 +15984,96 @@ function bilateralFilter(data, w, h) {
   return out;
 }
 
+// ── Inter-tooth dark line reduction ──────────────────────────────────────────
+//
+// Thin dark lines between teeth survive standard tartar removal because they
+// are high-contrast edges, not just globally dark pixels.  This pass:
+//   1. Detects them via brightness < 75% local_mean AND |Gx| > 20
+//   2. Dilates the detected region by 1 px to cover full line width
+//   3. Blends toward local_mean:  mix=0.85 normally, 0.50 near very strong edges
+//   4. Applies a radius-1 box blur on the treated region to soften transitions
+//
+function reduceDarkLines(result, maskRaw, w, h) {
+  const HORIZ_THRESH  = 20;  // |Gx| threshold for "this is an edge pixel"
+  const EDGE_STRONG   = 50;  // |Gx| above which we protect tooth borders (mix 0.50)
+  const DARK_FACTOR   = 0.75; // pixel must be < 75% of local mean to qualify
+
+  // Brightness of current result buffer
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+
+  // 5×5 local mean
+  const { mean: lm5 } = computeLocalStats(br, w, h, 2);
+
+  // Horizontal Sobel (Gx) — large value = vertical edge = inter-tooth line
+  const gx = new Float32Array(w * h);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const v =
+        -br[(y-1)*w+(x-1)] + br[(y-1)*w+(x+1)]
+        -2*br[y*w+(x-1)]   + 2*br[y*w+(x+1)]
+        -br[(y+1)*w+(x-1)] + br[(y+1)*w+(x+1)];
+      gx[y*w+x] = Math.abs(v) / 4;
+    }
+  }
+
+  // Step 1 — detect
+  const darkLine = new Uint8Array(w * h);
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] > 64 && br[i] < lm5[i] * DARK_FACTOR && gx[i] > HORIZ_THRESH)
+      darkLine[i] = 1;
+  }
+
+  // Step 2 — dilate 1 px (expand to cover full line width)
+  const dilated = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRaw[y*w+x] <= 64) continue;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y+dy, nx = x+dx;
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w && darkLine[ny*w+nx]) {
+            dilated[y*w+x] = 1; break;
+          }
+        }
+        if (dilated[y*w+x]) break;
+      }
+    }
+  }
+
+  // Step 3 — blend toward local mean
+  const blended = Buffer.from(result);
+  let lineCount = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (!dilated[i]) continue;
+    const mix    = gx[i] > EDGE_STRONG ? 0.50 : 0.85;
+    const target = Math.min(245, lm5[i]);
+    for (let c = 0; c < 3; c++)
+      blended[i*3+c] = Math.min(245, Math.round(result[i*3+c] + (target - result[i*3+c]) * mix));
+    lineCount++;
+  }
+
+  // Step 4 — radius-1 box blur on treated pixels only (softens transitions)
+  const out = Buffer.from(blended);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      if (!dilated[y*w+x]) continue;
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++)
+            sum += blended[(y+dy)*w*3+(x+dx)*3+c];
+        out[(y*w+x)*3+c] = Math.min(245, Math.round(sum / 9));
+      }
+    }
+  }
+
+  if (lineCount > 0)
+    console.log(`[SIM DARK-LINE] softened ${lineCount} inter-tooth line pixels`);
+  return out;
+}
+
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
 async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   const [origRaw, maskRaw] = await Promise.all([
@@ -16033,6 +16123,11 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
     if (lifted > 0)
       console.log(`[SIM DARK-FLOOR] forced lift on ${lifted} dark tooth pixels`);
   }
+
+  // ── Inter-tooth dark line reduction ───────────────────────────────────────
+  // Runs after the dark-floor pass so it operates on already-lifted pixels.
+  // Returns a new Buffer; reassign result so validation sees the final state.
+  result = reduceDarkLines(result, maskRaw, w, h);
 
   // Validation: result must be at least as bright as original in teeth zone
   let origSum = 0, resSum = 0, cnt = 0;
