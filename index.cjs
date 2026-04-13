@@ -16088,7 +16088,7 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
   try {
     const created = await replicateCreate(
       'https://api.replicate.com/v1/predictions',
-      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 } },
+      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30, disable_safety_checker: true } },
       token,
     );
     predId = created.id;
@@ -16165,6 +16165,7 @@ async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt }, token) 
           negative_prompt:     SIM_NEGATIVE,
           num_inference_steps: 30,
           guidance_scale:      8.0,
+          disable_safety_checker: true, // dental photos trigger false-positive NSFW
           // NOTE: no 'strength' param — img2img-only; not valid for inpainting models.
         },
       },
@@ -16358,16 +16359,23 @@ async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength
   }
 
   // ── 8. Upload composited result to Supabase (public URL) ────────────────
-  // We MUST use Supabase here (not Replicate /v1/files) because Replicate
-  // file URLs are authenticated — React Native's Image component cannot
-  // load them without an Authorization header.  Supabase public URLs have
-  // no auth requirement and load directly in the app.
+  // Use the same ai-photos/{patientId}/ prefix as the analysis uploads — this
+  // path is already permitted by the bucket's RLS policies.
+  // We MUST use Supabase (not Replicate /v1/files) because Replicate file URLs
+  // require an Authorization header that React Native Image cannot send.
   try {
-    const storagePath = `sim-results/${patientId}/sim-${Date.now()}.jpg`;
+    const ts          = Date.now();
+    const rand        = Math.random().toString(36).slice(2, 8);
+    const storagePath = `ai-photos/${patientId}/sim-${ts}-${rand}.jpg`;
+
+    console.log('[SIM CROP] Uploading to Supabase:', storagePath);
     const { error: upErr } = await supabaseAdmin.storage
       .from('patient-files')
       .upload(storagePath, compositedBuf, { contentType: 'image/jpeg', upsert: false });
-    if (upErr) throw new Error(upErr.message);
+    if (upErr) {
+      console.error('[SIM CROP] Supabase upload error:', upErr.message);
+      throw new Error(upErr.message);
+    }
 
     const { data: urlData } = supabaseAdmin.storage
       .from('patient-files')
@@ -16375,9 +16383,10 @@ async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
 
-    console.log('[SIM CROP] Supabase public URL:', finalUrl.slice(0, 80));
+    console.log('[SIM CROP] Supabase public URL:', finalUrl.slice(0, 100));
     return { url: finalUrl, failReason: null };
   } catch (e) {
+    console.error('[SIM CROP] Supabase upload failed:', e?.message);
     return { url: null, failReason: 'crop_upload_supabase: ' + e?.message };
   }
 }
