@@ -16201,6 +16201,119 @@ function uniformWhitening(result, maskRaw, w, h) {
   return out;
 }
 
+// ── Micro-alignment — subtle horizontal shift per tooth, max ±3 px ───────────
+//
+// Approach:
+//  1. Column-sum of the mask → profile shows how many tooth pixels per column
+//  2. Valleys in profile (< 15% of peak) = inter-tooth gaps → segment boundaries
+//  3. Centroid x of each segment  vs  ideal evenly-spaced positions
+//  4. Per-column shift map built from segment shifts with FEATHER_PX feathering
+//  5. Gaps between segments interpolated linearly (no jarring jump)
+//  6. Inverse-map warp with bilinear interpolation, blended by mask alpha
+//  7. Validation: avgDiff > 6 → revert to original
+//
+async function microAlignment(cropBuf, maskBuf, w, h) {
+  const MAX_SHIFT    = 3;   // px — teeth can shift at most ±3 px horizontally
+  const FEATHER_PX   = 8;   // px — transition width at segment edges
+  const MIN_SEG_W    = 8;   // px — ignore blobs narrower than this
+  const MIN_SEGMENTS = 2;   // need ≥ 2 teeth to do anything meaningful
+
+  const [imgRaw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  // Column-sum of mask (> 64 = in teeth zone)
+  const colSum = new Float32Array(w);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (maskRaw[y*w+x] > 64) colSum[x]++;
+
+  const maxCol = Math.max(...Array.from(colSum));
+  if (maxCol < h * 0.05) {
+    console.log('[SIM ALIGN] no meaningful mask — skipping');
+    return cropBuf;
+  }
+
+  // Detect tooth segments as runs of columns above valley threshold
+  const VALLEY_THRESH = maxCol * 0.15;
+  const segments = [];
+  let inSeg = false, segStart = 0;
+  for (let x = 0; x <= w; x++) {
+    const above = x < w && colSum[x] > VALLEY_THRESH;
+    if (!inSeg && above) { inSeg = true; segStart = x; }
+    else if (inSeg && !above) {
+      inSeg = false;
+      if (x - segStart >= MIN_SEG_W) segments.push({ start: segStart, end: x - 1 });
+    }
+  }
+  if (segments.length < MIN_SEGMENTS) {
+    console.log(`[SIM ALIGN] ${segments.length} segment(s) — need ${MIN_SEGMENTS}+, skipping`);
+    return cropBuf;
+  }
+
+  // Centroid x of each segment
+  const centroids = segments.map(s => (s.start + s.end) / 2);
+  const n = segments.length;
+
+  // Ideal: evenly spaced between first and last centroid
+  const span        = centroids[n-1] - centroids[0];
+  const idealStep   = span / (n - 1);
+  const idealPos    = centroids.map((_, i) => centroids[0] + i * idealStep);
+  const segShift    = centroids.map((c, i) =>
+    Math.max(-MAX_SHIFT, Math.min(MAX_SHIFT, idealPos[i] - c))
+  );
+  console.log(`[SIM ALIGN] ${n} teeth  shifts=[${segShift.map(s=>s.toFixed(1)).join(',')}]px`);
+
+  // Per-column shift map: feathered within segments, interpolated in gaps
+  const colShift = new Float32Array(w);
+  for (let si = 0; si < n; si++) {
+    const { start, end } = segments[si];
+    for (let x = start; x <= end; x++) {
+      const feather = Math.min(1, Math.min(x - start, end - x) / FEATHER_PX);
+      colShift[x] = segShift[si] * feather;
+    }
+  }
+  for (let si = 0; si < n - 1; si++) {
+    const gapStart = segments[si].end + 1, gapEnd = segments[si+1].start - 1;
+    for (let x = gapStart; x <= gapEnd; x++) {
+      const t = (x - gapStart) / Math.max(1, gapEnd - gapStart + 1);
+      colShift[x] = segShift[si] * (1 - t) + segShift[si+1] * t;
+    }
+  }
+
+  // Inverse-map warp: for each output pixel, sample from shifted source
+  const output = Buffer.from(imgRaw);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const m = maskRaw[y*w+x];
+      if (m <= 64) continue;                 // outside mask — untouched
+      const blend = (m / 255) * 0.80;        // mask-weighted blend strength
+      const srcX  = Math.max(0, Math.min(w - 1.001, x - colShift[x]));
+      const x0    = Math.floor(srcX), fx = srcX - x0;
+      const x1    = Math.min(w - 1, x0 + 1);
+      for (let c = 0; c < 3; c++) {
+        const warped = imgRaw[(y*w+x0)*3+c] * (1-fx) + imgRaw[(y*w+x1)*3+c] * fx;
+        output[(y*w+x)*3+c] = Math.min(245, Math.round(
+          imgRaw[(y*w+x)*3+c] * (1 - blend) + warped * blend
+        ));
+      }
+    }
+  }
+
+  // Validation: large average diff means something went wrong — revert
+  let diffSum = 0;
+  for (let i = 0; i < w*h*3; i++) diffSum += Math.abs(output[i] - imgRaw[i]);
+  const avgDiff = diffSum / (w*h*3);
+  if (avgDiff > 6) {
+    console.warn(`[SIM ALIGN] avgDiff=${avgDiff.toFixed(2)} > 6 — reverting`);
+    return cropBuf;
+  }
+  console.log(`[SIM ALIGN] applied — avgDiff=${avgDiff.toFixed(2)}`);
+  return sharp(output, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 92 }).toBuffer();
+}
+
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
 async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   const [origRaw, maskRaw] = await Promise.all([
@@ -16322,6 +16435,11 @@ async function cropCompositeSimulation(publicImageUrl, patientId) {
     blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight);
     console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
+
+  // 5a. Micro-alignment — subtle per-tooth horizontal shift (max ±3 px)
+  try {
+    blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+  } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
 
   // 5b. Sharpening — preserve inter-tooth gaps and surface texture.
   // Unsharp mask: sigma=1.2 (fine details), m1=0.5 (flat areas), m2=10 (edge boost).
