@@ -15931,18 +15931,27 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     let r = origR, g = origG, b = origB;
     const br = brightness[i], lm = mean[i], ls = std[i];
 
-    // Expanded detection: catches mid-tone stains (most real tartar).
-    // Condition:  pixel is meaningfully darker than its neighbourhood
-    //             AND still within the stained-enamel brightness range
-    if (br < 185 && (lm - br) > 12) {
-      const contrast = (lm - br) / (lm + 1e-5);
+    // ── Stain classification ──────────────────────────────────────────────────
+    // delta = chroma spread: high value means a coloured (non-neutral) pixel
+    const delta        = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
+    const isWarmHue    = origR > origG && origG > origB; // R>G>B = yellow/brown tone
 
-      // Brightness-based boost multiplier — stronger for darker deposits
+    // Three independent gates — any one is enough to trigger stain treatment:
+    //   A. Very dark pixel                   (dark tartar / calculus deposits)
+    //   B. Yellow/brown coloured pixel       (plaque, surface staining)
+    //   C. Context-dark (adaptive)           (mid-tone stain relative to neighbours)
+    const isColorStain   = br < 145;
+    const isYellowStain  = br < 170 && delta > 25 && isWarmHue;
+    const isContextStain = br < 185 && (lm - br) > 12;
+    const isStain        = isColorStain || isYellowStain || isContextStain;
+
+    if (isStain) {
+      const contrast  = (lm - br) / (lm + 1e-5);
       const boostMult = br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0;
 
       if (contrast >= 0.35) {
         // ── HEAVY TARTAR: partial replacement ──────────────────────────────
-        const isEdge = gradient[i] > GRAD_EDGE_THRESH;
+        const isEdge  = gradient[i] > GRAD_EDGE_THRESH;
         const baseMix = isEdge ? 0.40 : 0.75;
         const mix     = Math.min(isEdge ? 0.60 : 0.90, baseMix * boostMult);
         const target  = Math.min(245, lm + 0.25 * ls);
@@ -15950,16 +15959,14 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
         g = Math.round(g + (target - g) * mix);
         b = Math.round(b + (target - b) * mix);
       } else if (contrast >= 0.05) {
-        // ── NORMAL TARTAR: lift toward slightly above local mean ────────────
-        // Lower floor (was 0.15) because the outer diff>12 guard already
-        // filters noise; 0.05 lets mid-tone stains (br≈170–184) through.
+        // ── NORMAL TARTAR / COLOURED STAIN: lift toward local mean ─────────
         const lift   = Math.min(0.85, contrast * 0.8 * boostMult);
         const target = Math.min(245, lm + 0.2 * ls);
         r = Math.round(r + (target - r) * lift);
         g = Math.round(g + (target - g) * lift);
         b = Math.round(b + (target - b) * lift);
       }
-      // contrast < 0.05 → extremely subtle, leave unchanged
+      // contrast < 0.05 (very subtle) — colour correction in Stage 2 handles it
     }
 
     // Clamp: result can never be darker than the original pixel
@@ -15967,21 +15974,24 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     g = Math.max(origG, g);
     b = Math.max(origB, b);
 
-    // Stage 2 — LAB color neutralization + lightness boost
+    // Stage 2 — LAB colour neutralization + lightness boost
     const [L, Alab, Blab] = rgbToLab(r, g, b);
 
     // Mild lightening only (+6%) — rule: "improve quality, not geometry"
     const Lw = Math.min(100, L * 1.06);
 
-    // Chroma neutralization — only modify axes with stain signal
-    // B > 8  → yellow tint:  blend 70% toward neutral (0)
-    // A > 5  → brown/red:    blend 60% toward neutral (0)
-    // Otherwise apply a gentle baseline reduction to counteract residual cast
-    const Aw = Alab > 5  ? Alab + (0 - Alab) * 0.60
-                         : Alab * 0.95;           // baseline: minimal shift
-    const Bw = Blab > 8  ? Blab + (0 - Blab) * 0.70
-             : Blab > 0  ? Blab * 0.85            // mild yellow: gentle push
-                         : Blab;                  // cool / neutral: leave alone
+    // A axis (green-red): brown/red stains
+    const Aw = Alab > 5  ? Alab + (0 - Alab) * 0.60 : Alab * 0.95;
+
+    // B axis (blue-yellow):
+    //   isYellowStain pixel → 80% push toward neutral (strongest correction)
+    //   B > 8 (lab signal)  → 70% push
+    //   mild yellow (B 0-8) → 15% gentle push
+    //   cool / neutral      → unchanged
+    const Bw = isYellowStain ? Blab + (0 - Blab) * 0.80
+             : Blab > 8      ? Blab + (0 - Blab) * 0.70
+             : Blab > 0      ? Blab * 0.85
+                             : Blab;
 
     const [ro, go, bo] = labToRgb(Lw, Aw, Bw);
 
