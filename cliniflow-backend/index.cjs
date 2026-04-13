@@ -2601,6 +2601,16 @@ app.get("/admin.html", (req, res) => {
 });
 
 app.get("/", (req, res) => res.redirect("/admin-login.html"));
+
+// Public version endpoint — hit this in a browser to confirm which build is live.
+// e.g. https://cliniflow-backend.onrender.com/api/version
+app.get("/api/version", (req, res) => res.json({
+  version: "v8",
+  commit:  "cb175eef",
+  sim:     "programmatic-whitening",
+  ai:      false,
+  built:   "2026-04-13",
+}));
 app.get("/admin", (req, res) => res.redirect("/admin-login.html"));
 // /dashboard should serve normal admin dashboard, NOT redirect to Super Admin
 app.get("/dashboard", (req, res) => {
