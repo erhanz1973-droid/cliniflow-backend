@@ -16061,6 +16061,14 @@ async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
 const MIN_STAIN_RATIO    = 0.03;  // 3 % of tooth mask
 const PASS_REMOVAL_RATE  = 0.50;  // must remove ≥ 50 % of detected stains
 
+// ── Structural integrity constants ────────────────────────────────────────────
+// PROFILE_CORR_MIN: minimum Pearson r between before/after column brightness
+//   profiles inside the tooth mask.  Below this = tooth geometry has shifted.
+// GAP_KEEP_MIN:     fraction of inter-tooth gap segments that must survive.
+//   If we go from 5 gaps to 2, teeth have effectively been merged.
+const PROFILE_CORR_MIN = 0.82;  // correlation must stay ≥ 0.82
+const GAP_KEEP_MIN     = 0.55;  // at least 55 % of gaps must remain
+
 function detectStains(rawBuf, maskRaw, w, h) {
   let stainCount = 0, maskCount = 0;
   for (let i = 0; i < w * h; i++) {
@@ -16075,6 +16083,96 @@ function detectStains(rawBuf, maskRaw, w, h) {
     if (br < 175 && delta > 22 && r > g && g > b) stainCount++;
   }
   return { count: stainCount, ratio: maskCount > 0 ? stainCount / maskCount : 0 };
+}
+
+// ── Structural integrity helpers ──────────────────────────────────────────────
+//
+// analyzeToothProfile: column-average brightness inside the tooth mask.
+// Each entry is the mean brightness for that x-column, or -1 when no mask pixels
+// fall in that column.
+//
+function analyzeToothProfile(rawBuf, maskRaw, w, h) {
+  const sum   = new Float32Array(w);
+  const count = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y*w + x;
+      if (maskRaw[i] <= 64) continue;
+      sum[x]   += (rawBuf[i*3] + rawBuf[i*3+1] + rawBuf[i*3+2]) / 3;
+      count[x] += 1;
+    }
+  }
+  const profile = new Float32Array(w);
+  for (let x = 0; x < w; x++)
+    profile[x] = count[x] > 0 ? sum[x] / count[x] : -1;
+  return profile;
+}
+
+// countInterToothGaps: number of contiguous dark-column valleys in the profile.
+// A column is a "gap" if its brightness < gap_threshold (average × 0.68).
+// Each contiguous run of gap-columns counts as one inter-tooth gap.
+//
+function countInterToothGaps(profile, w) {
+  const valid = profile.filter(v => v >= 0);
+  if (valid.length === 0) return 0;
+  const avg   = valid.reduce((s, v) => s + v, 0) / valid.length;
+  const thr   = avg * 0.68;
+  let gaps = 0, inGap = false;
+  for (let x = 0; x < w; x++) {
+    if (profile[x] < 0) continue; // column outside mask — ignore
+    if (profile[x] < thr) {
+      if (!inGap) { gaps++; inGap = true; }
+    } else {
+      inGap = false;
+    }
+  }
+  return gaps;
+}
+
+// profileCorrelation: Pearson r between two column brightness profiles.
+// Columns where either profile returns -1 (no mask) are excluded.
+//
+function profileCorrelation(a, b, w) {
+  let sumA = 0, sumB = 0, n = 0;
+  for (let x = 0; x < w; x++) {
+    if (a[x] < 0 || b[x] < 0) continue;
+    sumA += a[x]; sumB += b[x]; n++;
+  }
+  if (n < 4) return 1; // too few valid columns — assume fine
+  const mA = sumA/n, mB = sumB/n;
+  let cov = 0, vA = 0, vB = 0;
+  for (let x = 0; x < w; x++) {
+    if (a[x] < 0 || b[x] < 0) continue;
+    cov += (a[x]-mA) * (b[x]-mB);
+    vA  += (a[x]-mA) ** 2;
+    vB  += (b[x]-mB) ** 2;
+  }
+  const denom = Math.sqrt(vA) * Math.sqrt(vB);
+  return denom > 0 ? Math.max(-1, Math.min(1, cov/denom)) : 1;
+}
+
+// checkStructuralIntegrity: decode both JPEG buffers, compare profiles.
+// Returns { valid, correlation, origGaps, resultGaps, gapRatio, issues[] }.
+//
+async function checkStructuralIntegrity(origBuf, resultBuf, maskBuf, w, h) {
+  const [origRaw, resRaw, maskRaw] = await Promise.all([
+    sharp(origBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  const origProfile = analyzeToothProfile(origRaw, maskRaw, w, h);
+  const resProfile  = analyzeToothProfile(resRaw,  maskRaw, w, h);
+  const corr        = profileCorrelation(origProfile, resProfile, w);
+  const origGaps    = countInterToothGaps(origProfile, w);
+  const resultGaps  = countInterToothGaps(resProfile,  w);
+  const gapRatio    = origGaps > 0 ? resultGaps / origGaps : 1;
+
+  const issues = [];
+  if (corr     < PROFILE_CORR_MIN) issues.push(`low_corr:${corr.toFixed(3)}`);
+  if (gapRatio < GAP_KEEP_MIN)     issues.push(`gaps_lost:${origGaps}→${resultGaps}`);
+
+  return { valid: issues.length === 0, correlation: corr, origGaps, resultGaps, gapRatio, issues };
 }
 
 // ── Edge-preserving bilateral filter (r=3, σ_c=25, σ_s=3) ───────────────────
@@ -16705,6 +16803,47 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     console.warn('[SIM VALIDATE] non-fatal validation error:', validErr?.message);
   }
 
+  // ── Structural integrity check ────────────────────────────────────────────────
+  // Compare the column brightness profile of the original crop vs the current result.
+  // If the Pearson correlation drops below 0.82 OR inter-tooth gaps are reduced by
+  // more than 45%, the output has effectively changed tooth geometry.
+  //
+  // On failure: revert to a "safe fallback" — a gentle re-blend (α 0.25/0.12) of
+  // the original non-boosted enhanced raw, which is purely a colour correction
+  // with almost no luminance shift.
+  //
+  let structureWarning = false;
+  try {
+    const integ = await checkStructuralIntegrity(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    console.log(`[SIM STRUCTURE] corr=${integ.correlation.toFixed(3)}  gaps=${integ.origGaps}→${integ.resultGaps}(ratio=${integ.gapRatio.toFixed(2)})  valid=${integ.valid}`);
+
+    if (!integ.valid) {
+      console.warn('[SIM STRUCTURE] ⚠️ Structure changed:', integ.issues.join(', '), '— reverting to safe fallback');
+      structureWarning = true;
+
+      // Safe fallback: minimal blend, no uniform-whitening overshoot, no extra passes
+      const safeCfg = {
+        ...cfg,
+        blendAlpha:          { strong: 0.25, edge: 0.12 },
+        uniformTargetFactor: 1.06,   // barely +6% above average
+        edgeSoftening:       false,
+        highlights:          false,
+        alignment:           false,
+      };
+      try {
+        const safeEnhanced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, false);
+        blendedCropBuf     = await blendCropWithMask(origCropBuf, safeEnhanced, maskBuf, cropWidth, cropHeight, safeCfg);
+        console.log('[SIM STRUCTURE] ✅ Safe fallback applied');
+      } catch (fbErr) {
+        console.warn('[SIM STRUCTURE] Fallback failed — keeping original result:', fbErr?.message);
+      }
+    } else {
+      console.log('[SIM STRUCTURE] ✅ Tooth structure preserved');
+    }
+  } catch (structErr) {
+    console.warn('[SIM STRUCTURE] non-fatal:', structErr?.message);
+  }
+
   // Final sharpening — mode-specific sigma keeps gaps crisp
   try {
     blendedCropBuf = await sharp(blendedCropBuf)
@@ -16722,7 +16861,9 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     const conf = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
     confidence = conf.confidence; avgPixelChange = conf.avgPixelChange;
     // Stain warning degrades maximum confidence: output is sub-optimal
-    if (stainWarning) confidence = Math.min(confidence, 0.50);
+    if (stainWarning)     confidence = Math.min(confidence, 0.50);
+    // Structure problems are more serious than residual stains — lower cap
+    if (structureWarning) confidence = Math.min(confidence, 0.40);
   } catch (e) { console.warn('[SIM CONFIDENCE] non-fatal:', e?.message); }
 
   // 6. Composite onto full original
@@ -16747,7 +16888,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
     console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
-    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, stainWarning, failReason: null };
+    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, stainWarning, structureWarning, failReason: null };
   } catch (e) {
     console.error('[SIM CROP] Supabase upload failed:', e?.message);
     return { url: null, failReason: 'supabase_upload: ' + e?.message };
@@ -16779,8 +16920,9 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'natural' }) {
     mode:           r.mode,
     confidence:     r.confidence,
     avgPixelChange: r.avgPixelChange,
-    stainWarning:   r.stainWarning ?? false,
-    provider:       'programmatic',
+    stainWarning:     r.stainWarning     ?? false,
+    structureWarning: r.structureWarning ?? false,
+    provider:         'programmatic',
     error:          null,
     fallback:       false,
     debugInfo:      [],
@@ -16825,8 +16967,9 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       mode:           result.mode ?? simMode,
       confidence:     result.confidence ?? null,
       avgPixelChange: result.avgPixelChange ?? null,
-      stainWarning:   result.stainWarning ?? false,
-      failReason:     result.error ?? null,
+      stainWarning:     result.stainWarning     ?? false,
+      structureWarning: result.structureWarning ?? false,
+      failReason:       result.error ?? null,
     });
     console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
@@ -16858,7 +17001,8 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       mode:              job.mode ?? 'natural',
       confidence:        job.confidence ?? null,
       avgPixelChange:    job.avgPixelChange ?? null,
-      stainWarning:      job.stainWarning ?? false,
+      stainWarning:      job.stainWarning      ?? false,
+      structureWarning:  job.structureWarning  ?? false,
       fallback:          false,
     });
   }
