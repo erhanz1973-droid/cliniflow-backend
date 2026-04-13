@@ -4,6 +4,7 @@
 require("dotenv").config();
 
 const express = require("express");
+const sharp = require("sharp");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
@@ -15788,234 +15789,159 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Smile Simulation — 3 variations via Replicate stable-diffusion-img2img ──
-// Model : stability-ai/stable-diffusion-img2img (ddd4eb44, confirmed working)
-// Root cause guard: Supabase signed URLs expire and require auth headers that
-// Replicate's servers cannot supply.  We always fetch the image server-side
-// first and pass it to Replicate as a base64 data URI so the URL is never
-// exposed externally.
+// ─── Smile Simulation — programmatic teeth whitening (NO AI / NO Replicate) ──
+//
+// Pipeline:
+//  1. Fetch original image bytes
+//  2. Crop lower-face region (Y 55–90 %, X 15–85 %)
+//  3. Build per-pixel teeth mask:
+//       brightness > 118 AND saturation ≤ 90 AND G ≥ R×0.70  → tooth (white)
+//       pink lips / dark gums / beard / skin                  → non-tooth (black)
+//     Mask blurred σ=3px for feathered edges.
+//  4. Whiten tooth pixels: blend each channel toward 255
+//       R+38%, G+38%, B+55% (extra blue to counter yellow tint)
+//  5. Per-pixel alpha blend:
+//       result[p] = orig[p]×(1−α) + whitened[p]×α   where α = mask[p]/255
+//       Non-tooth pixels have α=0 → mathematically unchanged.
+//  6. Composite blended crop onto full original
+//  7. Upload result to Supabase → return public URL
 
-const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
-const SIM_NEGATIVE = 'blurry, fake teeth, extra teeth, distorted face, cartoon, unrealistic';
-
-const SIM_VARIATIONS = [
-  {
-    id:              'natural',
-    label:           'Doğal',
-    prompt:          'natural healthy teeth, slight whitening, minimal correction, realistic smile, keep face unchanged, photorealistic',
-    prompt_strength: 0.45,
-  },
-  {
-    id:              'balanced',
-    label:           'Önerilen',
-    prompt:          'perfect white aligned natural teeth, dental aesthetic, realistic smile, keep face unchanged, only improve teeth, photorealistic',
-    prompt_strength: 0.6,
-  },
-  {
-    id:              'hollywood',
-    label:           'Hollywood',
-    prompt:          'ultra white perfect teeth, cosmetic dentistry, hollywood smile, perfectly aligned, keep face unchanged, photorealistic',
-    prompt_strength: 0.75,
-  },
-];
-
-/**
- * Fetch the Supabase image server-side and upload it to Replicate's file API.
- *
- * WHY: stability-ai/stable-diffusion-img2img (ddd4eb44) uses Cog's URI-type
- * input — it requires a real https:// URL and silently ignores base64 data
- * URIs.  Supabase signed URLs expire / require auth headers that Replicate's
- * workers cannot supply.
- *
- * Replicate's /v1/files endpoint hosts the image on their own CDN and returns
- * an https://api.replicate.com/v1/files/... URL that the model can always read.
- *
- * @returns {string} Replicate-hosted image URL
- */
-async function uploadImageToReplicate(imageUrl, token) {
-  console.log('[SIM] Fetching source image:', imageUrl.slice(0, 120));
-  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) });
-  if (!imgRes.ok) {
-    throw new Error(`image_fetch_failed: HTTP ${imgRes.status}`);
+async function buildTeethMask(origCropBuf, w, h) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const maskData = Buffer.alloc(w * h);
+  let white = 0;
+  for (let i = 0; i < w * h; i++) {
+    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    const brightness = (r + g + b) / 3;
+    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+    const isTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
+    maskData[i] = isTooth ? 255 : 0;
+    if (isTooth) white++;
   }
-  const contentType = imgRes.headers.get('content-type') ?? 'image/jpeg';
-  const buffer      = Buffer.from(await imgRes.arrayBuffer());
-  const sizeKB      = Math.round(buffer.byteLength / 1024);
-  console.log(`[SIM] Fetched ${sizeKB} KB | ${contentType} — uploading to Replicate files…`);
-
-  // Upload to Replicate /v1/files — returns a hosted URL the model can read
-  const form = new FormData();
-  form.append('content', new Blob([buffer], { type: contentType }), 'input.jpg');
-
-  const uploadRes  = await fetch('https://api.replicate.com/v1/files', {
-    method:  'POST',
-    headers: { 'Authorization': `Token ${token}` },
-    body:    form,
-    signal:  AbortSignal.timeout(30_000),
-  });
-  const uploadText = await uploadRes.text();
-  let uploadData;
-  try { uploadData = JSON.parse(uploadText); } catch { uploadData = {}; }
-
-  if (!uploadRes.ok) {
-    // /v1/files not available (older Replicate accounts) — fall back to signed URL
-    console.warn(`[SIM] File upload HTTP ${uploadRes.status}:`, uploadText.slice(0, 200));
-    console.warn('[SIM] Falling back to direct signed URL (may fail if Replicate cannot access it)');
-    return imageUrl;
-  }
-
-  const hostedUrl = uploadData?.urls?.get ?? uploadData?.url ?? null;
-  if (!hostedUrl) {
-    console.warn('[SIM] File upload returned no URL, body:', uploadText.slice(0, 200));
-    return imageUrl;
-  }
-
-  console.log('[SIM] Replicate file URL:', hostedUrl.slice(0, 80));
-  return hostedUrl;
+  const pct = ((white / maskData.length) * 100).toFixed(1);
+  console.log(`[SIM MASK] Teeth pixels: ${white}/${maskData.length} (${pct}%)`);
+  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(3).png().toBuffer();
 }
 
-// Returns { url: string|null, failReason: string|null }
-async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, token) {
-  // ── Convert to public URL (no expiry / no auth) ─────────────────────
-  const imageUrl = rawImageUrl
-    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
-    .split('?')[0];
-
-  console.log('[SIM] USING PUBLIC URL:', imageUrl);
-
-  if (imageUrl.includes('/sign/')) {
-    const msg = 'signed_url_guard: conversion had no effect';
-    console.error('[SIM]', msg, '| raw:', rawImageUrl);
-    return { url: null, failReason: msg };
+async function computeWhitenedRaw(origCropBuf, w, h) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    out[i * 3]     = Math.min(255, Math.round(r + (255 - r) * 0.38));
+    out[i * 3 + 1] = Math.min(255, Math.round(g + (255 - g) * 0.38));
+    out[i * 3 + 2] = Math.min(255, Math.round(b + (255 - b) * 0.55));
   }
+  return out;
+}
 
-  // ── Create prediction ───────────────────────────────────────────────
-  let predId;
+async function blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, w, h) {
+  const [origRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const result = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    const alpha = maskRaw[i] / 255;
+    for (let c = 0; c < 3; c++)
+      result[i * 3 + c] = Math.round(origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha);
+  }
+  return sharp(result, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 92 }).toBuffer();
+}
+
+async function cropCompositeSimulation(publicImageUrl, patientId) {
+  // 1. Fetch original
+  let origBuf, origW, origH;
   try {
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-      method:  'POST',
-      headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: SIM_VERSION,
-        input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const createText = await createRes.text();
-    let createData;
-    try { createData = JSON.parse(createText); } catch { createData = {}; }
+    const res = await fetch(publicImageUrl, { signal: AbortSignal.timeout(25_000) });
+    if (!res.ok) throw new Error(`fetch_http_${res.status}`);
+    origBuf = Buffer.from(await res.arrayBuffer());
+    const meta = await sharp(origBuf).metadata();
+    origW = meta.width; origH = meta.height;
+    console.log(`[SIM CROP] Original: ${origW}×${origH}`);
+  } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
 
-    console.log(`[SIM] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
+  // 2. Crop lower face
+  const cropLeft = Math.round(origW * 0.15), cropTop = Math.round(origH * 0.55);
+  const cropWidth = Math.round(origW * 0.70), cropHeight = Math.round(origH * 0.35);
+  console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
-    if (!createRes.ok) {
-      const reason = `create_http_${createRes.status}: ${(createData?.detail ?? createData?.error ?? createText).slice(0, 200)}`;
-      console.error('[SIM] Create failed:', reason);
-      return { url: null, failReason: reason };
-    }
-    if (!createData?.id) {
-      return { url: null, failReason: 'create_no_id: ' + createText.slice(0, 100) };
-    }
-    predId = createData.id;
+  let origCropBuf;
+  try {
+    origCropBuf = await sharp(origBuf)
+      .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
+      .jpeg({ quality: 95 }).toBuffer();
+  } catch (e) { return { url: null, failReason: 'crop_extract: ' + e?.message }; }
+
+  // 3. Build teeth mask
+  let maskBuf;
+  try { maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight); }
+  catch (e) { return { url: null, failReason: 'crop_mask: ' + e?.message }; }
+
+  // 4+5. Whiten + blend
+  let blendedCropBuf;
+  try {
+    const whitenedRaw = await computeWhitenedRaw(origCropBuf, cropWidth, cropHeight);
+    blendedCropBuf = await blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, cropWidth, cropHeight);
+    console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
+  } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
+
+  // 6. Composite onto full original
+  let compositedBuf;
+  try {
+    compositedBuf = await sharp(origBuf)
+      .composite([{ input: blendedCropBuf, left: cropLeft, top: cropTop }])
+      .jpeg({ quality: 90 }).toBuffer();
+    console.log(`[SIM CROP] Composited: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+  } catch (e) { return { url: null, failReason: 'crop_composite: ' + e?.message }; }
+
+  // 7. Upload to Supabase
+  try {
+    const ts = Date.now(), rand = Math.random().toString(36).slice(2, 8);
+    const storagePath = `ai-photos/${patientId}/sim-${ts}-${rand}.jpg`;
+    console.log('[SIM CROP] Uploading to Supabase:', storagePath);
+    const { error: upErr } = await supabaseAdmin.storage
+      .from('patient-files')
+      .upload(storagePath, compositedBuf, { contentType: 'image/jpeg', upsert: false });
+    if (upErr) throw new Error(upErr.message);
+    const { data: urlData } = supabaseAdmin.storage.from('patient-files').getPublicUrl(storagePath);
+    const finalUrl = urlData?.publicUrl;
+    if (!finalUrl) throw new Error('getPublicUrl returned nothing');
+    console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
+    return { url: finalUrl, failReason: null };
   } catch (e) {
-    return { url: null, failReason: 'create_exception: ' + e?.message };
+    console.error('[SIM CROP] Supabase upload failed:', e?.message);
+    return { url: null, failReason: 'supabase_upload: ' + e?.message };
   }
-
-  // ── Poll: 60 attempts × 1.5 s = 90 s max ──────────────────────────
-  const MAX_POLLS     = 60;
-  const POLL_INTERVAL = 1500;
-  let   polls         = 0;
-  let   prediction    = { status: 'starting' };
-
-  while (
-    prediction.status !== 'succeeded' &&
-    prediction.status !== 'failed'    &&
-    polls < MAX_POLLS
-  ) {
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-    try {
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-        headers: { 'Authorization': `Token ${token}` },
-        signal:  AbortSignal.timeout(8_000),
-      });
-      prediction = await pollRes.json();
-    } catch (e) {
-      console.warn(`[SIM] Poll ${polls} exception:`, e?.message);
-    }
-    console.log(`[SIM POLL] ${polls}/${MAX_POLLS}: ${prediction.status}`);
-    polls++;
-  }
-
-  if (prediction.status === 'succeeded' && prediction.output) {
-    const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-    console.log('REPLICATE OUTPUT:', output);
-    return { url: output, failReason: null };
-  }
-
-  console.log('❌ NO OUTPUT FROM REPLICATE | status:', prediction.status, '| polls:', polls);
-  if (prediction.status === 'failed') {
-    console.error('[SIM] Prediction failed | error:', prediction.error, '\n  logs:', String(prediction.logs ?? '').slice(-400));
-    return { url: null, failReason: `prediction_failed: ${prediction.error ?? '(no message)'}` };
-  }
-  return { url: null, failReason: polls >= MAX_POLLS ? `timeout_${MAX_POLLS}_polls` : 'no_output' };
 }
 
-/**
- * Convert a Supabase signed URL to its public equivalent.
- * /storage/v1/object/sign/bucket/path?token=xxx
- * → /storage/v1/object/public/bucket/path
- *
- * The `patient-files` bucket must have public access enabled in Supabase.
- * A public URL is a plain https:// link with no auth/expiry — Replicate can
- * always fetch it.
- */
-function toPublicUrl(signedUrl) {
-  return signedUrl
+async function runSmileSimulation({ imageUrl, patientId }) {
+  // Convert to public URL (strip query params / signed token)
+  const publicImageUrl = imageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
     .split('?')[0];
-}
 
-/**
- * Runs a SINGLE "balanced" smile simulation.
- * No fallback to original image — returns null url on failure so the
- * frontend knows it was a real failure and can show a retry button.
- */
-async function runSmileSimulation({ imageUrl, patientId }) {
-  const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) {
-    console.error('[SIM] REPLICATE_API_TOKEN not set');
-    return { variations: [], url: null, provider: null, error: 'no_providers_configured' };
-  }
+  console.log('[SIM] Starting programmatic whitening | patientId:', patientId);
+  console.log('[SIM] Public URL:', publicImageUrl.slice(0, 120));
 
-  // ── Cache key: strip token query so it survives re-signing ──────────
-  const cacheKey = imageUrl.split('?')[0];
-  console.log('[SIM] Starting | patientId:', patientId);
-  console.log('[SIM] Cache key:', cacheKey);
-
-  // ── Single "balanced" variation (MVP) ───────────────────────────────
-  const balanced = SIM_VARIATIONS.find(v => v.id === 'balanced') ?? SIM_VARIATIONS[1];
-  const r        = await replicatePrediction(imageUrl, balanced, token);
+  const r = await cropCompositeSimulation(publicImageUrl, patientId);
 
   if (!r.url) {
     console.log('❌ Simulation failed | reason:', r.failReason);
     logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
-    return {
-      variations: [],
-      url:        null,          // ← NO fake fallback to original image
-      provider:   null,
-      error:      r.failReason,
-      fallback:   false,
-      debugInfo:  [r.failReason],
-    };
+    return { variations: [], url: null, provider: null, error: r.failReason, fallback: false, debugInfo: [r.failReason] };
   }
 
   console.log('[SIM] Done ✅ | url:', r.url.slice(0, 80));
   logAI('info', 'sim_done', { patientId });
-
-  const variation = { id: balanced.id, label: balanced.label, url: r.url };
   return {
-    variations: [variation],
+    variations: [{ id: 'whitened', label: 'Beyazlatma', url: r.url }],
     url:        r.url,
-    provider:   'replicate',
+    provider:   'programmatic',
     error:      null,
     fallback:   false,
     debugInfo:  [],
