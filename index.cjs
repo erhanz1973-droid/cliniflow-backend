@@ -16257,31 +16257,26 @@ async function uploadBufferToReplicate(buffer, contentType, filename, token) {
   return url;
 }
 
-// ── Crop → img2img → composite (PRIMARY simulation path) ───────────────────
+// ── Crop → img2img → MASK-BLEND → composite (PRIMARY simulation path) ────────
 /**
- * Isolate the teeth area, run img2img on ONLY that crop, then paste the
- * AI result back onto the original image pixel-perfectly.
- *
- * Steps:
+ * Pipeline:
  *  1. Fetch original image bytes
  *  2. Crop to lower-face / mouth region (Y 55–90 %, X 15–85 %)
- *  3. Resize crop to 512 px wide for the model
- *  4. Upload crop → Replicate files
- *  5. Run img2img with very low prompt_strength (0.25) — minimal change
- *  6. Safety-check AI result: reject if too many dark/artifact pixels
- *  7. Download AI result and resize back to original crop dimensions
- *  8. Composite AI result onto original image at the exact crop coordinates
- *  9. Upload composited image to Supabase and return public URL
+ *  3. Upload 512-px-wide crop → Replicate, run img2img (very low strength)
+ *  4. Safety-check AI result (reject if mostly dark / artifact)
+ *  5. Build a per-pixel teeth mask from the ORIGINAL crop:
+ *       bright + low-saturation pixels  →  white (teeth)
+ *       pink / dark / saturated pixels  →  black (lips, gums, skin, beard)
+ *  6. Pixel-blend:  result[px] = orig[px] * (1 - mask) + ai[px] * mask
+ *       → only tooth-coloured pixels receive the AI treatment
+ *       → lips, skin, gums inside the crop box are never changed
+ *  7. Composite the blended crop onto the full original image
+ *  8. Upload composited image to Supabase, return public URL
  *
- * Because only the crop is sent to the AI, the beard / skin / lips that lie
- * outside the crop rectangle are never touched — they come straight from the
- * original image bytes in step 8.
- *
- * Returns { url: string|null, failReason: string|null }
+ * This guarantees that NO pixels outside the exact bounding box are touched
+ * (step 7) AND that NO non-tooth pixels inside the box are touched (step 6).
  */
 
-// Dedicated teeth-only prompt for the crop (the crop IS the mouth, so no need
-// to repeat "keep face unchanged" — the face is never in the crop at all).
 const CROP_PROMPT = [
   'natural white teeth, clean alignment, full dental structure visible,',
   'ALL teeth present and complete, no gaps, no missing teeth,',
@@ -16295,29 +16290,104 @@ const CROP_NEGATIVE = [
   'cartoon', 'blurry', 'overexposed', 'dark background', 'black mouth',
 ].join(', ');
 
-// How aggressively the AI changes the teeth region.
-// 0.25 = very subtle (safe for dental close-ups, minimal distortion risk).
+// Conservative strength — model only polishes what is already there.
 const CROP_STRENGTH = 0.25;
 
 /**
- * Pixel-quality safety check on the AI crop result.
- * Rejects the result if more than MAX_DARK_RATIO of the pixels are near-black
- * (a reliable signal of a collapsed / artifact-filled generation).
+ * Build a greyscale teeth mask from a JPEG/PNG buffer at (w, h) pixels.
+ *
+ * Teeth heuristic (from dental photo research):
+ *   brightness  = (R + G + B) / 3   > BRIGHT_THRESH  (bright enough)
+ *   saturation  = max(R,G,B) - min(R,G,B) < SAT_THRESH  (not pink/red)
+ *
+ * Lips are pink  → high R, lower G/B → high saturation → excluded.
+ * Gums are dark red → low brightness → excluded.
+ * Beard / skin    → medium brightness, medium-high saturation → excluded.
+ *
+ * The raw binary mask is blurred (σ = 4 px) so blending has soft edges.
+ *
+ * Returns a greyscale PNG buffer at the requested dimensions.
+ */
+async function buildTeethMask(origCropBuf, w, h) {
+  const BRIGHT_THRESH = 135; // must be brighter than this to count as tooth
+  const SAT_THRESH    = 55;  // max allowed colour spread (keeps out pink lips)
+
+  // Decode to raw 3-channel RGB
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const maskData = Buffer.alloc(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const r = data[i * 3];
+    const g = data[i * 3 + 1];
+    const b = data[i * 3 + 2];
+    const brightness  = (r + g + b) / 3;
+    const saturation  = Math.max(r, g, b) - Math.min(r, g, b);
+    maskData[i] = (brightness > BRIGHT_THRESH && saturation < SAT_THRESH) ? 255 : 0;
+  }
+
+  // Soft edges via blur, then return as PNG
+  const maskBuf = await sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(4)
+    .png()
+    .toBuffer();
+
+  // Count masked pixels for logging
+  let white = 0;
+  for (let i = 0; i < maskData.length; i++) { if (maskData[i] > 128) white++; }
+  const pct = ((white / maskData.length) * 100).toFixed(1);
+  console.log(`[SIM MASK] Teeth pixels: ${white} / ${maskData.length}  (${pct} %)`);
+
+  return maskBuf;
+}
+
+/**
+ * Pixel-level blend: for each pixel p,
+ *   result[p] = orig[p] * (1 - alpha[p]) + ai[p] * alpha[p]
+ * where alpha = maskPNG greyscale value / 255.
+ *
+ * Both origBuf and aiBuf are resized to (w, h) before blending.
+ * Returns a JPEG buffer at (w, h).
+ */
+async function blendCropWithMask(origBuf, aiBuf, maskBuf, w, h) {
+  const [origRaw, aiRaw, maskRaw] = await Promise.all([
+    sharp(origBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(aiBuf ).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  const result = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    const alpha = maskRaw[i] / 255;
+    for (let c = 0; c < 3; c++) {
+      result[i * 3 + c] = Math.round(
+        origRaw[i * 3 + c] * (1 - alpha) + aiRaw[i * 3 + c] * alpha,
+      );
+    }
+  }
+
+  return sharp(result, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+/**
+ * Safety check: reject AI crops where >20 % of pixels are near-black.
+ * This catches "collapsed mouth" / all-black artefacts reliably.
  */
 async function isCropAcceptable(aiBuf) {
-  const MAX_DARK_RATIO = 0.20; // reject if >20 % of pixels are very dark
   try {
-    const { data, info } = await sharp(aiBuf)
-      .greyscale()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const { data, info } = await sharp(aiBuf).greyscale().raw().toBuffer({ resolveWithObject: true });
     let dark = 0;
     for (let i = 0; i < data.length; i++) { if (data[i] < 25) dark++; }
-    const ratio = dark / info.width / info.height;
+    const ratio = dark / (info.width * info.height);
     console.log(`[SIM CROP] dark-pixel ratio: ${(ratio * 100).toFixed(1)} %`);
-    return ratio < MAX_DARK_RATIO;
+    return ratio < 0.20;
   } catch {
-    return true; // if check fails, don't block the result
+    return true;
   }
 }
 
@@ -16336,53 +16406,53 @@ async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) 
     return { url: null, failReason: 'crop_fetch_orig: ' + e?.message };
   }
 
-  // ── 2. Calculate crop rectangle ─────────────────────────────────────────
-  // Lower-face region for a portrait/selfie photo:
-  //   Y: 55 % – 90 % from top  → captures full mouth + chin margin
-  //   X: 15 % – 85 % from left → wide enough for corners of the mouth
+  // ── 2. Crop rectangle: lower face (Y 55–90 %, X 15–85 %) ───────────────
   const cropLeft   = Math.round(origW * 0.15);
   const cropTop    = Math.round(origH * 0.55);
   const cropWidth  = Math.round(origW * 0.70);
   const cropHeight = Math.round(origH * 0.35);
   console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
-  // ── 3. Extract and resize crop to 512 px wide ────────────────────────────
-  let cropBuf, aiInputH;
+  // ── 3. Extract the original crop (keep at native resolution) ────────────
+  let origCropBuf;
   try {
-    const scaledH = Math.round((512 / cropWidth) * cropHeight);
-    aiInputH      = scaledH;
-    cropBuf = await sharp(origBuf)
+    origCropBuf = await sharp(origBuf)
       .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
-      .resize(512, scaledH)
-      .jpeg({ quality: 88 })
+      .jpeg({ quality: 92 })
       .toBuffer();
-    console.log(`[SIM CROP] Crop buffer: ${Math.round(cropBuf.byteLength / 1024)} KB  (512×${scaledH})`);
   } catch (e) {
     return { url: null, failReason: 'crop_extract: ' + e?.message };
   }
 
-  // ── 4. Upload crop to Replicate ──────────────────────────────────────────
+  // ── 4. Resize to 512 px wide for the AI model ───────────────────────────
+  let aiInputBuf, aiInputH;
+  try {
+    aiInputH  = Math.round((512 / cropWidth) * cropHeight);
+    aiInputBuf = await sharp(origCropBuf)
+      .resize(512, aiInputH)
+      .jpeg({ quality: 88 })
+      .toBuffer();
+    console.log(`[SIM CROP] AI input: 512×${aiInputH}  (${Math.round(aiInputBuf.byteLength / 1024)} KB)`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_resize_ai: ' + e?.message };
+  }
+
+  // ── 5. Upload crop → Replicate, run img2img ─────────────────────────────
   let cropUrl;
   try {
-    cropUrl = await uploadBufferToReplicate(cropBuf, 'image/jpeg', 'teeth-crop.jpg', token);
-    console.log('[SIM CROP] Crop uploaded:', cropUrl.slice(0, 80));
+    cropUrl = await uploadBufferToReplicate(aiInputBuf, 'image/jpeg', 'teeth-crop.jpg', token);
+    console.log('[SIM CROP] Uploaded crop:', cropUrl.slice(0, 80));
   } catch (e) {
     return { url: null, failReason: 'crop_upload: ' + e?.message };
   }
 
-  // ── 5. Run img2img on the crop only ─────────────────────────────────────
-  // Use CROP_PROMPT/CROP_NEGATIVE/CROP_STRENGTH — not the full-image balanced
-  // variation prompt.  The crop IS the mouth already, so there is no need to
-  // say "keep face unchanged"; the face was never included in the crop.
   const r = await replicatePrediction(
     cropUrl,
     { prompt: CROP_PROMPT, negative_prompt: CROP_NEGATIVE, prompt_strength: CROP_STRENGTH },
     token,
   );
-  if (!r.url) {
-    return { url: null, failReason: 'crop_img2img: ' + r.failReason };
-  }
-  console.log('[SIM CROP] img2img result:', r.url.slice(0, 80));
+  if (!r.url) return { url: null, failReason: 'crop_img2img: ' + r.failReason };
+  console.log('[SIM CROP] img2img done:', r.url.slice(0, 80));
 
   // ── 6. Download AI result ────────────────────────────────────────────────
   let aiBuf;
@@ -16394,42 +16464,44 @@ async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) 
     return { url: null, failReason: 'crop_dl: ' + e?.message };
   }
 
-  // ── 6b. Safety check — reject obviously broken results ───────────────────
-  const acceptable = await isCropAcceptable(aiBuf);
-  if (!acceptable) {
-    console.warn('[SIM CROP] ❌ Safety check failed (too many dark pixels) — rejecting result');
+  // Safety check — reject collapsed / all-black results
+  if (!(await isCropAcceptable(aiBuf))) {
+    console.warn('[SIM CROP] ❌ Safety check failed — too many dark pixels');
     return { url: null, failReason: 'crop_safety_check_failed' };
   }
 
-  // ── 6c. Resize AI result back to original crop dimensions ───────────────
-  let aiResizedBuf;
+  // ── 7. Build teeth mask from the ORIGINAL crop ───────────────────────────
+  // The mask is computed on the original (not AI) so we only touch the pixels
+  // that were already tooth-coloured BEFORE the AI ran.
+  let maskBuf;
   try {
-    aiResizedBuf = await sharp(aiBuf)
-      .resize(cropWidth, cropHeight)
-      .jpeg({ quality: 90 })
-      .toBuffer();
-    console.log(`[SIM CROP] AI resized to ${cropWidth}×${cropHeight}`);
+    maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight);
   } catch (e) {
-    return { url: null, failReason: 'crop_resize: ' + e?.message };
+    return { url: null, failReason: 'crop_mask: ' + e?.message };
   }
 
-  // ── 7. Composite AI result onto original ────────────────────────────────
+  // ── 8. Pixel-blend: only copy AI result where mask says "teeth" ──────────
+  let blendedCropBuf;
+  try {
+    blendedCropBuf = await blendCropWithMask(origCropBuf, aiBuf, maskBuf, cropWidth, cropHeight);
+    console.log(`[SIM CROP] Blended crop: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_blend: ' + e?.message };
+  }
+
+  // ── 9. Composite blended crop onto the full original ────────────────────
   let compositedBuf;
   try {
     compositedBuf = await sharp(origBuf)
-      .composite([{ input: aiResizedBuf, left: cropLeft, top: cropTop }])
+      .composite([{ input: blendedCropBuf, left: cropLeft, top: cropTop }])
       .jpeg({ quality: 88 })
       .toBuffer();
-    console.log(`[SIM CROP] Composited: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+    console.log(`[SIM CROP] Final composite: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
   } catch (e) {
     return { url: null, failReason: 'crop_composite: ' + e?.message };
   }
 
-  // ── 8. Upload composited result to Supabase (public URL) ────────────────
-  // Use the same ai-photos/{patientId}/ prefix as the analysis uploads — this
-  // path is already permitted by the bucket's RLS policies.
-  // We MUST use Supabase (not Replicate /v1/files) because Replicate file URLs
-  // require an Authorization header that React Native Image cannot send.
+  // ── 10. Upload to Supabase ────────────────────────────────────────────────
   try {
     const ts          = Date.now();
     const rand        = Math.random().toString(36).slice(2, 8);
