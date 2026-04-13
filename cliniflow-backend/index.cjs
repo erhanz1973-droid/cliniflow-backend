@@ -15918,28 +15918,35 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     let r = origR, g = origG, b = origB;
     const br = brightness[i], lm = mean[i], ls = std[i];
 
-    if (br < lm - 0.4 * ls) {
+    // Expanded detection: catches mid-tone stains (most real tartar).
+    // Condition:  pixel is meaningfully darker than its neighbourhood
+    //             AND still within the stained-enamel brightness range
+    if (br < 185 && (lm - br) > 12) {
       const contrast = (lm - br) / (lm + 1e-5);
+
+      // Brightness-based boost multiplier — stronger for darker deposits
+      const boostMult = br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0;
 
       if (contrast >= 0.35) {
         // ── HEAVY TARTAR: partial replacement ──────────────────────────────
-        const isEdge  = gradient[i] > GRAD_EDGE_THRESH;
-        const mix     = isEdge ? 0.40 : 0.75;         // protect tooth borders
+        const isEdge = gradient[i] > GRAD_EDGE_THRESH;
+        const baseMix = isEdge ? 0.40 : 0.75;
+        const mix     = Math.min(isEdge ? 0.60 : 0.90, baseMix * boostMult);
         const target  = Math.min(245, lm + 0.25 * ls);
         r = Math.round(r + (target - r) * mix);
         g = Math.round(g + (target - g) * mix);
         b = Math.round(b + (target - b) * mix);
-        if (isEdge)
-          console.log(`[SIM TARTAR] edge pixel i=${i} grad=${gradient[i].toFixed(1)} mix=0.40`);
-      } else if (contrast >= 0.15) {
+      } else if (contrast >= 0.05) {
         // ── NORMAL TARTAR: lift toward slightly above local mean ────────────
-        const lift   = Math.min(0.7, contrast * 0.8);
+        // Lower floor (was 0.15) because the outer diff>12 guard already
+        // filters noise; 0.05 lets mid-tone stains (br≈170–184) through.
+        const lift   = Math.min(0.85, contrast * 0.8 * boostMult);
         const target = Math.min(245, lm + 0.2 * ls);
         r = Math.round(r + (target - r) * lift);
         g = Math.round(g + (target - g) * lift);
         b = Math.round(b + (target - b) * lift);
       }
-      // contrast < 0.15 → natural enamel texture, leave unchanged
+      // contrast < 0.05 → extremely subtle, leave unchanged
     }
 
     // Clamp: result can never be darker than the original pixel
