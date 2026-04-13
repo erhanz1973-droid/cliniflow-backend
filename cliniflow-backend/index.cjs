@@ -15974,8 +15974,8 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
 }
 
 // ── Edge-preserving bilateral filter (r=3, σ_c=25, σ_s=3) ───────────────────
-function bilateralFilter(data, w, h) {
-  const SC2 = 2*25*25, SS2 = 2*3*3, R = 3;
+function bilateralFilter(data, w, h, radius = 3, sigmaColor = 25, sigmaSpace = 3) {
+  const SC2 = 2*sigmaColor*sigmaColor, SS2 = 2*sigmaSpace*sigmaSpace, R = radius;
   const out = new Uint8Array(w * h * 3);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -16091,6 +16091,47 @@ function reduceDarkLines(result, maskRaw, w, h) {
   return out;
 }
 
+// ── Micro-texture cleaning: removes rough/speckled tartar surface noise ───────
+//
+// Tartar leaves behind a noisy, high-variance texture on enamel even after
+// pixel-level lifting.  This pass:
+//   1. Computes local std-dev (5×5 window) from current result brightness
+//   2. Marks pixels with std > STD_THRESH as NOISY_AREA
+//   3. Skips edge pixels (gradient > EDGE_THRESH) — preserves tooth boundaries
+//   4. Applies a tight bilateral filter (r=2, σ_c=20, σ_s=2) to a copy
+//   5. Blends: result = orig×0.4 + smoothed×0.6 only where NOISY_AREA
+//
+function microTextureClean(result, maskRaw, w, h) {
+  const STD_THRESH  = 12;  // std > 12 = rough texture / speckled surface
+  const EDGE_THRESH = 20;  // gradient > 20 = tooth boundary — do not touch
+  const MIX         = 0.60;
+
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+
+  const { std }  = computeLocalStats(br, w, h, 2); // 5×5 variance map
+  const grad     = computeGradient(br, w, h);       // Sobel magnitude
+
+  // Tight bilateral: small radius + moderate color sigma → smooths speckle,
+  // still preserves sharp tooth edges via the colour-distance weighting.
+  const smoothed = bilateralFilter(result, w, h, 2, 20, 2);
+
+  const out = Buffer.from(result);
+  let count = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64)         continue; // outside tooth mask
+    if (std[i]  <= STD_THRESH)    continue; // already smooth — leave it
+    if (grad[i] > EDGE_THRESH)    continue; // tooth border — preserve
+    for (let c = 0; c < 3; c++)
+      out[i*3+c] = Math.min(245, Math.round(result[i*3+c]*(1-MIX) + smoothed[i*3+c]*MIX));
+    count++;
+  }
+  if (count > 0)
+    console.log(`[SIM MICRO-TEX] smoothed ${count} noisy surface pixels`);
+  return out;
+}
+
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
 async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   const [origRaw, maskRaw] = await Promise.all([
@@ -16145,6 +16186,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   // Runs after the dark-floor pass so it operates on already-lifted pixels.
   // Returns a new Buffer; reassign result so validation sees the final state.
   result = reduceDarkLines(result, maskRaw, w, h);
+
+  // ── Micro-texture cleaning (noisy/speckled tartar surface) ────────────────
+  result = microTextureClean(result, maskRaw, w, h);
 
   // Validation: result must be at least as bright as original in teeth zone
   let origSum = 0, resSum = 0, cnt = 0;
