@@ -15890,12 +15890,14 @@ function computeGradient(brightness, w, h) {
   return grad;
 }
 
-// ── Main enhancement: adaptive tartar removal + LAB whitening ─────────────────
+// ── Main enhancement: tartar removal + LAB color neutralization + whitening ───
 //
-//  Normal tartar  (0.15 ≤ contrast < 0.35): lift toward mean + 0.2×std
-//  Heavy tartar   (contrast ≥ 0.35):        partial replacement, mix 0.75
-//    ↳ near tooth edge (gradient > 25):     reduce mix to 0.4
-//  Final clamp: result ≥ original (no darkening ever)
+//  Tartar:     adaptive removal in two tiers (contrast 0.15–0.35 / ≥ 0.35)
+//  Color:      LAB neutralization targets yellow (B>8) and brown/red (A>5)
+//              new_A = mix(A, 0, 0.60)   new_B = mix(B, 0, 0.70)
+//              L unchanged — brightness is not affected
+//  Whitening:  L × 1.08 (≈ +8% lightness) applied on top
+//  Safety:     result ≥ original pixel for every channel
 //
 async function computeEnhancedRaw(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
@@ -15945,13 +15947,28 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     g = Math.max(origG, g);
     b = Math.max(origB, b);
 
-    // Stage 2 — real LAB whitening: L×1.08, b×0.90
-    const [L, A, Blab] = rgbToLab(r, g, b);
-    const [ro, go, bo] = labToRgb(Math.min(100, L * 1.08), A, Blab * 0.90);
+    // Stage 2 — LAB color neutralization + lightness boost
+    const [L, Alab, Blab] = rgbToLab(r, g, b);
 
-    out[i*3]   = Math.min(245, ro);
-    out[i*3+1] = Math.min(245, go);
-    out[i*3+2] = Math.min(245, bo);
+    // Lighten (applied to all tooth pixels)
+    const Lw = Math.min(100, L * 1.08);
+
+    // Chroma neutralization — only modify axes with stain signal
+    // B > 8  → yellow tint:  blend 70% toward neutral (0)
+    // A > 5  → brown/red:    blend 60% toward neutral (0)
+    // Otherwise apply a gentle baseline reduction to counteract residual cast
+    const Aw = Alab > 5  ? Alab + (0 - Alab) * 0.60
+                         : Alab * 0.95;           // baseline: minimal shift
+    const Bw = Blab > 8  ? Blab + (0 - Blab) * 0.70
+             : Blab > 0  ? Blab * 0.85            // mild yellow: gentle push
+                         : Blab;                  // cool / neutral: leave alone
+
+    const [ro, go, bo] = labToRgb(Lw, Aw, Bw);
+
+    // Safety: result must be ≥ original on every channel (never darken)
+    out[i*3]   = Math.min(245, Math.max(origR, ro));
+    out[i*3+1] = Math.min(245, Math.max(origG, go));
+    out[i*3+2] = Math.min(245, Math.max(origB, bo));
   }
   return out;
 }
