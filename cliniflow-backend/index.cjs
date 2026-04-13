@@ -16139,48 +16139,64 @@ function microTextureClean(result, maskRaw, w, h) {
   return out;
 }
 
-// ── Uniform whitening — even tone across all teeth, shading preserved ─────────
+// ── Smart uniform whitening — adaptive tone leveling, shading preserved ───────
 //
-// Problem solved: tartar patches & lower teeth that survived earlier passes
-// still look darker than the rest of the smile because they sit below the
-// average tooth brightness.  This pass lifts every below-average pixel
-// proportionally toward a single target tone, then mixes back at 70% so
-// natural shading / curvature gradients are kept.
-//
-// Rules:
-//   1. target = min(235,  avg_brightness × 1.15)   (never blow out to paper-white)
-//   2. delta  = target − pixel_brightness
-//   3. shifted = pixel + delta × 0.6               (tone normalization)
-//   4. result  = mix(pixel, shifted, 0.70)          (shading preservation)
-//   5. skip if pixel_brightness > 200               (highlight protection)
+// Stats:   avg = mean brightness;  p95 = 95th-percentile brightness (tooth mask)
+// Target:  avg × 1.18,  hard ceiling: p95 × 0.98  (never exceeds near-highlight)
+// Lift:    lift = clamp(delta/255, 0.10, 0.60)  — proportional, dark pixels lift more
+// Mix:     result = mix(original, lifted, 0.65) — 35% original shading preserved
+// Yellow:  if R > G > B: B += (R−B) × 0.25     — removes residual yellow cast
+// Guard:   brightness > 210 → pixel unchanged   — highlight protection
 //
 function uniformWhitening(result, maskRaw, w, h) {
-  // Step 1 — average brightness of all tooth-mask pixels (snapshot of input)
-  const snap = Buffer.from(result);
-  const br   = new Float32Array(w * h);
+  const snap = Buffer.from(result);  // immutable snapshot for reads
+
+  // Brightness of every pixel
+  const br = new Float32Array(w * h);
   for (let i = 0; i < w*h; i++)
     br[i] = (snap[i*3] + snap[i*3+1] + snap[i*3+2]) / 3;
 
-  let sum = 0, cnt = 0;
-  for (let i = 0; i < w*h; i++) { if (maskRaw[i] > 64) { sum += br[i]; cnt++; } }
-  if (cnt === 0) return result;
+  // Step 1 — collect masked pixel brightnesses → avg + 95th percentile
+  const vals = [];
+  for (let i = 0; i < w*h; i++) { if (maskRaw[i] > 64) vals.push(br[i]); }
+  if (vals.length === 0) return result;
 
-  const avg    = sum / cnt;
-  const target = Math.min(235, avg * 1.15);
-  console.log(`[SIM UNIFORM] mask_px=${cnt} avg_br=${avg.toFixed(1)} target=${target.toFixed(1)}`);
+  vals.sort((a, b) => a - b);
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+  const p95 = vals[Math.floor(vals.length * 0.95)];
+
+  // Step 2 — target: 18% above average but never exceeds 98% of near-highlights
+  const target = Math.min(p95 * 0.98, avg * 1.18);
+  console.log(`[SIM UNIFORM] px=${vals.length} avg=${avg.toFixed(1)} p95=${p95.toFixed(1)} target=${target.toFixed(1)}`);
 
   const out = Buffer.from(snap);
   for (let i = 0; i < w*h; i++) {
-    if (maskRaw[i] <= 64) continue;   // outside tooth mask
-    if (br[i] > 200)      continue;   // highlight — keep original to avoid burn
+    if (maskRaw[i] <= 64) continue;  // outside mask
+    if (br[i] > 210)      continue;  // highlight — untouched
 
-    const delta = target - br[i];
-    for (let c = 0; c < 3; c++) {
-      const orig    = snap[i*3+c];
-      const shifted = orig + delta * 0.6;                     // tone-normalized
-      const blended = orig * 0.30 + shifted * 0.70;           // 70% toward shifted
-      out[i*3+c]    = Math.min(245, Math.max(0, Math.round(blended)));
-    }
+    const pixBr = br[i];
+    const delta  = target - pixBr;
+    const lift   = Math.min(0.60, Math.max(0.10, delta / 255)); // adaptive lift
+
+    let r = snap[i*3], g = snap[i*3+1], b = snap[i*3+2];
+
+    // Step 3 — tone-normalize toward target
+    const rn = r + delta * lift;
+    const gn = g + delta * lift;
+    let   bn = b + delta * lift;
+
+    // Step 4 — blend: 65% toward normalized, 35% original shading
+    let ro = r * 0.35 + rn * 0.65;
+    let go = g * 0.35 + gn * 0.65;
+    let bo = b * 0.35 + bn * 0.65;
+
+    // Step 5 — yellow tint kill: R > G > B → boost blue channel
+    if (r > g && g > b)
+      bo += (r - b) * 0.25;
+
+    out[i*3]   = Math.min(245, Math.max(0, Math.round(ro)));
+    out[i*3+1] = Math.min(245, Math.max(0, Math.round(go)));
+    out[i*3+2] = Math.min(245, Math.max(0, Math.round(bo)));
   }
   return out;
 }
