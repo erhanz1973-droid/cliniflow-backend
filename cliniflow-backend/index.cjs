@@ -15932,28 +15932,36 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     const br = brightness[i], lm = mean[i], ls = std[i];
 
     // ── Stain classification ──────────────────────────────────────────────────
-    // delta = chroma spread: high value means a coloured (non-neutral) pixel
-    const delta        = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
-    const isWarmHue    = origR > origG && origG > origB; // R>G>B = yellow/brown tone
+    const delta     = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
+    const isWarmHue = origR > origG && origG > origB;
 
-    // Three independent gates — any one is enough to trigger stain treatment:
-    //   A. Very dark pixel                   (dark tartar / calculus deposits)
-    //   B. Yellow/brown coloured pixel       (plaque, surface staining)
-    //   C. Context-dark (adaptive)           (mid-tone stain relative to neighbours)
     const isColorStain   = br < 145;
     const isYellowStain  = br < 170 && delta > 25 && isWarmHue;
     const isContextStain = br < 185 && (lm - br) > 12;
     const isStain        = isColorStain || isYellowStain || isContextStain;
 
-    if (isStain) {
+    // ── Tooth structure protection ─────────────────────────────────────────────
+    // Gate 1 — Natural texture: pixel is within 25 luma units of local average.
+    //          That gap is too small to be a stain; it is enamel shading / curvature.
+    //          Exception: yellowStain is detected by colour (not luma), so colour-only
+    //          stains (lm-br < 25) still get Stage-2 LAB correction below — we only
+    //          skip the Stage-1 brightness lift here.
+    const isNaturalTexture = Math.abs(br - lm) < 25;
+    // Gate 2 — Structural edge: high gradient = tooth boundary / inter-tooth gap.
+    //          Modifying these pixels would destroy tooth geometry.
+    const isStructuralEdge = gradient[i] > GRAD_EDGE_THRESH;
+
+    // Stage 1 only runs if: detected as stain  AND  not natural texture  AND  not an edge
+    if (isStain && !isNaturalTexture && !isStructuralEdge) {
       const contrast  = (lm - br) / (lm + 1e-5);
       const boostMult = br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0;
 
       if (contrast >= 0.35) {
         // ── HEAVY TARTAR: partial replacement ──────────────────────────────
-        const isEdge  = gradient[i] > GRAD_EDGE_THRESH;
-        const baseMix = isEdge ? 0.40 : 0.75;
-        const mix     = Math.min(isEdge ? 0.60 : 0.90, baseMix * boostMult);
+        // (isStructuralEdge already excluded above — inner edge check retained
+        //  as a safety reference for the mix-reduction logic)
+        const baseMix = 0.75;
+        const mix     = Math.min(0.90, baseMix * boostMult);
         const target  = Math.min(245, lm + 0.25 * ls);
         r = Math.round(r + (target - r) * mix);
         g = Math.round(g + (target - g) * mix);
@@ -15966,8 +15974,10 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
         g = Math.round(g + (target - g) * lift);
         b = Math.round(b + (target - b) * lift);
       }
-      // contrast < 0.05 (very subtle) — colour correction in Stage 2 handles it
+      // contrast < 0.05 → Stage 2 LAB handles colour correction
     }
+    // Stage 2 (LAB) always runs — colour-only stains (isYellowStain with low luma delta)
+    // are still corrected even when Stage 1 is skipped by isNaturalTexture.
 
     // Clamp: result can never be darker than the original pixel
     r = Math.max(origR, r);
