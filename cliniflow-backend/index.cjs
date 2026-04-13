@@ -15942,7 +15942,8 @@ function computeGradient(brightness, w, h) {
 //  Whitening:  L × 1.08 (≈ +8% lightness) applied on top
 //  Safety:     result ≥ original pixel for every channel
 //
-async function computeEnhancedRaw(origCropBuf, w, h) {
+// boosted = true → wider detection thresholds + stronger lift for the auto-retry pass.
+async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 
@@ -15965,9 +15966,10 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     const delta     = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
     const isWarmHue = origR > origG && origG > origB;
 
-    const isColorStain   = br < 145;
-    const isYellowStain  = br < 170 && delta > 25 && isWarmHue;
-    const isContextStain = br < 185 && (lm - br) > 12;
+    // Boosted mode widens each threshold to attack stains the first pass left behind
+    const isColorStain   = boosted ? br < 165                            : br < 145;
+    const isYellowStain  = boosted ? br < 185 && delta > 18 && isWarmHue : br < 170 && delta > 25 && isWarmHue;
+    const isContextStain = boosted ? br < 200 && (lm - br) > 8           : br < 185 && (lm - br) > 12;
     const isStain        = isColorStain || isYellowStain || isContextStain;
 
     // ── Tooth structure protection ─────────────────────────────────────────────
@@ -15978,15 +15980,18 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     //          skip the Stage-1 brightness lift here.
     const isNaturalTexture = Math.abs(br - lm) < 25;
     // Gate 2 — Structural edge: high gradient = tooth boundary / inter-tooth gap.
-    //          Modifying these pixels would destroy tooth geometry.
-    const isStructuralEdge = gradient[i] > GRAD_EDGE_THRESH;
+    // In boosted mode, raise the bar slightly so deep stains at edges are still treated.
+    const edgeThresh = boosted ? GRAD_EDGE_THRESH * 1.4 : GRAD_EDGE_THRESH;
+    const isStructuralEdge = gradient[i] > edgeThresh;
 
     // Stage 1 only runs if: detected as stain  AND  not natural texture  AND  not an edge
     if (isStain && !isNaturalTexture && !isStructuralEdge) {
       const contrast  = (lm - br) / (lm + 1e-5);
-      const boostMult = br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0;
+      const baseBoost = boosted ? 1.20 : 1.0;  // global lift multiplier in retry pass
+      const boostMult = (br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0) * baseBoost;
 
-      if (contrast >= 0.35) {
+      const heavyThresh = boosted ? 0.25 : 0.35;  // catch more as heavy tartar when retrying
+      if (contrast >= heavyThresh) {
         // ── HEAVY TARTAR: partial replacement ──────────────────────────────
         // (isStructuralEdge already excluded above — inner edge check retained
         //  as a safety reference for the mix-reduction logic)
@@ -16028,9 +16033,10 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     //   B > 8 (lab signal)  → 70% push
     //   mild yellow (B 0-8) → 15% gentle push
     //   cool / neutral      → unchanged
-    const Bw = isYellowStain ? Blab + (0 - Blab) * 0.80
-             : Blab > 8      ? Blab + (0 - Blab) * 0.70
-             : Blab > 0      ? Blab * 0.85
+    // In boosted mode, push yellow axis harder (up to 92% toward neutral)
+    const Bw = isYellowStain ? Blab + (0 - Blab) * (boosted ? 0.92 : 0.80)
+             : Blab > 8      ? Blab + (0 - Blab) * (boosted ? 0.80 : 0.70)
+             : Blab > 0      ? Blab * (boosted ? 0.75 : 0.85)
                              : Blab;
 
     const [ro, go, bo] = labToRgb(Lw, Aw, Bw);
@@ -16041,6 +16047,34 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     out[i*3+2] = Math.min(245, Math.max(origB, bo));
   }
   return out;
+}
+
+// ── Stain detector — mirrors the classification logic in computeEnhancedRaw ───
+//
+// Returns { count, ratio } where ratio = stain pixels / masked pixels.
+// Used to validate that cleaning actually removed deposits before accepting output.
+//
+// MIN_STAIN_RATIO: skip validation when < 3% of tooth pixels are stained
+//                 (teeth are clean enough to begin with).
+// PASS_REMOVAL_RATE: require at least 50% of pre-existing stains to be gone.
+//
+const MIN_STAIN_RATIO    = 0.03;  // 3 % of tooth mask
+const PASS_REMOVAL_RATE  = 0.50;  // must remove ≥ 50 % of detected stains
+
+function detectStains(rawBuf, maskRaw, w, h) {
+  let stainCount = 0, maskCount = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    maskCount++;
+    const r = rawBuf[i*3], g = rawBuf[i*3+1], b = rawBuf[i*3+2];
+    const br    = (r + g + b) / 3;
+    const delta = Math.max(r, g, b) - Math.min(r, g, b);
+    // Mirror the isColorStain / isYellowStain / isContextStain conditions
+    // (slightly widened to catch borderline pixels that the pipeline may leave behind)
+    if (br < 155) { stainCount++; continue; }
+    if (br < 175 && delta > 22 && r > g && g > b) stainCount++;
+  }
+  return { count: stainCount, ratio: maskCount > 0 ? stainCount / maskCount : 0 };
 }
 
 // ── Edge-preserving bilateral filter (r=3, σ_c=25, σ_s=3) ───────────────────
@@ -16607,6 +16641,70 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     } catch (e) { console.warn('[SIM HIGHLIGHT] non-fatal:', e?.message); }
   }
 
+  // ── Stain validation ─────────────────────────────────────────────────────────
+  // Decode both the original crop and the current result, then measure how many
+  // stain pixels survived. If > 50% remain AND teeth were significantly stained to
+  // begin with, retry the entire enhance+blend pass with boosted parameters.
+  //
+  let stainWarning = false;
+  try {
+    const [origDecoded, maskDecoded] = await Promise.all([
+      sharp(origCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
+      sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
+    ]);
+    const beforeStains = detectStains(origDecoded, maskDecoded, cropWidth, cropHeight);
+    console.log(`[SIM VALIDATE] before: count=${beforeStains.count} ratio=${(beforeStains.ratio*100).toFixed(1)}%`);
+
+    if (beforeStains.ratio >= MIN_STAIN_RATIO) {
+      const resDecoded   = await sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer();
+      const afterStains  = detectStains(resDecoded, maskDecoded, cropWidth, cropHeight);
+      const removalRate  = beforeStains.count > 0 ? (beforeStains.count - afterStains.count) / beforeStains.count : 1;
+      console.log(`[SIM VALIDATE] after: count=${afterStains.count} ratio=${(afterStains.ratio*100).toFixed(1)}%  removed=${(removalRate*100).toFixed(1)}%`);
+
+      if (removalRate < PASS_REMOVAL_RATE) {
+        console.log('[SIM VALIDATE] ⚠️ < 50% stains removed — retrying with boosted params');
+
+        const boostCfg = {
+          ...cfg,
+          blendAlpha:          { strong: Math.min(0.82, cfg.blendAlpha.strong * 1.20), edge: Math.min(0.52, cfg.blendAlpha.edge * 1.20) },
+          uniformTargetFactor: Math.min(1.24, cfg.uniformTargetFactor * 1.10),
+        };
+
+        try {
+          const enhancedBoosted = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
+          let retryBuf = await blendCropWithMask(origCropBuf, enhancedBoosted, maskBuf, cropWidth, cropHeight, boostCfg);
+          if (boostCfg.edgeSoftening)
+            retryBuf = await edgeSoftening(retryBuf, maskBuf, cropWidth, cropHeight).catch(e => { console.warn('[SIM RETRY ES]', e?.message); return retryBuf; });
+          if (boostCfg.highlights)
+            retryBuf = await addReflectionHighlights(retryBuf, maskBuf, cropWidth, cropHeight).catch(e => { console.warn('[SIM RETRY HL]', e?.message); return retryBuf; });
+
+          const retryDecoded  = await sharp(retryBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer();
+          const retryStains   = detectStains(retryDecoded, maskDecoded, cropWidth, cropHeight);
+          const retryRemoval  = (beforeStains.count - retryStains.count) / beforeStains.count;
+          console.log(`[SIM VALIDATE] retry: count=${retryStains.count} removed=${(retryRemoval*100).toFixed(1)}%`);
+
+          if (retryRemoval >= PASS_REMOVAL_RATE) {
+            console.log('[SIM VALIDATE] ✅ Retry passed — using boosted result');
+            blendedCropBuf = retryBuf;
+          } else {
+            console.warn('[SIM VALIDATE] ⚠️ Stains persist after retry — using boosted result anyway, flagging stainWarning');
+            blendedCropBuf = retryBuf;  // still better than first pass
+            stainWarning   = true;
+          }
+        } catch (retryErr) {
+          console.warn('[SIM VALIDATE] retry exception (keeping first-pass result):', retryErr?.message);
+          stainWarning = true;
+        }
+      } else {
+        console.log(`[SIM VALIDATE] ✅ ${(removalRate*100).toFixed(1)}% stains removed — no retry needed`);
+      }
+    } else {
+      console.log('[SIM VALIDATE] Teeth are clean — validation skipped');
+    }
+  } catch (validErr) {
+    console.warn('[SIM VALIDATE] non-fatal validation error:', validErr?.message);
+  }
+
   // Final sharpening — mode-specific sigma keeps gaps crisp
   try {
     blendedCropBuf = await sharp(blendedCropBuf)
@@ -16623,6 +16721,8 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
   try {
     const conf = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
     confidence = conf.confidence; avgPixelChange = conf.avgPixelChange;
+    // Stain warning degrades maximum confidence: output is sub-optimal
+    if (stainWarning) confidence = Math.min(confidence, 0.50);
   } catch (e) { console.warn('[SIM CONFIDENCE] non-fatal:', e?.message); }
 
   // 6. Composite onto full original
@@ -16647,7 +16747,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
     console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
-    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, failReason: null };
+    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, stainWarning, failReason: null };
   } catch (e) {
     console.error('[SIM CROP] Supabase upload failed:', e?.message);
     return { url: null, failReason: 'supabase_upload: ' + e?.message };
@@ -16674,15 +16774,16 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'natural' }) {
   console.log(`[SIM] Done ✅ | mode=${r.mode} | confidence=${r.confidence} | url:`, r.url.slice(0, 80));
   logAI('info', 'sim_done', { patientId, mode: r.mode, confidence: r.confidence });
   return {
-    variations: [{ id: mode, label, url: r.url }],
-    url:        r.url,
-    mode:       r.mode,
-    confidence: r.confidence,
+    variations:     [{ id: mode, label, url: r.url }],
+    url:            r.url,
+    mode:           r.mode,
+    confidence:     r.confidence,
     avgPixelChange: r.avgPixelChange,
-    provider:   'programmatic',
-    error:      null,
-    fallback:   false,
-    debugInfo:  [],
+    stainWarning:   r.stainWarning ?? false,
+    provider:       'programmatic',
+    error:          null,
+    fallback:       false,
+    debugInfo:      [],
   };
 }
 
@@ -16724,6 +16825,7 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       mode:           result.mode ?? simMode,
       confidence:     result.confidence ?? null,
       avgPixelChange: result.avgPixelChange ?? null,
+      stainWarning:   result.stainWarning ?? false,
       failReason:     result.error ?? null,
     });
     console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
@@ -16756,6 +16858,7 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       mode:              job.mode ?? 'natural',
       confidence:        job.confidence ?? null,
       avgPixelChange:    job.avgPixelChange ?? null,
+      stainWarning:      job.stainWarning ?? false,
       fallback:          false,
     });
   }
