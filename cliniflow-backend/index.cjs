@@ -15801,14 +15801,27 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 
 // ─── Dental Enhancement Engine (NO AI / NO Replicate) ────────────────────────
 //
+// QUALITY RULES (canonical):
+//   ACCEPT:          stain removal, tartar cleaning, mild whitening,
+//                    preserve tooth shape and spacing exactly
+//   PARTIAL ACCEPT:  subtle alignment (max ±3 px) — disabled by default
+//   REJECT:          full smile reconstruction, paper-white artificial look,
+//                    shape-changing restorations, any geometry invention
+//   KEY PRINCIPLE:   "Improve quality, not geometry"
+//
 // Pipeline:
 //  1. Fetch original → crop lower-face (Y 55–90%, X 15–85%)
 //  2. Build teeth mask (brightness+saturation+hue filter, σ=3 blur)
 //  3. computeLocalStats  → per-pixel 7×7 mean + std (adaptive tartar detection)
-//  4. enhanceTeeth       → tartar removal + real LAB whitening + clamp 245
+//  4. computeEnhancedRaw → tartar removal + LAB whitening (mild, L×1.06)
 //  5. bilateralFilter    → edge-preserving smooth (r=3, σ_color=25, σ_space=3)
-//  6. blendCropWithMask  → alpha 0.6 inside mask / 0.3 edges / 0.0 outside
-//  7. sharpen + composite onto full original + upload Supabase
+//  6. blendCropWithMask  → alpha blend + dark-floor + line-reduce + micro-tex
+//                          + uniform whitening (avg×1.12 max)
+//  7. [optional] microAlignment — disabled; enable via MICRO_ALIGN_ENABLED
+//  8. sharpen + composite onto full original + upload Supabase
+
+// Feature flags
+const MICRO_ALIGN_ENABLED = false; // set true when alignment is ready for production
 
 // ── Teeth mask ───────────────────────────────────────────────────────────────
 async function buildTeethMask(origCropBuf, w, h) {
@@ -15957,8 +15970,8 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     // Stage 2 — LAB color neutralization + lightness boost
     const [L, Alab, Blab] = rgbToLab(r, g, b);
 
-    // Lighten (applied to all tooth pixels)
-    const Lw = Math.min(100, L * 1.08);
+    // Mild lightening only (+6%) — rule: "improve quality, not geometry"
+    const Lw = Math.min(100, L * 1.06);
 
     // Chroma neutralization — only modify axes with stain signal
     // B > 8  → yellow tint:  blend 70% toward neutral (0)
@@ -16166,7 +16179,7 @@ function uniformWhitening(result, maskRaw, w, h) {
   const p95 = vals[Math.floor(vals.length * 0.95)];
 
   // Step 2 — target: 18% above average but never exceeds 98% of near-highlights
-  const target = Math.min(p95 * 0.98, avg * 1.18);
+  const target = Math.min(p95 * 0.96, avg * 1.12);  // mild: 12% max lift, ceiling at 96% of p95
   console.log(`[SIM UNIFORM] px=${vals.length} avg=${avg.toFixed(1)} p95=${p95.toFixed(1)} target=${target.toFixed(1)}`);
 
   const out = Buffer.from(snap);
@@ -16436,10 +16449,12 @@ async function cropCompositeSimulation(publicImageUrl, patientId) {
     console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
 
-  // 5a. Micro-alignment — subtle per-tooth horizontal shift (max ±3 px)
-  try {
-    blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
-  } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
+  // 5a. Micro-alignment (disabled by default — MICRO_ALIGN_ENABLED flag)
+  if (MICRO_ALIGN_ENABLED) {
+    try {
+      blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
+  }
 
   // 5b. Sharpening — preserve inter-tooth gaps and surface texture.
   // Unsharp mask: sigma=1.2 (fine details), m1=0.5 (flat areas), m2=10 (edge boost).
