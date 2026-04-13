@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
+const zlib = require("zlib");
 
 // ─── AI config (read once at startup) ────────────────────────────────────────
 const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS     || "30000", 10));
@@ -15795,30 +15796,140 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 // first and pass it to Replicate as a base64 data URI so the URL is never
 // exposed externally.
 
+// img2img fallback (used if inpainting is unavailable)
 const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
-const SIM_NEGATIVE = 'blurry, fake teeth, extra teeth, distorted face, cartoon, unrealistic';
+// inpainting model (no version hash – always uses latest deployment)
+const SIM_INPAINT_MODEL = 'stability-ai/stable-diffusion-inpainting';
+
+const SIM_NEGATIVE = [
+  'changed face', 'altered skin', 'different lips', 'modified nose', 'changed eyes',
+  'fake teeth', 'extra teeth', 'duplicated teeth', 'mismatched teeth', 'cartoon teeth',
+  'blurry', 'cartoon', 'distorted', 'deformed', 'artifacts', 'overexposed',
+  'upper teeth on lower jaw', 'wrong dental anatomy',
+].join(', ');
 
 const SIM_VARIATIONS = [
   {
-    id:              'natural',
-    label:           'Doğal',
-    prompt:          'natural healthy teeth, slight whitening, minimal correction, realistic smile, keep face unchanged, photorealistic',
-    prompt_strength: 0.45,
+    id:               'natural',
+    label:            'Doğal',
+    // img2img strength (lower = more face preservation)
+    prompt_strength:  0.35,
+    // inpainting strength for the masked teeth region
+    inpaint_strength: 0.65,
+    prompt: 'natural white healthy teeth only, slight whitening and alignment, upper teeth larger than lower teeth, anatomically correct dental result, keep face lips skin eyes nose exactly the same, photorealistic portrait',
   },
   {
-    id:              'balanced',
-    label:           'Önerilen',
-    prompt:          'perfect white aligned natural teeth, dental aesthetic, realistic smile, keep face unchanged, only improve teeth, photorealistic',
-    prompt_strength: 0.6,
+    id:               'balanced',
+    label:            'Önerilen',
+    prompt_strength:  0.4,
+    inpaint_strength: 0.75,
+    prompt: 'perfect natural white teeth only, improved dental aesthetics, upper teeth naturally larger than lower teeth, anatomically correct smile, do not change face lips skin eyes nose at all, photorealistic portrait',
   },
   {
-    id:              'hollywood',
-    label:           'Hollywood',
-    prompt:          'ultra white perfect teeth, cosmetic dentistry, hollywood smile, perfectly aligned, keep face unchanged, photorealistic',
-    prompt_strength: 0.75,
+    id:               'hollywood',
+    label:            'Hollywood',
+    prompt_strength:  0.5,
+    inpaint_strength: 0.85,
+    prompt: 'ultra white perfect veneer teeth only, hollywood smile, upper teeth prominently larger than lower teeth, anatomically correct dental result, face lips skin eyes nose completely unchanged, photorealistic portrait',
   },
 ];
 
+// ── Teeth-mask PNG generation (no external dependencies) ───────────────────
+// Builds a valid greyscale PNG using only Node.js built-in `zlib`.
+// White pixel  = region to MODIFY (mouth/teeth area)
+// Black pixel  = region to KEEP  (rest of face, eyes, skin, nose …)
+//
+// Mouth heuristic for a portrait photo:
+//   Y: 55 % – 80 % from top
+//   X: 20 % – 80 % from left
+
+const _pngCrcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c;
+  }
+  return t;
+})();
+
+function _pngCrc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ _pngCrcTable[(c ^ buf[i]) & 0xFF];
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function _pngChunk(type, data) {
+  const t  = Buffer.from(type, 'ascii');
+  const d  = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  const l  = Buffer.alloc(4); l.writeUInt32BE(d.length);
+  const cc = Buffer.alloc(4); cc.writeUInt32BE(_pngCrc32(Buffer.concat([t, d])));
+  return Buffer.concat([l, t, d, cc]);
+}
+
+function generateMouthMaskPng(W = 512, H = 512) {
+  const y1 = Math.round(H * 0.55);
+  const y2 = Math.round(H * 0.80);
+  const x1 = Math.round(W * 0.20);
+  const x2 = Math.round(W * 0.80);
+
+  // Each row: 1 filter byte (0 = None) followed by W grey pixels
+  const raw = Buffer.alloc(H * (1 + W), 0);
+  for (let y = 0; y < H; y++) {
+    const base = y * (1 + W);
+    raw[base] = 0; // filter = None
+    for (let x = 0; x < W; x++) {
+      raw[base + 1 + x] = (x >= x1 && x < x2 && y >= y1 && y < y2) ? 255 : 0;
+    }
+  }
+
+  const idat = zlib.deflateSync(raw, { level: 6 });
+
+  const ihdr = Buffer.alloc(13, 0);
+  ihdr.writeUInt32BE(W, 0);
+  ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; // bit depth = 8
+  ihdr[9] = 0; // colour type = grayscale (bytes 10–12 already 0)
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), // PNG sig
+    _pngChunk('IHDR', ihdr),
+    _pngChunk('IDAT', idat),
+    _pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// Upload the mask once per server lifetime and cache the Replicate URL.
+let _cachedMaskUrl = null;
+
+async function getOrUploadMask(token) {
+  if (_cachedMaskUrl) return _cachedMaskUrl;
+
+  const maskBuf = generateMouthMaskPng(512, 512);
+  console.log(`[SIM] Uploading mouth mask (${Math.round(maskBuf.byteLength / 1024)} KB) to Replicate…`);
+
+  const form = new FormData();
+  form.append('content', new Blob([maskBuf], { type: 'image/png' }), 'teeth-mask.png');
+
+  const res  = await fetch('https://api.replicate.com/v1/files', {
+    method:  'POST',
+    headers: { 'Authorization': `Token ${token}` },
+    body:    form,
+    signal:  AbortSignal.timeout(20_000),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    console.warn(`[SIM] Mask upload HTTP ${res.status} — will use img2img fallback`);
+    return null;
+  }
+
+  _cachedMaskUrl = data?.urls?.get ?? data?.url ?? null;
+  console.log('[SIM] Mask URL cached:', _cachedMaskUrl?.slice(0, 80));
+  return _cachedMaskUrl;
+}
+
+// ── Source-image upload to Replicate ───────────────────────────────────────
 /**
  * Fetch the Supabase image server-side and upload it to Replicate's file API.
  *
@@ -15960,6 +16071,95 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
 }
 
 /**
+ * Inpainting prediction using stability-ai/stable-diffusion-inpainting.
+ * Uses the model endpoint (no version hash) so it always runs the latest
+ * deployment without version-hash maintenance.
+ *
+ * The mask defines where the model edits:
+ *   white (255) → teeth region – model improves this area
+ *   black (0)   → rest of face – model copies original exactly
+ *
+ * Returns { url: string|null, failReason: string|null }
+ */
+async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt, inpaint_strength = 0.75 }, token) {
+  let predId;
+  try {
+    const createRes = await fetch(
+      `https://api.replicate.com/v1/models/${SIM_INPAINT_MODEL}/predictions`,
+      {
+        method:  'POST',
+        headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: {
+            image:               imageUrl,
+            mask:                maskUrl,
+            prompt,
+            negative_prompt:     SIM_NEGATIVE,
+            num_inference_steps: 40,
+            guidance_scale:      7.5,
+            strength:            inpaint_strength,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    const createText = await createRes.text();
+    let createData;
+    try { createData = JSON.parse(createText); } catch { createData = {}; }
+
+    console.log(`[SIM INPAINT] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
+
+    if (!createRes.ok) {
+      const reason = `inpaint_http_${createRes.status}: ${(createData?.detail ?? createData?.error ?? createText).slice(0, 200)}`;
+      console.error('[SIM INPAINT] Create failed:', reason);
+      return { url: null, failReason: reason };
+    }
+    if (!createData?.id) {
+      return { url: null, failReason: 'inpaint_no_id: ' + createText.slice(0, 100) };
+    }
+    predId = createData.id;
+  } catch (e) {
+    return { url: null, failReason: 'inpaint_exception: ' + e?.message };
+  }
+
+  // Poll up to 90 s (same budget as img2img)
+  const MAX_POLLS     = 60;
+  const POLL_INTERVAL = 1500;
+  let   polls         = 0;
+  let   prediction    = { status: 'starting' };
+
+  while (
+    prediction.status !== 'succeeded' &&
+    prediction.status !== 'failed'    &&
+    polls < MAX_POLLS
+  ) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL));
+    try {
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+        headers: { 'Authorization': `Token ${token}` },
+        signal:  AbortSignal.timeout(8_000),
+      });
+      prediction = await pollRes.json();
+    } catch (e) {
+      console.warn(`[SIM INPAINT] Poll ${polls} exception:`, e?.message);
+    }
+    console.log(`[SIM INPAINT POLL] ${polls}/${MAX_POLLS}: ${prediction.status}`);
+    polls++;
+  }
+
+  if (prediction.status === 'succeeded' && prediction.output) {
+    const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+    console.log('[SIM INPAINT] Output:', output?.slice(0, 80));
+    return { url: output, failReason: null };
+  }
+  if (prediction.status === 'failed') {
+    console.error('[SIM INPAINT] Failed | error:', prediction.error, '\n  logs:', String(prediction.logs ?? '').slice(-400));
+    return { url: null, failReason: `inpaint_failed: ${prediction.error ?? '(no message)'}` };
+  }
+  return { url: null, failReason: polls >= MAX_POLLS ? `inpaint_timeout_${MAX_POLLS}` : 'inpaint_no_output' };
+}
+
+/**
  * Convert a Supabase signed URL to its public equivalent.
  * /storage/v1/object/sign/bucket/path?token=xxx
  * → /storage/v1/object/public/bucket/path
@@ -15986,31 +16186,70 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     return { variations: [], url: null, provider: null, error: 'no_providers_configured' };
   }
 
-  // ── Cache key: strip token query so it survives re-signing ──────────
-  const cacheKey = imageUrl.split('?')[0];
   console.log('[SIM] Starting | patientId:', patientId);
-  console.log('[SIM] Cache key:', cacheKey);
 
-  // ── Single "balanced" variation (MVP) ───────────────────────────────
   const balanced = SIM_VARIATIONS.find(v => v.id === 'balanced') ?? SIM_VARIATIONS[1];
-  const r        = await replicatePrediction(imageUrl, balanced, token);
+
+  // Convert signed URL → public URL once (used by both inpainting and img2img)
+  const publicImageUrl = imageUrl
+    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+    .split('?')[0];
+  console.log('[SIM] Public image URL:', publicImageUrl.slice(0, 100));
+
+  const debugInfo = [];
+  let r = { url: null, failReason: 'not_attempted' };
+
+  // ── Attempt 1: Inpainting with teeth mask (face-preserving) ─────────
+  // Uploads a 512×512 PNG mask (white = teeth area) to Replicate files.
+  // The inpainting model modifies ONLY the white region; black regions are
+  // copied pixel-perfect from the original, so the face stays unchanged.
+  try {
+    const maskUrl = await getOrUploadMask(token);
+    if (maskUrl) {
+      console.log('[SIM] Trying inpainting with teeth mask…');
+      r = await replicateInpaintPrediction(publicImageUrl, maskUrl, balanced, token);
+      if (r.url) {
+        console.log('[SIM] Inpainting ✅ | url:', r.url.slice(0, 80));
+      } else {
+        debugInfo.push('inpaint: ' + r.failReason);
+        console.warn('[SIM] Inpainting failed:', r.failReason, '→ falling back to img2img');
+      }
+    } else {
+      debugInfo.push('inpaint: mask_upload_failed');
+      console.warn('[SIM] Mask upload failed → img2img fallback');
+    }
+  } catch (e) {
+    debugInfo.push('inpaint_exception: ' + e?.message);
+    console.warn('[SIM] Inpainting exception:', e?.message);
+  }
+
+  // ── Attempt 2: img2img fallback (if inpainting failed) ──────────────
+  // Lower prompt_strength (0.4) still produces far better face preservation
+  // than the previous 0.6 setting, even without masking.
+  if (!r.url) {
+    console.log('[SIM] Running img2img fallback (strength:', balanced.prompt_strength, ')…');
+    r = await replicatePrediction(imageUrl, balanced, token);
+    if (r.url) {
+      console.log('[SIM] img2img ✅ | url:', r.url.slice(0, 80));
+    } else {
+      debugInfo.push('img2img: ' + r.failReason);
+    }
+  }
 
   if (!r.url) {
-    console.log('❌ Simulation failed | reason:', r.failReason);
-    logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
+    console.log('❌ Simulation failed | reasons:', debugInfo);
+    logAI('warn', 'sim_failed', { patientId, reasons: debugInfo });
     return {
       variations: [],
-      url:        null,          // ← NO fake fallback to original image
+      url:        null,
       provider:   null,
       error:      r.failReason,
       fallback:   false,
-      debugInfo:  [r.failReason],
+      debugInfo,
     };
   }
 
-  console.log('[SIM] Done ✅ | url:', r.url.slice(0, 80));
   logAI('info', 'sim_done', { patientId });
-
   const variation = { id: balanced.id, label: balanced.label, url: r.url };
   return {
     variations: [variation],
@@ -16018,7 +16257,7 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     provider:   'replicate',
     error:      null,
     fallback:   false,
-    debugInfo:  [],
+    debugInfo,
   };
 }
 
