@@ -15835,15 +15835,81 @@ async function buildTeethMask(origCropBuf, w, h) {
     .blur(3).png().toBuffer();
 }
 
+/**
+ * Programmatic teeth enhancement — three stages:
+ *
+ * Stage 1 — Tartar stain removal:
+ *   Within the teeth mask, pixels with brightness < TARTAR_THRESH are dark
+ *   stains (tartar, calculus deposits). We lift them toward the local
+ *   average brightness of the surrounding tooth area. This softens the
+ *   dark patches without erasing texture.
+ *
+ * Stage 2 — LAB-space whitening (15 % max):
+ *   Simulate CIE-LAB lightness increase and yellow-reduction by adjusting
+ *   RGB with per-channel factors that mimic L↑, b↓ in LAB:
+ *     R → R + (255-R) × 0.13   (modest lift)
+ *     G → G + (255-G) × 0.13
+ *     B → B + (255-B) × 0.20   (extra blue to neutralise yellow)
+ *   Max effective whitening ≈ 15-20 %, never overexposes.
+ *
+ * Stage 3 — Brightness floor:
+ *   Result pixel ≥ original pixel (applied later in blend).
+ *
+ * Returns a raw RGB Buffer (w × h × 3).
+ */
 async function computeWhitenedRaw(origCropBuf, w, h) {
+  const TARTAR_THRESH  = 145; // pixels darker than this inside teeth area = tartar
+  const TARTAR_LIFT    = 0.40; // blend dark tartar pixels 40% toward local average
+  const WHITE_R        = 0.13;
+  const WHITE_G        = 0.13;
+  const WHITE_B        = 0.20; // more blue to reduce yellow tint
+
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  // --- Stage 1: compute per-pixel brightness map and local average ---
+  const brightness = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++)
+    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
+
+  // Simple box-blur average brightness (radius 8) for local context
+  const avgBright = new Float32Array(w * h);
+  const R = 8;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, count = 0;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+            sum += brightness[ny * w + nx]; count++;
+          }
+        }
+      }
+      avgBright[y * w + x] = sum / count;
+    }
+  }
+
   const out = Buffer.alloc(w * h * 3);
   for (let i = 0; i < w * h; i++) {
-    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
-    out[i * 3]     = Math.min(255, Math.round(r + (255 - r) * 0.38));
-    out[i * 3 + 1] = Math.min(255, Math.round(g + (255 - g) * 0.38));
-    out[i * 3 + 2] = Math.min(255, Math.round(b + (255 - b) * 0.55));
+    let r = data[i*3], g = data[i*3+1], b = data[i*3+2];
+    const br = brightness[i];
+    const avg = avgBright[i];
+
+    // Stage 1 — lift tartar stains (dark patches inside tooth area)
+    if (br < TARTAR_THRESH && avg > TARTAR_THRESH) {
+      // This pixel is darker than its neighbours — likely a stain
+      const lift = TARTAR_LIFT * (1 - br / TARTAR_THRESH);
+      const target = Math.min(255, avg * 1.05); // lift toward local avg
+      r = Math.round(r + (target - r) * lift);
+      g = Math.round(g + (target - g) * lift);
+      b = Math.round(b + (target - b) * lift);
+    }
+
+    // Stage 2 — LAB-style whitening (15-20 % max)
+    out[i*3]   = Math.min(255, Math.round(r + (255 - r) * WHITE_R));
+    out[i*3+1] = Math.min(255, Math.round(g + (255 - g) * WHITE_G));
+    out[i*3+2] = Math.min(255, Math.round(b + (255 - b) * WHITE_B));
   }
   return out;
 }

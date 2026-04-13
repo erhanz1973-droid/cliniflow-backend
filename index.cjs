@@ -16332,18 +16332,56 @@ async function buildTeethMask(origCropBuf, w, h) {
  * Returns a raw RGB Buffer at (w × h).
  */
 async function computeWhitenedRaw(origCropBuf, w, h) {
+  const TARTAR_THRESH = 145; // pixels darker than this (inside teeth zone) = stain
+  const TARTAR_LIFT   = 0.40;
+  const WHITE_R       = 0.13; // ~15% max whitening
+  const WHITE_G       = 0.13;
+  const WHITE_B       = 0.20; // extra blue neutralises yellow
+
   const { data } = await sharp(origCropBuf)
-    .resize(w, h)
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  // Compute per-pixel brightness
+  const brightness = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++)
+    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
+
+  // Box-blur average brightness (radius 8) for local context
+  const avgBright = new Float32Array(w * h);
+  const BOX = 8;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, count = 0;
+      for (let dy = -BOX; dy <= BOX; dy++) {
+        for (let dx = -BOX; dx <= BOX; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+            sum += brightness[ny * w + nx]; count++;
+          }
+        }
+      }
+      avgBright[y * w + x] = sum / count;
+    }
+  }
 
   const out = Buffer.alloc(w * h * 3);
   for (let i = 0; i < w * h; i++) {
-    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
-    out[i * 3]     = Math.min(255, Math.round(r + (255 - r) * 0.38));
-    out[i * 3 + 1] = Math.min(255, Math.round(g + (255 - g) * 0.38));
-    out[i * 3 + 2] = Math.min(255, Math.round(b + (255 - b) * 0.55));
+    let r = data[i*3], g = data[i*3+1], b = data[i*3+2];
+    const br = brightness[i], avg = avgBright[i];
+
+    // Stage 1 — tartar stain removal: lift dark spots toward local average
+    if (br < TARTAR_THRESH && avg > TARTAR_THRESH) {
+      const lift = TARTAR_LIFT * (1 - br / TARTAR_THRESH);
+      const target = Math.min(255, avg * 1.05);
+      r = Math.round(r + (target - r) * lift);
+      g = Math.round(g + (target - g) * lift);
+      b = Math.round(b + (target - b) * lift);
+    }
+
+    // Stage 2 — LAB-style whitening (15-20 % max, no overexposure)
+    out[i*3]   = Math.min(255, Math.round(r + (255 - r) * WHITE_R));
+    out[i*3+1] = Math.min(255, Math.round(g + (255 - g) * WHITE_G));
+    out[i*3+2] = Math.min(255, Math.round(b + (255 - b) * WHITE_B));
   }
   return out;
 }
