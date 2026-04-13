@@ -15889,14 +15889,17 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     const br = brightness[i], lm = mean[i], ls = std[i];
 
     // Stage 1 — adaptive tartar removal
-    // Pixel is a stain if it is significantly darker than its local neighbourhood
-    if (br < lm - 0.6 * ls) {
+    // Cast wider net: flag anything darker than mean - 0.4×std
+    if (br < lm - 0.4 * ls) {
       const contrast = (lm - br) / (lm + 1e-5);
-      const lift     = Math.min(0.5, contrast * 0.5);
-      const target   = lm; // do not overshoot local mean
-      r = Math.round(r + (target - r) * lift);
-      g = Math.round(g + (target - g) * lift);
-      b = Math.round(b + (target - b) * lift);
+      // Skip very subtle darkness — not tartar, just natural enamel texture
+      if (contrast >= 0.15) {
+        const lift   = Math.min(0.7, contrast * 0.8);           // stronger pull
+        const target = Math.min(245, lm + 0.2 * ls);           // slight over-brighten to fully erase stain halo
+        r = Math.round(r + (target - r) * lift);
+        g = Math.round(g + (target - g) * lift);
+        b = Math.round(b + (target - b) * lift);
+      }
     }
 
     // Stage 2 — real LAB whitening: L×1.08, b×0.90
@@ -15978,7 +15981,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
     }
   }
 
+  // Unsharp mask: restore fine texture (gaps, enamel ridges) after bilateral smooth
   return sharp(result, { raw: { width: w, height: h, channels: 3 } })
+    .sharpen({ sigma: 1.0, m1: 0.5, m2: 8 })
     .jpeg({ quality: 92 }).toBuffer();
 }
 
