@@ -15859,11 +15859,25 @@ async function buildTeethMask(origCropBuf, w, h) {
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const maskData = Buffer.alloc(w * h);
   let white = 0;
-  for (let i = 0; i < w * h; i++) {
-    const r = data[i*3], g = data[i*3+1], b = data[i*3+2];
-    const brightness = (r + g + b) / 3;
-    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-    if (brightness > 118 && saturation <= 90 && g >= r * 0.70) { maskData[i] = 255; white++; }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y*w + x;
+      const r = data[i*3], g = data[i*3+1], b = data[i*3+2];
+      const brightness = (r + g + b) / 3;
+      const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+
+      // Standard: clean / upper teeth — white/neutral pixels
+      const isStdTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
+
+      // Lower-region relaxation (bottom ~58% of crop):
+      // Lower incisors are often in shadow AND stained (warm yellow → R > G).
+      // The strict g >= r * 0.70 ratio rejects them entirely, so they never get
+      // cleaned. Widen to g >= r * 0.52, allow higher saturation (stain-inclusive).
+      const isLowerRegion = y / h > 0.42;
+      const isLowerTooth  = isLowerRegion && brightness > 98 && saturation <= 135 && g >= r * 0.52;
+
+      if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
+    }
   }
   console.log(`[SIM MASK] ${white}/${w*h} tooth px (${((white/(w*h))*100).toFixed(1)}%)`);
   return sharp(maskData, { raw: { width: w, height: h, channels: 1 } }).blur(3).png().toBuffer();
@@ -15962,23 +15976,37 @@ async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
     let r = origR, g = origG, b = origB;
     const br = brightness[i], lm = mean[i], ls = std[i];
 
+    // Lower-region flag (bottom 58% of the crop = lower incisors area).
+    // Lower teeth are naturally darker (shadow) AND accumulate more tartar/stain.
+    // Thresholds for them must be wider on every axis.
+    const isLower = Math.floor(i / w) > h * 0.42;
+
     // ── Stain classification ──────────────────────────────────────────────────
     const delta     = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
     const isWarmHue = origR > origG && origG > origB;
 
-    // Boosted mode widens each threshold to attack stains the first pass left behind
-    const isColorStain   = boosted ? br < 165                            : br < 145;
-    const isYellowStain  = boosted ? br < 185 && delta > 18 && isWarmHue : br < 170 && delta > 25 && isWarmHue;
-    const isContextStain = boosted ? br < 200 && (lm - br) > 8           : br < 185 && (lm - br) > 12;
+    // Boosted mode widens each threshold to attack stains the first pass left behind.
+    // Lower-region base thresholds are already wider to account for natural shadow.
+    const colorStainBr   = boosted ? 165 : (isLower ? 158 : 145);
+    const yellowStainBr  = boosted ? 185 : (isLower ? 178 : 170);
+    const yellowDelta    = boosted ? 18  : (isLower ? 20  : 25);
+    const contextBr      = boosted ? 200 : 185;
+    const contextDelta   = boosted ? 8   : (isLower ? 9   : 12);
+
+    const isColorStain   = br < colorStainBr;
+    const isYellowStain  = br < yellowStainBr && delta > yellowDelta && isWarmHue;
+    const isContextStain = br < contextBr && (lm - br) > contextDelta;
     const isStain        = isColorStain || isYellowStain || isContextStain;
 
     // ── Tooth structure protection ─────────────────────────────────────────────
-    // Gate 1 — Natural texture: pixel is within 25 luma units of local average.
-    //          That gap is too small to be a stain; it is enamel shading / curvature.
-    //          Exception: yellowStain is detected by colour (not luma), so colour-only
-    //          stains (lm-br < 25) still get Stage-2 LAB correction below — we only
-    //          skip the Stage-1 brightness lift here.
-    const isNaturalTexture = Math.abs(br - lm) < 25;
+    // Gate 1 — Natural texture guard.
+    // Lower incisors can be UNIFORMLY discoloured (the whole tooth is stained,
+    // not just a patch). Their local mean is therefore also dark, so |br - lm|
+    // stays small even for genuine tartar. Tighten the guard for the lower region
+    // (12 instead of 25) so uniformly stained incisors still enter Stage 1.
+    const naturalTextureThresh = isLower ? 12 : 25;
+    const isNaturalTexture     = Math.abs(br - lm) < naturalTextureThresh;
+
     // Gate 2 — Structural edge: high gradient = tooth boundary / inter-tooth gap.
     // In boosted mode, raise the bar slightly so deep stains at edges are still treated.
     const edgeThresh = boosted ? GRAD_EDGE_THRESH * 1.4 : GRAD_EDGE_THRESH;
@@ -16077,10 +16105,17 @@ function detectStains(rawBuf, maskRaw, w, h) {
     const r = rawBuf[i*3], g = rawBuf[i*3+1], b = rawBuf[i*3+2];
     const br    = (r + g + b) / 3;
     const delta = Math.max(r, g, b) - Math.min(r, g, b);
-    // Mirror the isColorStain / isYellowStain / isContextStain conditions
-    // (slightly widened to catch borderline pixels that the pipeline may leave behind)
-    if (br < 155) { stainCount++; continue; }
-    if (br < 175 && delta > 22 && r > g && g > b) stainCount++;
+
+    // Mirror the isColorStain / isYellowStain conditions.
+    // Lower region (y > 42% of crop) uses slightly wider thresholds to match
+    // the looser stain detection applied there in computeEnhancedRaw.
+    const isLower      = Math.floor(i / w) / h > 0.42;
+    const darkThresh   = isLower ? 165 : 155;
+    const yellowBr     = isLower ? 182 : 175;
+    const yellowDelta  = isLower ? 20  : 22;
+
+    if (br < darkThresh) { stainCount++; continue; }
+    if (br < yellowBr && delta > yellowDelta && r > g && g > b) stainCount++;
   }
   return { count: stainCount, ratio: maskCount > 0 ? stainCount / maskCount : 0 };
 }
@@ -16334,60 +16369,65 @@ function microTextureClean(result, maskRaw, w, h) {
   return out;
 }
 
-// ── Smart uniform whitening — adaptive tone leveling, shading preserved ───────
+// ── Smart uniform whitening — independent upper/lower region targets ───────────
 //
-// Stats:   avg = mean brightness;  p95 = 95th-percentile brightness (tooth mask)
-// Target:  avg × 1.18,  hard ceiling: p95 × 0.98  (never exceeds near-highlight)
-// Lift:    lift = clamp(delta/255, 0.10, 0.60)  — proportional, dark pixels lift more
-// Mix:     result = mix(original, lifted, 0.65) — 35% original shading preserved
-// Yellow:  if R > G > B: B += (R−B) × 0.25     — removes residual yellow cast
-// Guard:   brightness > 210 → pixel unchanged   — highlight protection
+// KEY CHANGE: upper and lower teeth are whitened toward their OWN brightness
+// targets (computed separately), so brighter upper teeth no longer pull the
+// shared average up and leave lower incisors under-lifted.
+//
+// Each region independently computes: avg, p95 → target = min(p95×0.96, avg×factor)
+// Yellow tint kill and highlight guard apply to all regions.
 //
 function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
-  const snap = Buffer.from(result);  // immutable snapshot for reads
+  const snap = Buffer.from(result);
 
-  // Brightness of every pixel
   const br = new Float32Array(w * h);
   for (let i = 0; i < w*h; i++)
     br[i] = (snap[i*3] + snap[i*3+1] + snap[i*3+2]) / 3;
 
-  // Step 1 — collect masked pixel brightnesses → avg + 95th percentile
-  const vals = [];
-  for (let i = 0; i < w*h; i++) { if (maskRaw[i] > 64) vals.push(br[i]); }
-  if (vals.length === 0) return result;
+  // Collect brightnesses split by vertical region
+  // Upper = top 45% of crop;  Lower = bottom 55% (lower incisors)
+  const upperVals = [], lowerVals = [];
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    const y = Math.floor(i / w);
+    (y < h * 0.45 ? upperVals : lowerVals).push(br[i]);
+  }
+  if (upperVals.length === 0 && lowerVals.length === 0) return result;
 
-  vals.sort((a, b) => a - b);
-  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
-  const p95 = vals[Math.floor(vals.length * 0.95)];
-
-  // Step 2 — target driven by mode config (natural: ×1.10, design: ×1.15)
-  const target = Math.min(p95 * 0.96, avg * targetFactor);
-  console.log(`[SIM UNIFORM] px=${vals.length} avg=${avg.toFixed(1)} p95=${p95.toFixed(1)} target=${target.toFixed(1)}`);
+  function regionTarget(vals) {
+    if (vals.length === 0) return null;
+    vals.sort((a, b) => a - b);
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const p95 = vals[Math.floor(vals.length * 0.95)];
+    return { target: Math.min(p95 * 0.96, avg * targetFactor), avg, p95 };
+  }
+  const upper = regionTarget(upperVals);
+  const lower = regionTarget(lowerVals);
+  console.log(`[SIM UNIFORM] upper px=${upperVals.length} avg=${upper?.avg.toFixed(1)} target=${upper?.target.toFixed(1)} | lower px=${lowerVals.length} avg=${lower?.avg.toFixed(1)} target=${lower?.target.toFixed(1)}`);
 
   const out = Buffer.from(snap);
   for (let i = 0; i < w*h; i++) {
-    if (maskRaw[i] <= 64) continue;  // outside mask
-    if (br[i] > 210)      continue;  // highlight — untouched
+    if (maskRaw[i] <= 64) continue;
+    if (br[i] > 210)      continue; // highlight guard
+
+    const y    = Math.floor(i / w);
+    const reg  = y < h * 0.45 ? upper : lower;
+    if (!reg) continue;
+    const { target } = reg;
 
     const pixBr = br[i];
     const delta  = target - pixBr;
-    const lift   = Math.min(0.60, Math.max(0.10, delta / 255)); // adaptive lift
+    const lift   = Math.min(0.60, Math.max(0.10, delta / 255));
 
     let r = snap[i*3], g = snap[i*3+1], b = snap[i*3+2];
-
-    // Step 3 — tone-normalize toward target
-    const rn = r + delta * lift;
-    const gn = g + delta * lift;
-    let   bn = b + delta * lift;
-
-    // Step 4 — blend: 65% toward normalized, 35% original shading
+    const rn = r + delta * lift, gn = g + delta * lift, bn = b + delta * lift;
     let ro = r * 0.35 + rn * 0.65;
     let go = g * 0.35 + gn * 0.65;
     let bo = b * 0.35 + bn * 0.65;
 
-    // Step 5 — yellow tint kill: R > G > B → boost blue channel
-    if (r > g && g > b)
-      bo += (r - b) * 0.25;
+    // Yellow tint kill
+    if (r > g && g > b) bo += (r - b) * 0.25;
 
     out[i*3]   = Math.min(245, Math.max(0, Math.round(ro)));
     out[i*3+1] = Math.min(245, Math.max(0, Math.round(go)));
@@ -16627,7 +16667,10 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
       if (maskRaw[i] <= 64) continue;          // only inside teeth mask
       const pixBr = resBr[i];
       const lm    = lm5[i];
-      const floor = lm * 0.85;
+      // Lower-region floor is tighter (0.88) because tartar leaves more residual
+      // dark halos on lower incisors that survive the standard 0.85 floor.
+      const isLower = Math.floor(i / w) > h * 0.42;
+      const floor   = lm * (isLower ? 0.88 : 0.85);
       if (pixBr < floor) {
         const liftDelta = (lm - pixBr) * 0.6; // additive lift toward local mean
         for (let c = 0; c < 3; c++) {
