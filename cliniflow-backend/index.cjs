@@ -15872,7 +15872,31 @@ function labToRgb(L, A, B) {
   return [Math.min(245,Math.round(gam(r)*255)), Math.min(245,Math.round(gam(gn)*255)), Math.min(245,Math.round(gam(bn)*255))];
 }
 
+// ── Sobel gradient magnitude (brightness array → Float32Array) ────────────────
+function computeGradient(brightness, w, h) {
+  const grad = new Float32Array(w * h);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const gx =
+        -brightness[(y-1)*w+(x-1)] + brightness[(y-1)*w+(x+1)]
+        -2*brightness[y*w+(x-1)]   + 2*brightness[y*w+(x+1)]
+        -brightness[(y+1)*w+(x-1)] + brightness[(y+1)*w+(x+1)];
+      const gy =
+        -brightness[(y-1)*w+(x-1)] - 2*brightness[(y-1)*w+x] - brightness[(y-1)*w+(x+1)]
+        +brightness[(y+1)*w+(x-1)] + 2*brightness[(y+1)*w+x] + brightness[(y+1)*w+(x+1)];
+      grad[y*w+x] = Math.sqrt(gx*gx + gy*gy) / 4; // normalise Sobel scale
+    }
+  }
+  return grad;
+}
+
 // ── Main enhancement: adaptive tartar removal + LAB whitening ─────────────────
+//
+//  Normal tartar  (0.15 ≤ contrast < 0.35): lift toward mean + 0.2×std
+//  Heavy tartar   (contrast ≥ 0.35):        partial replacement, mix 0.75
+//    ↳ near tooth edge (gradient > 25):     reduce mix to 0.4
+//  Final clamp: result ≥ original (no darkening ever)
+//
 async function computeEnhancedRaw(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -15882,33 +15906,49 @@ async function computeEnhancedRaw(origCropBuf, w, h) {
     brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
 
   const { mean, std } = computeLocalStats(brightness, w, h);
+  const gradient      = computeGradient(brightness, w, h);
+
+  const GRAD_EDGE_THRESH = 25; // gradient magnitude above which we treat pixel as on a tooth edge
 
   const out = Buffer.alloc(w * h * 3);
   for (let i = 0; i < w*h; i++) {
-    let r = data[i*3], g = data[i*3+1], b = data[i*3+2];
+    const origR = data[i*3], origG = data[i*3+1], origB = data[i*3+2];
+    let r = origR, g = origG, b = origB;
     const br = brightness[i], lm = mean[i], ls = std[i];
 
-    // Stage 1 — adaptive tartar removal
-    // Cast wider net: flag anything darker than mean - 0.4×std
     if (br < lm - 0.4 * ls) {
       const contrast = (lm - br) / (lm + 1e-5);
-      // Skip very subtle darkness — not tartar, just natural enamel texture
-      if (contrast >= 0.15) {
-        const lift   = Math.min(0.7, contrast * 0.8);           // stronger pull
-        const target = Math.min(245, lm + 0.2 * ls);           // slight over-brighten to fully erase stain halo
+
+      if (contrast >= 0.35) {
+        // ── HEAVY TARTAR: partial replacement ──────────────────────────────
+        const isEdge  = gradient[i] > GRAD_EDGE_THRESH;
+        const mix     = isEdge ? 0.40 : 0.75;         // protect tooth borders
+        const target  = Math.min(245, lm + 0.25 * ls);
+        r = Math.round(r + (target - r) * mix);
+        g = Math.round(g + (target - g) * mix);
+        b = Math.round(b + (target - b) * mix);
+        if (isEdge)
+          console.log(`[SIM TARTAR] edge pixel i=${i} grad=${gradient[i].toFixed(1)} mix=0.40`);
+      } else if (contrast >= 0.15) {
+        // ── NORMAL TARTAR: lift toward slightly above local mean ────────────
+        const lift   = Math.min(0.7, contrast * 0.8);
+        const target = Math.min(245, lm + 0.2 * ls);
         r = Math.round(r + (target - r) * lift);
         g = Math.round(g + (target - g) * lift);
         b = Math.round(b + (target - b) * lift);
       }
+      // contrast < 0.15 → natural enamel texture, leave unchanged
     }
+
+    // Clamp: result can never be darker than the original pixel
+    r = Math.max(origR, r);
+    g = Math.max(origG, g);
+    b = Math.max(origB, b);
 
     // Stage 2 — real LAB whitening: L×1.08, b×0.90
     const [L, A, Blab] = rgbToLab(r, g, b);
-    const Lw = Math.min(100, L * 1.08);   // lighten max ~8%
-    const Bw = Blab * 0.90;               // reduce yellow
-    const [ro, go, bo] = labToRgb(Lw, A, Bw);
+    const [ro, go, bo] = labToRgb(Math.min(100, L * 1.08), A, Blab * 0.90);
 
-    // Clamp at 245 (no overexposure)
     out[i*3]   = Math.min(245, ro);
     out[i*3+1] = Math.min(245, go);
     out[i*3+2] = Math.min(245, bo);
