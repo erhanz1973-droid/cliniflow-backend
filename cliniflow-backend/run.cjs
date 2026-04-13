@@ -27,36 +27,24 @@ if (process.env.NODE_ENV !== "production") {
   }
 }
 
-const rootIndex = path.resolve(__dirname, "..", "index.cjs");
-console.log("[cliniflow-backend] loading:", rootIndex);
-console.log("[cliniflow-backend] root index exists:", fs.existsSync(rootIndex));
+// Load cliniflow-backend/index.cjs (same directory as this file).
+// All npm deps (sharp, express, etc.) are installed HERE in cliniflow-backend/
+// so require() resolution works correctly regardless of Render root-dir setting.
+const localIndex = path.resolve(__dirname, "index.cjs");
+console.log("[cliniflow-backend] loading:", localIndex);
+console.log("[cliniflow-backend] index exists:", fs.existsSync(localIndex));
 
-// Print first 300 chars of the file so we can verify which version is loaded
-if (fs.existsSync(rootIndex)) {
-  try {
-    const head = fs.readFileSync(rootIndex, "utf8").slice(0, 300);
-    const simLine = fs.readFileSync(rootIndex, "utf8").match(/SIM ENDPOINT v\d+[^\n]*/)?.[0] ?? "(not found)";
-    console.log("[cliniflow-backend] index.cjs sim endpoint banner:", simLine);
-  } catch (_) {}
-}
-
-if (!fs.existsSync(rootIndex)) {
-  console.error(
-    `[cliniflow-backend] FATAL: root server not found at:\n  ${rootIndex}\n` +
-      "  Fix: In Render → Settings, set Root Directory to the monorepo root (folder that contains both index.cjs and cliniflow-backend/)."
-  );
+if (!fs.existsSync(localIndex)) {
+  console.error(`[cliniflow-backend] FATAL: index.cjs not found at: ${localIndex}`);
   process.exit(1);
 }
 
-console.log("==> CLINIFLOW BACKEND v7 — async sim jobs active");
+console.log("==> CLINIFLOW BACKEND v8 — programmatic teeth whitening (NO AI)");
 
 try {
-  require(rootIndex);
+  require(localIndex);
 } catch (e) {
-  console.error(
-    "[cliniflow-backend] FATAL: failed to load root index.cjs (missing root npm deps? run npm install from repo root):",
-    e && e.message ? e.message : e
-  );
+  console.error("[cliniflow-backend] FATAL: failed to load index.cjs:", e && e.message ? e.message : e);
   if (e && e.stack) console.error(e.stack);
   process.exit(1);
 }

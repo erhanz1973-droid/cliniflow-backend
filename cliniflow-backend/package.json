@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@cliniflow/procedures": "file:../packages/procedures",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "sharp": "^0.34.5"
   }
 }
