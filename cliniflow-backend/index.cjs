@@ -15799,160 +15799,187 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Smile Simulation — programmatic teeth whitening (NO AI / NO Replicate) ──
+// ─── Dental Enhancement Engine (NO AI / NO Replicate) ────────────────────────
 //
 // Pipeline:
-//  1. Fetch original image bytes
-//  2. Crop lower-face region (Y 55–90 %, X 15–85 %)
-//  3. Build per-pixel teeth mask:
-//       brightness > 118 AND saturation ≤ 90 AND G ≥ R×0.70  → tooth (white)
-//       pink lips / dark gums / beard / skin                  → non-tooth (black)
-//     Mask blurred σ=3px for feathered edges.
-//  4. Whiten tooth pixels: blend each channel toward 255
-//       R+38%, G+38%, B+55% (extra blue to counter yellow tint)
-//  5. Per-pixel alpha blend:
-//       result[p] = orig[p]×(1−α) + whitened[p]×α   where α = mask[p]/255
-//       Non-tooth pixels have α=0 → mathematically unchanged.
-//  6. Composite blended crop onto full original
-//  7. Upload result to Supabase → return public URL
+//  1. Fetch original → crop lower-face (Y 55–90%, X 15–85%)
+//  2. Build teeth mask (brightness+saturation+hue filter, σ=3 blur)
+//  3. computeLocalStats  → per-pixel 7×7 mean + std (adaptive tartar detection)
+//  4. enhanceTeeth       → tartar removal + real LAB whitening + clamp 245
+//  5. bilateralFilter    → edge-preserving smooth (r=3, σ_color=25, σ_space=3)
+//  6. blendCropWithMask  → alpha 0.6 inside mask / 0.3 edges / 0.0 outside
+//  7. sharpen + composite onto full original + upload Supabase
 
+// ── Teeth mask ───────────────────────────────────────────────────────────────
 async function buildTeethMask(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const maskData = Buffer.alloc(w * h);
   let white = 0;
   for (let i = 0; i < w * h; i++) {
-    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    const r = data[i*3], g = data[i*3+1], b = data[i*3+2];
     const brightness = (r + g + b) / 3;
     const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-    const isTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
-    maskData[i] = isTooth ? 255 : 0;
-    if (isTooth) white++;
+    if (brightness > 118 && saturation <= 90 && g >= r * 0.70) { maskData[i] = 255; white++; }
   }
-  const pct = ((white / maskData.length) * 100).toFixed(1);
-  console.log(`[SIM MASK] Teeth pixels: ${white}/${maskData.length} (${pct}%)`);
-  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
-    .blur(3).png().toBuffer();
+  console.log(`[SIM MASK] ${white}/${w*h} tooth px (${((white/(w*h))*100).toFixed(1)}%)`);
+  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } }).blur(3).png().toBuffer();
 }
 
-/**
- * Programmatic teeth enhancement — three stages:
- *
- * Stage 1 — Tartar stain removal:
- *   Within the teeth mask, pixels with brightness < TARTAR_THRESH are dark
- *   stains (tartar, calculus deposits). We lift them toward the local
- *   average brightness of the surrounding tooth area. This softens the
- *   dark patches without erasing texture.
- *
- * Stage 2 — LAB-space whitening (15 % max):
- *   Simulate CIE-LAB lightness increase and yellow-reduction by adjusting
- *   RGB with per-channel factors that mimic L↑, b↓ in LAB:
- *     R → R + (255-R) × 0.13   (modest lift)
- *     G → G + (255-G) × 0.13
- *     B → B + (255-B) × 0.20   (extra blue to neutralise yellow)
- *   Max effective whitening ≈ 15-20 %, never overexposes.
- *
- * Stage 3 — Brightness floor:
- *   Result pixel ≥ original pixel (applied later in blend).
- *
- * Returns a raw RGB Buffer (w × h × 3).
- */
-async function computeWhitenedRaw(origCropBuf, w, h) {
-  const TARTAR_THRESH  = 145; // pixels darker than this inside teeth area = tartar
-  const TARTAR_LIFT    = 0.40; // blend dark tartar pixels 40% toward local average
-  const WHITE_R        = 0.13;
-  const WHITE_G        = 0.13;
-  const WHITE_B        = 0.20; // more blue to reduce yellow tint
-
-  const { data } = await sharp(origCropBuf)
-    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-
-  // --- Stage 1: compute per-pixel brightness map and local average ---
-  const brightness = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++)
-    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
-
-  // Simple box-blur average brightness (radius 8) for local context
-  const avgBright = new Float32Array(w * h);
-  const R = 8;
+// ── Local stats (7×7 window): mean + std per pixel ───────────────────────────
+function computeLocalStats(brightness, w, h) {
+  const R = 3; // 7×7 window
+  const mean = new Float32Array(w * h);
+  const std  = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let sum = 0, count = 0;
+      let sum = 0, sum2 = 0, n = 0;
       for (let dy = -R; dy <= R; dy++) {
         for (let dx = -R; dx <= R; dx++) {
-          const ny = y + dy, nx = x + dx;
+          const ny = y+dy, nx = x+dx;
           if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
-            sum += brightness[ny * w + nx]; count++;
+            const v = brightness[ny*w+nx]; sum += v; sum2 += v*v; n++;
           }
         }
       }
-      avgBright[y * w + x] = sum / count;
+      mean[y*w+x] = sum / n;
+      std[y*w+x]  = Math.sqrt(Math.max(0, sum2/n - (sum/n)**2));
     }
   }
+  return { mean, std };
+}
+
+// ── Real RGB↔LAB conversion ───────────────────────────────────────────────────
+function rgbToLab(r, g, b) {
+  let rn = r/255, gn = g/255, bn = b/255;
+  const lin = c => c > 0.04045 ? Math.pow((c+0.055)/1.055, 2.4) : c/12.92;
+  rn = lin(rn); gn = lin(gn); bn = lin(bn);
+  const x = rn*0.4124564 + gn*0.3575761 + bn*0.1804375;
+  const y = rn*0.2126729 + gn*0.7151522 + bn*0.0721750;
+  const z = rn*0.0193339 + gn*0.1191920 + bn*0.9503041;
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787*t + 16/116;
+  return [116*f(y/1.00000)-16, 500*(f(x/0.95047)-f(y/1.00000)), 200*(f(y/1.00000)-f(z/1.08883))];
+}
+function labToRgb(L, A, B) {
+  const fy = (L+16)/116, fx = A/500+fy, fz = fy-B/200;
+  const fi = t => t > 0.206897 ? t**3 : (t-16/116)/7.787;
+  const x = 0.95047*fi(fx), y = 1.00000*fi(fy), z = 1.08883*fi(fz);
+  let r =  x*3.2404542 - y*1.5371385 - z*0.4985314;
+  let gn = -x*0.9692660 + y*1.8760108 + z*0.0415560;
+  let bn =  x*0.0556434 - y*0.2040259 + z*1.0572252;
+  r = Math.max(0,Math.min(1,r)); gn = Math.max(0,Math.min(1,gn)); bn = Math.max(0,Math.min(1,bn));
+  const gam = c => c > 0.0031308 ? 1.055*c**(1/2.4)-0.055 : 12.92*c;
+  return [Math.min(245,Math.round(gam(r)*255)), Math.min(245,Math.round(gam(gn)*255)), Math.min(245,Math.round(gam(bn)*255))];
+}
+
+// ── Main enhancement: adaptive tartar removal + LAB whitening ─────────────────
+async function computeEnhancedRaw(origCropBuf, w, h) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  const brightness = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
+
+  const { mean, std } = computeLocalStats(brightness, w, h);
 
   const out = Buffer.alloc(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
+  for (let i = 0; i < w*h; i++) {
     let r = data[i*3], g = data[i*3+1], b = data[i*3+2];
-    const br = brightness[i];
-    const avg = avgBright[i];
+    const br = brightness[i], lm = mean[i], ls = std[i];
 
-    // Stage 1 — lift tartar stains (dark patches inside tooth area)
-    if (br < TARTAR_THRESH && avg > TARTAR_THRESH) {
-      // This pixel is darker than its neighbours — likely a stain
-      const lift = TARTAR_LIFT * (1 - br / TARTAR_THRESH);
-      const target = Math.min(255, avg * 1.05); // lift toward local avg
+    // Stage 1 — adaptive tartar removal
+    // Pixel is a stain if it is significantly darker than its local neighbourhood
+    if (br < lm - 0.6 * ls) {
+      const contrast = (lm - br) / (lm + 1e-5);
+      const lift     = Math.min(0.5, contrast * 0.5);
+      const target   = lm; // do not overshoot local mean
       r = Math.round(r + (target - r) * lift);
       g = Math.round(g + (target - g) * lift);
       b = Math.round(b + (target - b) * lift);
     }
 
-    // Stage 2 — LAB-style whitening (15-20 % max)
-    out[i*3]   = Math.min(255, Math.round(r + (255 - r) * WHITE_R));
-    out[i*3+1] = Math.min(255, Math.round(g + (255 - g) * WHITE_G));
-    out[i*3+2] = Math.min(255, Math.round(b + (255 - b) * WHITE_B));
+    // Stage 2 — real LAB whitening: L×1.08, b×0.90
+    const [L, A, Blab] = rgbToLab(r, g, b);
+    const Lw = Math.min(100, L * 1.08);   // lighten max ~8%
+    const Bw = Blab * 0.90;               // reduce yellow
+    const [ro, go, bo] = labToRgb(Lw, A, Bw);
+
+    // Clamp at 245 (no overexposure)
+    out[i*3]   = Math.min(245, ro);
+    out[i*3+1] = Math.min(245, go);
+    out[i*3+2] = Math.min(245, bo);
   }
   return out;
 }
 
-async function blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, w, h) {
+// ── Edge-preserving bilateral filter (r=3, σ_c=25, σ_s=3) ───────────────────
+function bilateralFilter(data, w, h) {
+  const SC2 = 2*25*25, SS2 = 2*3*3, R = 3;
+  const out = new Uint8Array(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ci = (y*w+x)*3;
+      const r0=data[ci], g0=data[ci+1], b0=data[ci+2];
+      let rs=0, gs=0, bs=0, ws=0;
+      for (let dy=-R; dy<=R; dy++) {
+        for (let dx=-R; dx<=R; dx++) {
+          const ny=y+dy, nx=x+dx;
+          if (ny<0||ny>=h||nx<0||nx>=w) continue;
+          const ni=(ny*w+nx)*3;
+          const r1=data[ni], g1=data[ni+1], b1=data[ni+2];
+          const wt = Math.exp(-(dx*dx+dy*dy)/SS2) *
+                     Math.exp(-((r0-r1)**2+(g0-g1)**2+(b0-b1)**2)/SC2);
+          rs+=r1*wt; gs+=g1*wt; bs+=b1*wt; ws+=wt;
+        }
+      }
+      out[ci]  =Math.min(245,Math.round(rs/ws));
+      out[ci+1]=Math.min(245,Math.round(gs/ws));
+      out[ci+2]=Math.min(245,Math.round(bs/ws));
+    }
+  }
+  return out;
+}
+
+// ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
+async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   const [origRaw, maskRaw] = await Promise.all([
-    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
-    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+    sharp(origCropBuf).resize(w,h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w,h).greyscale().raw().toBuffer(),
   ]);
+
+  // Apply bilateral filter to enhanced result for edge preservation
+  const filtered = bilateralFilter(enhancedRaw, w, h);
+
   const result = Buffer.alloc(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
-    const alpha = maskRaw[i] / 255;
-    for (let c = 0; c < 3; c++) {
-      const blended = Math.round(origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha);
-      // Brightness floor: result pixel can NEVER be darker than the original.
-      // This makes it mathematically impossible for teeth to disappear or darken.
-      result[i * 3 + c] = Math.max(origRaw[i * 3 + c], blended);
+  for (let i = 0; i < w*h; i++) {
+    // Adaptive alpha: strong inside mask, gentler at edges
+    const m = maskRaw[i];
+    const alpha = m > 192 ? 0.60 : m > 64 ? 0.30 : 0.0;
+    for (let c = 0; c < 3; c++)
+      result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + filtered[i*3+c]*alpha));
+  }
+
+  // Validation: result must be at least as bright as original in teeth zone
+  let origSum = 0, resSum = 0, cnt = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] > 64) {
+      origSum += (origRaw[i*3]+origRaw[i*3+1]+origRaw[i*3+2])/3;
+      resSum  += (result[i*3]+result[i*3+1]+result[i*3+2])/3;
+      cnt++;
+    }
+  }
+  if (cnt > 0) {
+    const ratio = resSum / origSum;
+    console.log(`[SIM BLEND] brightness ratio: ${ratio.toFixed(3)} (${cnt} px)`);
+    if (ratio < 0.93) {
+      console.warn('[SIM BLEND] result too dark — reverting to original crop');
+      return origCropBuf;
     }
   }
 
-  const blendedBuf = await sharp(result, { raw: { width: w, height: h, channels: 3 } })
+  return sharp(result, { raw: { width: w, height: h, channels: 3 } })
     .jpeg({ quality: 92 }).toBuffer();
-
-  // Post-blend validation: if the result crop is significantly darker than the
-  // original in the masked (teeth) region, something went wrong — return original.
-  let origBright = 0, resultBright = 0, count = 0;
-  for (let i = 0; i < w * h; i++) {
-    if (maskRaw[i] > 64) { // only check pixels that were inside the teeth mask
-      origBright   += (origRaw[i*3] + origRaw[i*3+1] + origRaw[i*3+2]) / 3;
-      resultBright += (result[i*3]  + result[i*3+1]  + result[i*3+2])  / 3;
-      count++;
-    }
-  }
-  if (count > 0) {
-    const ratio = resultBright / origBright;
-    console.log(`[SIM BLEND] Brightness ratio (result/orig): ${ratio.toFixed(3)}  (${count} tooth px)`);
-    if (ratio < 0.95) {
-      console.warn('[SIM BLEND] ⚠️  Result is darker than original — reverting to original crop');
-      return origCropBuf; // safe fallback: show unmodified teeth
-    }
-  }
-
-  return blendedBuf;
 }
 
 async function cropCompositeSimulation(publicImageUrl, patientId) {
@@ -15984,11 +16011,11 @@ async function cropCompositeSimulation(publicImageUrl, patientId) {
   try { maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight); }
   catch (e) { return { url: null, failReason: 'crop_mask: ' + e?.message }; }
 
-  // 4+5. Whiten + blend
+  // 4+5. Enhance (tartar + LAB whitening) + bilateral blend
   let blendedCropBuf;
   try {
-    const whitenedRaw = await computeWhitenedRaw(origCropBuf, cropWidth, cropHeight);
-    blendedCropBuf = await blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, cropWidth, cropHeight);
+    const enhancedRaw = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight);
+    blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight);
     console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
 
