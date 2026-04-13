@@ -16139,6 +16139,52 @@ function microTextureClean(result, maskRaw, w, h) {
   return out;
 }
 
+// ── Uniform whitening — even tone across all teeth, shading preserved ─────────
+//
+// Problem solved: tartar patches & lower teeth that survived earlier passes
+// still look darker than the rest of the smile because they sit below the
+// average tooth brightness.  This pass lifts every below-average pixel
+// proportionally toward a single target tone, then mixes back at 70% so
+// natural shading / curvature gradients are kept.
+//
+// Rules:
+//   1. target = min(235,  avg_brightness × 1.15)   (never blow out to paper-white)
+//   2. delta  = target − pixel_brightness
+//   3. shifted = pixel + delta × 0.6               (tone normalization)
+//   4. result  = mix(pixel, shifted, 0.70)          (shading preservation)
+//   5. skip if pixel_brightness > 200               (highlight protection)
+//
+function uniformWhitening(result, maskRaw, w, h) {
+  // Step 1 — average brightness of all tooth-mask pixels (snapshot of input)
+  const snap = Buffer.from(result);
+  const br   = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (snap[i*3] + snap[i*3+1] + snap[i*3+2]) / 3;
+
+  let sum = 0, cnt = 0;
+  for (let i = 0; i < w*h; i++) { if (maskRaw[i] > 64) { sum += br[i]; cnt++; } }
+  if (cnt === 0) return result;
+
+  const avg    = sum / cnt;
+  const target = Math.min(235, avg * 1.15);
+  console.log(`[SIM UNIFORM] mask_px=${cnt} avg_br=${avg.toFixed(1)} target=${target.toFixed(1)}`);
+
+  const out = Buffer.from(snap);
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;   // outside tooth mask
+    if (br[i] > 200)      continue;   // highlight — keep original to avoid burn
+
+    const delta = target - br[i];
+    for (let c = 0; c < 3; c++) {
+      const orig    = snap[i*3+c];
+      const shifted = orig + delta * 0.6;                     // tone-normalized
+      const blended = orig * 0.30 + shifted * 0.70;           // 70% toward shifted
+      out[i*3+c]    = Math.min(245, Math.max(0, Math.round(blended)));
+    }
+  }
+  return out;
+}
+
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
 async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   const [origRaw, maskRaw] = await Promise.all([
@@ -16196,6 +16242,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
 
   // ── Micro-texture cleaning (noisy/speckled tartar surface) ────────────────
   result = microTextureClean(result, maskRaw, w, h);
+
+  // ── Uniform whitening — even tone, shading preserved ─────────────────────
+  result = uniformWhitening(result, maskRaw, w, h);
 
   // Validation: result must be at least as bright as original in teeth zone
   let origSum = 0, resSum = 0, cnt = 0;
