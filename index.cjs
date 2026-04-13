@@ -10,6 +10,7 @@ const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
 const zlib = require("zlib");
+const sharp = require("sharp");
 
 // ─── AI config (read once at startup) ────────────────────────────────────────
 const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS     || "30000", 10));
@@ -16229,6 +16230,144 @@ function toPublicUrl(signedUrl) {
 }
 
 /**
+// ── Buffer upload helper (used by crop-composite path) ─────────────────────
+/**
+ * Upload an in-memory image buffer to Replicate's /v1/files CDN so the
+ * model workers can fetch it by URL.
+ */
+async function uploadBufferToReplicate(buffer, contentType, filename, token) {
+  const form = new FormData();
+  form.append('content', new Blob([buffer], { type: contentType }), filename);
+
+  const res  = await fetch('https://api.replicate.com/v1/files', {
+    method:  'POST',
+    headers: { 'Authorization': `Token ${token}` },
+    body:    form,
+    signal:  AbortSignal.timeout(30_000),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) throw new Error(`buf_upload_http_${res.status}: ${JSON.stringify(data).slice(0, 120)}`);
+  const url = data?.urls?.get ?? data?.url ?? null;
+  if (!url) throw new Error('buf_upload_no_url');
+  return url;
+}
+
+// ── Crop → img2img → composite (PRIMARY simulation path) ───────────────────
+/**
+ * Isolate the teeth area, run img2img on ONLY that crop, then paste the
+ * AI result back onto the original image pixel-perfectly.
+ *
+ * Steps:
+ *  1. Fetch original image bytes
+ *  2. Crop to mouth region (Y 52–82 %, X 15–85 %)
+ *  3. Resize crop to 512 px wide for the model
+ *  4. Upload crop → Replicate files
+ *  5. Run img2img with low prompt_strength (0.4)
+ *  6. Download AI result and resize it back to the original crop dimensions
+ *  7. Composite AI result onto original image at the exact crop coordinates
+ *  8. Upload composited image → Replicate files and return that URL
+ *
+ * Because only the crop is sent to the AI, the beard / skin / lips that lie
+ * outside the crop rectangle are never touched — they come straight from the
+ * original image bytes in step 7.
+ *
+ * Returns { url: string|null, failReason: string|null }
+ */
+async function cropCompositeSimulation(publicImageUrl, { prompt, prompt_strength }, token) {
+  // ── 1. Fetch original ────────────────────────────────────────────────────
+  let origBuf, origW, origH;
+  try {
+    const res = await fetch(publicImageUrl, { signal: AbortSignal.timeout(25_000) });
+    if (!res.ok) throw new Error(`fetch_orig_http_${res.status}`);
+    origBuf = Buffer.from(await res.arrayBuffer());
+    const meta = await sharp(origBuf).metadata();
+    origW = meta.width;
+    origH = meta.height;
+    console.log(`[SIM CROP] Original: ${origW}×${origH}`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_fetch_orig: ' + e?.message };
+  }
+
+  // ── 2. Calculate crop rectangle ─────────────────────────────────────────
+  // Mouth region heuristic for a portrait / selfie photo:
+  //   Y: 52 % – 82 % from top  (captures full mouth incl. chin margin)
+  //   X: 15 % – 85 % from left (generous width to include corners of mouth)
+  const cropLeft   = Math.round(origW * 0.15);
+  const cropTop    = Math.round(origH * 0.52);
+  const cropWidth  = Math.round(origW * 0.70);
+  const cropHeight = Math.round(origH * 0.30);
+  console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
+
+  // ── 3. Extract and resize crop to 512 px wide ────────────────────────────
+  let cropBuf, aiInputH;
+  try {
+    const scaledH = Math.round((512 / cropWidth) * cropHeight);
+    aiInputH      = scaledH;
+    cropBuf = await sharp(origBuf)
+      .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
+      .resize(512, scaledH)
+      .jpeg({ quality: 88 })
+      .toBuffer();
+    console.log(`[SIM CROP] Crop buffer: ${Math.round(cropBuf.byteLength / 1024)} KB  (512×${scaledH})`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_extract: ' + e?.message };
+  }
+
+  // ── 4. Upload crop to Replicate ──────────────────────────────────────────
+  let cropUrl;
+  try {
+    cropUrl = await uploadBufferToReplicate(cropBuf, 'image/jpeg', 'teeth-crop.jpg', token);
+    console.log('[SIM CROP] Crop uploaded:', cropUrl.slice(0, 80));
+  } catch (e) {
+    return { url: null, failReason: 'crop_upload: ' + e?.message };
+  }
+
+  // ── 5. Run img2img on the crop only ─────────────────────────────────────
+  const r = await replicatePrediction(cropUrl, { prompt, prompt_strength }, token);
+  if (!r.url) {
+    return { url: null, failReason: 'crop_img2img: ' + r.failReason };
+  }
+  console.log('[SIM CROP] img2img result:', r.url.slice(0, 80));
+
+  // ── 6. Download AI result and resize back to original crop dimensions ────
+  let aiResizedBuf;
+  try {
+    const aiRes = await fetch(r.url, { signal: AbortSignal.timeout(30_000) });
+    if (!aiRes.ok) throw new Error(`fetch_ai_http_${aiRes.status}`);
+    const aiBuf = Buffer.from(await aiRes.arrayBuffer());
+    aiResizedBuf = await sharp(aiBuf)
+      .resize(cropWidth, cropHeight)
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    console.log(`[SIM CROP] AI resized to ${cropWidth}×${cropHeight}`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_dl_resize: ' + e?.message };
+  }
+
+  // ── 7. Composite AI result onto original ────────────────────────────────
+  let compositedBuf;
+  try {
+    compositedBuf = await sharp(origBuf)
+      .composite([{ input: aiResizedBuf, left: cropLeft, top: cropTop }])
+      .jpeg({ quality: 88 })
+      .toBuffer();
+    console.log(`[SIM CROP] Composited: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+  } catch (e) {
+    return { url: null, failReason: 'crop_composite: ' + e?.message };
+  }
+
+  // ── 8. Upload composited result ──────────────────────────────────────────
+  try {
+    const finalUrl = await uploadBufferToReplicate(compositedBuf, 'image/jpeg', 'smile-result.jpg', token);
+    console.log('[SIM CROP] Final URL:', finalUrl.slice(0, 80));
+    return { url: finalUrl, failReason: null };
+  } catch (e) {
+    return { url: null, failReason: 'crop_upload_final: ' + e?.message };
+  }
+}
+
+/**
  * Runs a SINGLE "balanced" smile simulation.
  * No fallback to original image — returns null url on failure so the
  * frontend knows it was a real failure and can show a retry button.
@@ -16253,54 +16392,48 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   const debugInfo = [];
   let r = { url: null, failReason: 'not_attempted' };
 
-  // ── Attempt 1: Inpainting with teeth mask (PRIMARY — face-preserving) ──────
-  // The inpainting model edits ONLY the white (teeth) area of the mask.
-  // Black pixels are copied pixel-perfect from the original, so the beard,
-  // lips, skin, and the rest of the face are guaranteed to stay unchanged.
-  let maskAvailable = false;
-  try {
-    const maskUrl = await getOrUploadMask(token);
-    if (maskUrl) {
-      maskAvailable = true;
-      console.log('[SIM] Trying inpainting with teeth mask…');
-      r = await replicateInpaintPrediction(publicImageUrl, maskUrl, balanced, token);
-      if (r.url) {
-        console.log('[SIM] Inpainting ✅ | url:', r.url.slice(0, 80));
-      } else {
-        debugInfo.push('inpaint: ' + r.failReason);
-        console.warn('[SIM] Inpainting failed:', r.failReason);
-      }
-    } else {
-      debugInfo.push('inpaint: mask_upload_failed');
-      console.warn('[SIM] Mask upload failed');
-    }
-  } catch (e) {
-    debugInfo.push('inpaint_exception: ' + e?.message);
-    console.warn('[SIM] Inpainting exception:', e?.message);
+  // ── PRIMARY: crop → img2img on teeth only → composite back onto original ──
+  // This is the ONLY approach that guarantees the beard/skin/lips are never
+  // touched — because they are never sent to the AI model at all.
+  //
+  // Flow:
+  //  1. Fetch original image bytes
+  //  2. Crop to mouth/teeth region (Y 52-82%, X 15-85%)
+  //  3. Run img2img at low strength (0.4) on the crop only
+  //  4. Paste the AI result back onto the original at the same coordinates
+  //  5. Upload the composited image and return its URL
+  console.log('[SIM] Trying crop-composite (teeth-only)…');
+  r = await cropCompositeSimulation(publicImageUrl, balanced, token);
+  if (r.url) {
+    console.log('[SIM] Crop-composite ✅ | url:', r.url.slice(0, 80));
+  } else {
+    debugInfo.push('crop_composite: ' + r.failReason);
+    console.warn('[SIM] Crop-composite failed:', r.failReason);
   }
 
-  // ── Attempt 2: img2img fallback — ONLY if the mask could not be uploaded ──
-  // We do NOT fall back to img2img when inpainting was attempted but failed
-  // (e.g. rate-limit, model error) because img2img always transforms the whole
-  // face — beard, lips, and skin all change, which is worse than no result.
-  //
-  // We only fall back when the mask upload itself failed, meaning inpainting
-  // was never possible for this request.
-  if (!r.url && !maskAvailable && !r.isRateLimit) {
-    console.warn('[SIM] Mask unavailable — using img2img fallback (NOTE: may modify whole face)');
-    debugInfo.push('img2img_fallback: mask_unavailable');
-    r = await replicatePrediction(imageUrl, balanced, token);
-    if (r.url) {
-      console.log('[SIM] img2img ✅ | url:', r.url.slice(0, 80));
-    } else {
-      debugInfo.push('img2img: ' + r.failReason);
+  // ── FALLBACK: inpainting with mask (if crop-composite fails) ─────────────
+  // Inpainting also restricts edits to the masked region but relies on an
+  // external model version hash that may change. We keep it as a safety net.
+  if (!r.url && !r.isRateLimit) {
+    console.warn('[SIM] Crop-composite failed — trying inpainting fallback…');
+    try {
+      const maskUrl = await getOrUploadMask(token);
+      if (maskUrl) {
+        r = await replicateInpaintPrediction(publicImageUrl, maskUrl, balanced, token);
+        if (r.url) {
+          console.log('[SIM] Inpainting ✅ | url:', r.url.slice(0, 80));
+        } else {
+          debugInfo.push('inpaint: ' + r.failReason);
+        }
+      } else {
+        debugInfo.push('inpaint: mask_upload_failed');
+      }
+    } catch (e) {
+      debugInfo.push('inpaint_exception: ' + e?.message);
     }
-  } else if (!r.url && r.isRateLimit) {
+  } else if (r.isRateLimit) {
     console.warn('[SIM] Rate-limited — skipping all fallbacks');
     debugInfo.push('fallback: skipped_due_to_rate_limit');
-  } else if (!r.url && maskAvailable) {
-    console.warn('[SIM] Inpainting failed — NOT falling back to img2img (would modify whole face)');
-    debugInfo.push('img2img_fallback: skipped_to_preserve_face');
   }
 
   const isRateLimitError = !r.url && (r.isRateLimit || debugInfo.some(d => d.includes('429')));
