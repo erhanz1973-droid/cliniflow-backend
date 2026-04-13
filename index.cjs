@@ -15834,6 +15834,56 @@ const SIM_VARIATIONS = [
   },
 ];
 
+// ── Shared Replicate prediction-create helper (with 429 retry) ─────────────
+/**
+ * POST to Replicate to create a prediction, retrying once after a short wait
+ * when a 429 rate-limit is returned.
+ *
+ * Replicate's 429 response on low-credit accounts says "resets in ~10s", so
+ * we wait 14 s before the retry to be safe.
+ *
+ * Returns { id: string } on success or throws with a failReason string.
+ */
+const RATE_LIMIT_RETRY_WAIT_MS = 14_000;
+
+async function replicateCreate(url, body, token) {
+  const doCreate = () =>
+    fetch(url, {
+      method:  'POST',
+      headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  AbortSignal.timeout(15_000),
+    });
+
+  let res  = await doCreate();
+  let text = await res.text();
+
+  if (res.status === 429) {
+    console.warn(`[SIM] 429 rate-limited — waiting ${RATE_LIMIT_RETRY_WAIT_MS / 1000}s then retrying…`);
+    await new Promise(r => setTimeout(r, RATE_LIMIT_RETRY_WAIT_MS));
+    res  = await doCreate();
+    text = await res.text();
+  }
+
+  let data;
+  try { data = JSON.parse(text); } catch { data = {}; }
+
+  console.log(`[SIM] Create HTTP ${res.status} | id: ${data?.id ?? 'none'} | err: ${data?.detail ?? data?.error ?? '-'}`);
+
+  if (!res.ok) {
+    const reason = `create_http_${res.status}: ${(data?.detail ?? data?.error ?? text).slice(0, 200)}`;
+    const err    = new Error(reason);
+    err.status   = res.status;
+    err.isRateLimit = res.status === 429;
+    throw err;
+  }
+  if (!data?.id) {
+    const err = new Error('create_no_id: ' + text.slice(0, 100));
+    throw err;
+  }
+  return data; // { id, status, ... }
+}
+
 // ── Teeth-mask PNG generation (no external dependencies) ───────────────────
 // Builds a valid greyscale PNG using only Node.js built-in `zlib`.
 // White pixel  = region to MODIFY (mouth/teeth area)
@@ -16000,35 +16050,19 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
     return { url: null, failReason: msg };
   }
 
-  // ── Create prediction ───────────────────────────────────────────────
+  // ── Create prediction (with 429 retry) ─────────────────────────────
   let predId;
   try {
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-      method:  'POST',
-      headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: SIM_VERSION,
-        input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const createText = await createRes.text();
-    let createData;
-    try { createData = JSON.parse(createText); } catch { createData = {}; }
-
-    console.log(`[SIM] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
-
-    if (!createRes.ok) {
-      const reason = `create_http_${createRes.status}: ${(createData?.detail ?? createData?.error ?? createText).slice(0, 200)}`;
-      console.error('[SIM] Create failed:', reason);
-      return { url: null, failReason: reason };
-    }
-    if (!createData?.id) {
-      return { url: null, failReason: 'create_no_id: ' + createText.slice(0, 100) };
-    }
-    predId = createData.id;
+    const created = await replicateCreate(
+      'https://api.replicate.com/v1/predictions',
+      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 } },
+      token,
+    );
+    predId = created.id;
   } catch (e) {
-    return { url: null, failReason: 'create_exception: ' + e?.message };
+    const reason = e?.message ?? 'create_exception';
+    console.error('[SIM img2img] Create failed:', reason);
+    return { url: null, failReason: reason, isRateLimit: e?.isRateLimit ?? false };
   }
 
   // ── Poll: 60 attempts × 1.5 s = 90 s max ──────────────────────────
@@ -16084,42 +16118,26 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
 async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt, inpaint_strength = 0.75 }, token) {
   let predId;
   try {
-    const createRes = await fetch(
+    const created = await replicateCreate(
       `https://api.replicate.com/v1/models/${SIM_INPAINT_MODEL}/predictions`,
       {
-        method:  'POST',
-        headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          input: {
-            image:               imageUrl,
-            mask:                maskUrl,
-            prompt,
-            negative_prompt:     SIM_NEGATIVE,
-            num_inference_steps: 40,
-            guidance_scale:      7.5,
-            strength:            inpaint_strength,
-          },
-        }),
-        signal: AbortSignal.timeout(15_000),
-      }
+        input: {
+          image:               imageUrl,
+          mask:                maskUrl,
+          prompt,
+          negative_prompt:     SIM_NEGATIVE,
+          num_inference_steps: 40,
+          guidance_scale:      7.5,
+          strength:            inpaint_strength,
+        },
+      },
+      token,
     );
-    const createText = await createRes.text();
-    let createData;
-    try { createData = JSON.parse(createText); } catch { createData = {}; }
-
-    console.log(`[SIM INPAINT] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
-
-    if (!createRes.ok) {
-      const reason = `inpaint_http_${createRes.status}: ${(createData?.detail ?? createData?.error ?? createText).slice(0, 200)}`;
-      console.error('[SIM INPAINT] Create failed:', reason);
-      return { url: null, failReason: reason };
-    }
-    if (!createData?.id) {
-      return { url: null, failReason: 'inpaint_no_id: ' + createText.slice(0, 100) };
-    }
-    predId = createData.id;
+    predId = created.id;
   } catch (e) {
-    return { url: null, failReason: 'inpaint_exception: ' + e?.message };
+    const reason = e?.message ?? 'inpaint_exception';
+    console.error('[SIM INPAINT] Create failed:', reason);
+    return { url: null, failReason: reason, isRateLimit: e?.isRateLimit ?? false };
   }
 
   // Poll up to 90 s (same budget as img2img)
@@ -16223,10 +16241,11 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     console.warn('[SIM] Inpainting exception:', e?.message);
   }
 
-  // ── Attempt 2: img2img fallback (if inpainting failed) ──────────────
-  // Lower prompt_strength (0.4) still produces far better face preservation
-  // than the previous 0.6 setting, even without masking.
-  if (!r.url) {
+  // ── Attempt 2: img2img fallback (if inpainting failed for a non-rate-limit reason) ──
+  // Skip the fallback when we were rate-limited — both models share the same
+  // Replicate account quota, so hammering it again immediately just wastes the
+  // one retry budget we already spent inside replicateCreate.
+  if (!r.url && !r.isRateLimit) {
     console.log('[SIM] Running img2img fallback (strength:', balanced.prompt_strength, ')…');
     r = await replicatePrediction(imageUrl, balanced, token);
     if (r.url) {
@@ -16234,17 +16253,24 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     } else {
       debugInfo.push('img2img: ' + r.failReason);
     }
+  } else if (!r.url && r.isRateLimit) {
+    console.warn('[SIM] Rate-limited — skipping img2img fallback to avoid double-penalising account');
+    debugInfo.push('img2img: skipped_due_to_rate_limit');
   }
+
+  const isRateLimitError = !r.url && (r.isRateLimit || debugInfo.some(d => d.includes('429')));
 
   if (!r.url) {
     console.log('❌ Simulation failed | reasons:', debugInfo);
     logAI('warn', 'sim_failed', { patientId, reasons: debugInfo });
     return {
-      variations: [],
-      url:        null,
-      provider:   null,
-      error:      r.failReason,
-      fallback:   false,
+      variations:      [],
+      url:             null,
+      provider:        null,
+      error:           r.failReason,
+      fallback:        false,
+      rateLimited:     isRateLimitError,   // frontend can show "try again in a moment"
+      billingRequired: isRateLimitError,
       debugInfo,
     };
   }
@@ -16292,12 +16318,14 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, {
       ...existing,
-      status:     result.url ? 'succeeded' : 'failed',
-      url:        result.url ?? null,
-      variations: result.variations ?? [],
-      failReason: result.error ?? null,
+      status:          result.url ? 'succeeded' : 'failed',
+      url:             result.url ?? null,
+      variations:      result.variations ?? [],
+      failReason:      result.error ?? null,
+      rateLimited:     result.rateLimited ?? false,
+      billingRequired: result.billingRequired ?? false,
     });
-    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
+    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}${result.rateLimited ? ' (rate-limited)' : ''}`);
   }).catch(err => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, { ...existing, status: 'failed', failReason: err?.message });
@@ -16327,7 +16355,13 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       fallback:          false,
     });
   }
-  return res.json({ ok: false, status: 'failed', error: job.failReason ?? 'unknown' });
+  return res.json({
+    ok:              false,
+    status:          'failed',
+    error:           job.failReason ?? 'unknown',
+    rateLimited:     job.rateLimited ?? false,
+    billingRequired: job.billingRequired ?? false,
+  });
 });
 
 // POST /api/chat/ai-upload
