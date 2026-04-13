@@ -15827,8 +15827,8 @@ async function buildTeethMask(origCropBuf, w, h) {
 }
 
 // ── Local stats (7×7 window): mean + std per pixel ───────────────────────────
-function computeLocalStats(brightness, w, h) {
-  const R = 3; // 7×7 window
+function computeLocalStats(brightness, w, h, radius = 3) {
+  const R = radius; // default 7×7; pass 2 for 5×5
   const mean = new Float32Array(w * h);
   const std  = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
@@ -16001,6 +16001,37 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
     const alpha = m > 192 ? 0.60 : m > 64 ? 0.30 : 0.0;
     for (let c = 0; c < 3; c++)
       result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + filtered[i*3+c]*alpha));
+  }
+
+  // ── Dark-pixel guarantee (inside tooth mask only) ─────────────────────────
+  // Any remaining pixel darker than 85% of its 5×5 neighbourhood is force-lifted.
+  // This catches residual tartar halo pixels that survived the blending step.
+  {
+    const resBr = new Float32Array(w * h);
+    for (let i = 0; i < w*h; i++)
+      resBr[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+    const { mean: lm5 } = computeLocalStats(resBr, w, h, 2); // 5×5 window
+
+    let lifted = 0;
+    for (let i = 0; i < w*h; i++) {
+      if (maskRaw[i] <= 64) continue;          // only inside teeth mask
+      const pixBr = resBr[i];
+      const lm    = lm5[i];
+      const floor = lm * 0.85;
+      if (pixBr < floor) {
+        const liftDelta = (lm - pixBr) * 0.6; // additive lift toward local mean
+        for (let c = 0; c < 3; c++) {
+          result[i*3+c] = Math.min(245, Math.max(
+            origRaw[i*3+c],                           // never darker than original
+            Math.round(floor),                        // hard floor
+            Math.round(result[i*3+c] + liftDelta),   // lift
+          ));
+        }
+        lifted++;
+      }
+    }
+    if (lifted > 0)
+      console.log(`[SIM DARK-FLOOR] forced lift on ${lifted} dark tooth pixels`);
   }
 
   // Validation: result must be at least as bright as original in teeth zone
