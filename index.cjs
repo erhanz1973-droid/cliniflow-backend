@@ -16257,62 +16257,38 @@ async function uploadBufferToReplicate(buffer, contentType, filename, token) {
   return url;
 }
 
-// ── Crop → img2img → MASK-BLEND → composite (PRIMARY simulation path) ────────
-/**
- * Pipeline:
- *  1. Fetch original image bytes
- *  2. Crop to lower-face / mouth region (Y 55–90 %, X 15–85 %)
- *  3. Upload 512-px-wide crop → Replicate, run img2img (very low strength)
- *  4. Safety-check AI result (reject if mostly dark / artifact)
- *  5. Build a per-pixel teeth mask from the ORIGINAL crop:
- *       bright + low-saturation pixels  →  white (teeth)
- *       pink / dark / saturated pixels  →  black (lips, gums, skin, beard)
- *  6. Pixel-blend:  result[px] = orig[px] * (1 - mask) + ai[px] * mask
- *       → only tooth-coloured pixels receive the AI treatment
- *       → lips, skin, gums inside the crop box are never changed
- *  7. Composite the blended crop onto the full original image
- *  8. Upload composited image to Supabase, return public URL
- *
- * This guarantees that NO pixels outside the exact bounding box are touched
- * (step 7) AND that NO non-tooth pixels inside the box are touched (step 6).
- */
-
-const CROP_PROMPT = [
-  'natural white teeth, clean alignment, full dental structure visible,',
-  'ALL teeth present and complete, no gaps, no missing teeth,',
-  'upper and lower teeth both fully visible, photorealistic close-up,',
-  'professional dental photo, teeth only',
-].join(' ');
-
-const CROP_NEGATIVE = [
-  'missing teeth', 'removed teeth', 'gaps between teeth', 'dark artifacts',
-  'broken teeth', 'extra teeth', 'doubled teeth', 'distorted teeth',
-  'cartoon', 'blurry', 'overexposed', 'dark background', 'black mouth',
-].join(', ');
-
-// Conservative strength — model only polishes what is already there.
-const CROP_STRENGTH = 0.25;
+// ── Programmatic teeth whitening (PRIMARY simulation path) ────────────────────
+//
+// NO AI / NO Replicate API needed.
+//
+// Pipeline:
+//  1. Fetch original image bytes
+//  2. Crop lower-face region (Y 55–90 %, X 15–85 %)
+//  3. Build a per-pixel teeth mask from the crop:
+//       bright + low-saturation pixels  →  white (teeth)
+//       pink / dark / saturated pixels  →  black (lips, gums, skin, beard)
+//  4. Apply whitening transform to all crop pixels
+//  5. Pixel-blend:  result[p] = orig[p] × (1−α) + whitened[p] × α
+//       → only tooth-coloured pixels are brightened/whitened
+//       → lips / gums / skin / beard inside the box stay 100 % original
+//  6. Composite the blended crop onto the full original image
+//  7. Upload to Supabase, return public URL
+//
+// Guarantees: pixels outside the crop box → never touched (step 6).
+//             non-tooth pixels inside box → mask α=0 → 100 % original (step 5).
 
 /**
- * Build a greyscale teeth mask from a JPEG/PNG buffer at (w, h) pixels.
+ * Build a greyscale teeth mask from a crop buffer at (w × h).
  *
- * Teeth heuristic (from dental photo research):
- *   brightness  = (R + G + B) / 3   > BRIGHT_THRESH  (bright enough)
- *   saturation  = max(R,G,B) - min(R,G,B) < SAT_THRESH  (not pink/red)
+ * Teeth heuristic:
+ *   brightness  = (R+G+B)/3   > 118   — bright enough to be a tooth
+ *   saturation  = max−min      <  80   — not pink/red (lips) or vivid
+ *   G            ≥ R × 0.70          — not strongly reddish (gum tissue)
  *
- * Lips are pink  → high R, lower G/B → high saturation → excluded.
- * Gums are dark red → low brightness → excluded.
- * Beard / skin    → medium brightness, medium-high saturation → excluded.
- *
- * The raw binary mask is blurred (σ = 4 px) so blending has soft edges.
- *
- * Returns a greyscale PNG buffer at the requested dimensions.
+ * The raw binary mask is Gaussian-blurred (σ=5 px) for feathered edges.
+ * Returns a greyscale PNG buffer.
  */
 async function buildTeethMask(origCropBuf, w, h) {
-  const BRIGHT_THRESH = 135; // must be brighter than this to count as tooth
-  const SAT_THRESH    = 55;  // max allowed colour spread (keeps out pink lips)
-
-  // Decode to raw 3-channel RGB
   const { data } = await sharp(origCropBuf)
     .resize(w, h)
     .removeAlpha()
@@ -16320,42 +16296,66 @@ async function buildTeethMask(origCropBuf, w, h) {
     .toBuffer({ resolveWithObject: true });
 
   const maskData = Buffer.alloc(w * h);
+  let white = 0;
   for (let i = 0; i < w * h; i++) {
     const r = data[i * 3];
     const g = data[i * 3 + 1];
     const b = data[i * 3 + 2];
-    const brightness  = (r + g + b) / 3;
-    const saturation  = Math.max(r, g, b) - Math.min(r, g, b);
-    maskData[i] = (brightness > BRIGHT_THRESH && saturation < SAT_THRESH) ? 255 : 0;
+    const brightness = (r + g + b) / 3;
+    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+    // sat ≤ 90: catches moderately-stained/yellow teeth (sat 60-90)
+    // g ≥ r*0.70: excludes pink/red (lips, gums) where G << R
+    const isTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
+    maskData[i] = isTooth ? 255 : 0;
+    if (isTooth) white++;
   }
 
-  // Soft edges via blur, then return as PNG
-  const maskBuf = await sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
-    .blur(4)
-    .png()
-    .toBuffer();
-
-  // Count masked pixels for logging
-  let white = 0;
-  for (let i = 0; i < maskData.length; i++) { if (maskData[i] > 128) white++; }
   const pct = ((white / maskData.length) * 100).toFixed(1);
   console.log(`[SIM MASK] Teeth pixels: ${white} / ${maskData.length}  (${pct} %)`);
 
-  return maskBuf;
+  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(3)
+    .png()
+    .toBuffer();
 }
 
 /**
- * Pixel-level blend: for each pixel p,
- *   result[p] = orig[p] * (1 - alpha[p]) + ai[p] * alpha[p]
- * where alpha = maskPNG greyscale value / 255.
+ * Apply a teeth-whitening colour transform to every pixel in origCropBuf.
+ * The result is then selectively blended via the mask — so only tooth pixels
+ * actually receive any change.
  *
- * Both origBuf and aiBuf are resized to (w, h) before blending.
- * Returns a JPEG buffer at (w, h).
+ * Transform:
+ *   R → R + (255−R) × 0.38   (modest brightening)
+ *   G → G + (255−G) × 0.38
+ *   B → B + (255−B) × 0.55   (extra boost to counter yellow tint)
+ *
+ * Returns a raw RGB Buffer at (w × h).
  */
-async function blendCropWithMask(origBuf, aiBuf, maskBuf, w, h) {
-  const [origRaw, aiRaw, maskRaw] = await Promise.all([
-    sharp(origBuf).resize(w, h).removeAlpha().raw().toBuffer(),
-    sharp(aiBuf ).resize(w, h).removeAlpha().raw().toBuffer(),
+async function computeWhitenedRaw(origCropBuf, w, h) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const out = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+    out[i * 3]     = Math.min(255, Math.round(r + (255 - r) * 0.38));
+    out[i * 3 + 1] = Math.min(255, Math.round(g + (255 - g) * 0.38));
+    out[i * 3 + 2] = Math.min(255, Math.round(b + (255 - b) * 0.55));
+  }
+  return out;
+}
+
+/**
+ * Pixel-level blend using a soft mask.
+ * result[p] = orig[p] × (1−α) + whitened[p] × α   where α = mask[p]/255.
+ * Returns a JPEG buffer at (w × h).
+ */
+async function blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, w, h) {
+  const [origRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
     sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
   ]);
 
@@ -16364,34 +16364,17 @@ async function blendCropWithMask(origBuf, aiBuf, maskBuf, w, h) {
     const alpha = maskRaw[i] / 255;
     for (let c = 0; c < 3; c++) {
       result[i * 3 + c] = Math.round(
-        origRaw[i * 3 + c] * (1 - alpha) + aiRaw[i * 3 + c] * alpha,
+        origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha,
       );
     }
   }
 
   return sharp(result, { raw: { width: w, height: h, channels: 3 } })
-    .jpeg({ quality: 90 })
+    .jpeg({ quality: 92 })
     .toBuffer();
 }
 
-/**
- * Safety check: reject AI crops where >20 % of pixels are near-black.
- * This catches "collapsed mouth" / all-black artefacts reliably.
- */
-async function isCropAcceptable(aiBuf) {
-  try {
-    const { data, info } = await sharp(aiBuf).greyscale().raw().toBuffer({ resolveWithObject: true });
-    let dark = 0;
-    for (let i = 0; i < data.length; i++) { if (data[i] < 25) dark++; }
-    const ratio = dark / (info.width * info.height);
-    console.log(`[SIM CROP] dark-pixel ratio: ${(ratio * 100).toFixed(1)} %`);
-    return ratio < 0.20;
-  } catch {
-    return true;
-  }
-}
-
-async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) {
+async function cropCompositeSimulation(publicImageUrl, _opts, _token, patientId) {
   // ── 1. Fetch original ────────────────────────────────────────────────────
   let origBuf, origW, origH;
   try {
@@ -16413,66 +16396,18 @@ async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) 
   const cropHeight = Math.round(origH * 0.35);
   console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
-  // ── 3. Extract the original crop (keep at native resolution) ────────────
+  // ── 3. Extract the mouth crop at native resolution ───────────────────────
   let origCropBuf;
   try {
     origCropBuf = await sharp(origBuf)
       .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
-      .jpeg({ quality: 92 })
+      .jpeg({ quality: 95 })
       .toBuffer();
   } catch (e) {
     return { url: null, failReason: 'crop_extract: ' + e?.message };
   }
 
-  // ── 4. Resize to 512 px wide for the AI model ───────────────────────────
-  let aiInputBuf, aiInputH;
-  try {
-    aiInputH  = Math.round((512 / cropWidth) * cropHeight);
-    aiInputBuf = await sharp(origCropBuf)
-      .resize(512, aiInputH)
-      .jpeg({ quality: 88 })
-      .toBuffer();
-    console.log(`[SIM CROP] AI input: 512×${aiInputH}  (${Math.round(aiInputBuf.byteLength / 1024)} KB)`);
-  } catch (e) {
-    return { url: null, failReason: 'crop_resize_ai: ' + e?.message };
-  }
-
-  // ── 5. Upload crop → Replicate, run img2img ─────────────────────────────
-  let cropUrl;
-  try {
-    cropUrl = await uploadBufferToReplicate(aiInputBuf, 'image/jpeg', 'teeth-crop.jpg', token);
-    console.log('[SIM CROP] Uploaded crop:', cropUrl.slice(0, 80));
-  } catch (e) {
-    return { url: null, failReason: 'crop_upload: ' + e?.message };
-  }
-
-  const r = await replicatePrediction(
-    cropUrl,
-    { prompt: CROP_PROMPT, negative_prompt: CROP_NEGATIVE, prompt_strength: CROP_STRENGTH },
-    token,
-  );
-  if (!r.url) return { url: null, failReason: 'crop_img2img: ' + r.failReason };
-  console.log('[SIM CROP] img2img done:', r.url.slice(0, 80));
-
-  // ── 6. Download AI result ────────────────────────────────────────────────
-  let aiBuf;
-  try {
-    const aiRes = await fetch(r.url, { signal: AbortSignal.timeout(30_000) });
-    if (!aiRes.ok) throw new Error(`fetch_ai_http_${aiRes.status}`);
-    aiBuf = Buffer.from(await aiRes.arrayBuffer());
-  } catch (e) {
-    return { url: null, failReason: 'crop_dl: ' + e?.message };
-  }
-
-  // Safety check — reject collapsed / all-black results
-  if (!(await isCropAcceptable(aiBuf))) {
-    console.warn('[SIM CROP] ❌ Safety check failed — too many dark pixels');
-    return { url: null, failReason: 'crop_safety_check_failed' };
-  }
-
-  // ── 7. Build teeth mask from the ORIGINAL crop ───────────────────────────
-  // The mask is computed on the original (not AI) so we only touch the pixels
-  // that were already tooth-coloured BEFORE the AI ran.
+  // ── 4. Build teeth mask ──────────────────────────────────────────────────
   let maskBuf;
   try {
     maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight);
@@ -16480,28 +16415,29 @@ async function cropCompositeSimulation(publicImageUrl, _opts, token, patientId) 
     return { url: null, failReason: 'crop_mask: ' + e?.message };
   }
 
-  // ── 8. Pixel-blend: only copy AI result where mask says "teeth" ──────────
+  // ── 5. Compute whitened pixels + blend via mask ──────────────────────────
   let blendedCropBuf;
   try {
-    blendedCropBuf = await blendCropWithMask(origCropBuf, aiBuf, maskBuf, cropWidth, cropHeight);
+    const whitenedRaw = await computeWhitenedRaw(origCropBuf, cropWidth, cropHeight);
+    blendedCropBuf = await blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, cropWidth, cropHeight);
     console.log(`[SIM CROP] Blended crop: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) {
     return { url: null, failReason: 'crop_blend: ' + e?.message };
   }
 
-  // ── 9. Composite blended crop onto the full original ────────────────────
+  // ── 6. Composite blended crop onto the full original ────────────────────
   let compositedBuf;
   try {
     compositedBuf = await sharp(origBuf)
       .composite([{ input: blendedCropBuf, left: cropLeft, top: cropTop }])
-      .jpeg({ quality: 88 })
+      .jpeg({ quality: 90 })
       .toBuffer();
     console.log(`[SIM CROP] Final composite: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
   } catch (e) {
     return { url: null, failReason: 'crop_composite: ' + e?.message };
   }
 
-  // ── 10. Upload to Supabase ────────────────────────────────────────────────
+  // ── 7. Upload to Supabase ─────────────────────────────────────────────────
   try {
     const ts          = Date.now();
     const rand        = Math.random().toString(36).slice(2, 8);
