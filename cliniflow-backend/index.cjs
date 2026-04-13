@@ -15820,8 +15820,38 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //  7. [optional] microAlignment — disabled; enable via MICRO_ALIGN_ENABLED
 //  8. sharpen + composite onto full original + upload Supabase
 
+// ─── Simulation mode configs ──────────────────────────────────────────────────
+//
+// Mode 1 — natural:  cleaning ON, whitening SOFT, alignment OFF, no extras
+// Mode 2 — design:   cleaning ON, whitening ON,   alignment ON,  highlights + shape
+//
+const SIM_MODES = {
+  natural: {
+    name:                'natural',
+    blendAlpha:          { strong: 0.55, edge: 0.25 },
+    uniformTargetFactor: 1.10,   // conservative: +10% above average
+    alignment:           false,
+    edgeSoftening:       false,
+    highlights:          false,
+    sharpenSigma:        1.0,
+    sharpenM1:           0.5,
+    sharpenM2:           8,
+  },
+  design: {
+    name:                'design',
+    blendAlpha:          { strong: 0.65, edge: 0.35 },
+    uniformTargetFactor: 1.15,   // fuller whitening: +15% above average
+    alignment:           true,
+    edgeSoftening:       true,
+    highlights:          true,
+    sharpenSigma:        1.2,
+    sharpenM1:           0.5,
+    sharpenM2:           10,
+  },
+};
+
 // Feature flags
-const MICRO_ALIGN_ENABLED = false; // set true when alignment is ready for production
+const MICRO_ALIGN_ENABLED = false; // overridden per mode at runtime
 
 // ── Teeth mask ───────────────────────────────────────────────────────────────
 async function buildTeethMask(origCropBuf, w, h) {
@@ -16181,7 +16211,7 @@ function microTextureClean(result, maskRaw, w, h) {
 // Yellow:  if R > G > B: B += (R−B) × 0.25     — removes residual yellow cast
 // Guard:   brightness > 210 → pixel unchanged   — highlight protection
 //
-function uniformWhitening(result, maskRaw, w, h) {
+function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
   const snap = Buffer.from(result);  // immutable snapshot for reads
 
   // Brightness of every pixel
@@ -16198,8 +16228,8 @@ function uniformWhitening(result, maskRaw, w, h) {
   const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
   const p95 = vals[Math.floor(vals.length * 0.95)];
 
-  // Step 2 — target: 18% above average but never exceeds 98% of near-highlights
-  const target = Math.min(p95 * 0.96, avg * 1.12);  // mild: 12% max lift, ceiling at 96% of p95
+  // Step 2 — target driven by mode config (natural: ×1.10, design: ×1.15)
+  const target = Math.min(p95 * 0.96, avg * targetFactor);
   console.log(`[SIM UNIFORM] px=${vals.length} avg=${avg.toFixed(1)} p95=${p95.toFixed(1)} target=${target.toFixed(1)}`);
 
   const out = Buffer.from(snap);
@@ -16347,8 +16377,93 @@ async function microAlignment(cropBuf, maskBuf, w, h) {
     .jpeg({ quality: 92 }).toBuffer();
 }
 
+// ── Step 6: Shape refinement — gentle edge softening ─────────────────────────
+// Only for design mode.  Applies a 40%-weighted box-blur ONLY to pixels with a
+// moderate Sobel gradient (15–32): these are minor incisal-edge irregularities.
+// Hard boundaries (gradient > 32) and smooth surfaces (< 15) are untouched.
+//
+async function edgeSoftening(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++) br[i] = (raw[i*3]+raw[i*3+1]+raw[i*3+2])/3;
+  const grad = computeGradient(br, w, h);
+
+  const out = Buffer.from(raw);
+  let count = 0;
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const i = y*w+x;
+      if (maskRaw[i] <= 64) continue;
+      if (grad[i] < 15 || grad[i] > 32) continue; // moderate edges only
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++)
+            sum += raw[(y+dy)*w*3+(x+dx)*3+c];
+        out[i*3+c] = Math.min(245, Math.round(raw[i*3+c]*0.60 + (sum/9)*0.40));
+      }
+      count++;
+    }
+  }
+  console.log(`[SIM EDGE-SOFT] smoothed ${count} moderate-edge pixels`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Step 7: Light & reflection — subtle enamel highlights ─────────────────────
+// Only for design mode.  Existing bright smooth areas (enamel specular zone) get
+// a proportional boost of up to ~+10%.  Preserves natural light gradients.
+//
+async function addReflectionHighlights(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++) br[i] = (raw[i*3]+raw[i*3+1]+raw[i*3+2])/3;
+  const grad = computeGradient(br, w, h);
+
+  const out = Buffer.from(raw);
+  let count = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 128) continue; // only core teeth
+    if (br[i]    <= 185)   continue; // only existing bright areas
+    if (grad[i]  >  12)    continue; // only smooth flat surface (not edges)
+    const boost = 1 + (br[i] - 185) / 600; // max ~+10% at br=245
+    for (let c = 0; c < 3; c++)
+      out[i*3+c] = Math.min(245, Math.round(raw[i*3+c] * boost));
+    count++;
+  }
+  console.log(`[SIM HIGHLIGHT] boosted ${count} highlight pixels`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Confidence — how much did the tooth area change? ─────────────────────────
+// Low modification → high confidence (result is safe/believable).
+// avgPixelChange 0–10: high, 10–30: medium, >30: aggressive/risky.
+//
+async function computeConfidence(origCropBuf, resultCropBuf, maskBuf, w, h) {
+  const [origRaw, resRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  let totalDiff = 0, maskPx = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    maskPx++;
+    for (let c = 0; c < 3; c++) totalDiff += Math.abs(origRaw[i*3+c] - resRaw[i*3+c]);
+  }
+  const avgChange = maskPx > 0 ? totalDiff / (maskPx * 3) : 0;
+  const score     = Math.max(0.45, Math.min(1.00, 1 - avgChange / 60));
+  console.log(`[SIM CONFIDENCE] avgChange=${avgChange.toFixed(1)}  score=${score.toFixed(2)}`);
+  return { confidence: Math.round(score * 100) / 100, avgPixelChange: Math.round(avgChange * 10) / 10 };
+}
+
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
-async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
+async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = SIM_MODES.natural) {
   const [origRaw, maskRaw] = await Promise.all([
     sharp(origCropBuf).resize(w,h).removeAlpha().raw().toBuffer(),
     sharp(maskBuf).resize(w,h).greyscale().raw().toBuffer(),
@@ -16361,7 +16476,7 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   for (let i = 0; i < w*h; i++) {
     // Adaptive alpha: strong inside mask, gentler at edges
     const m = maskRaw[i];
-    const alpha = m > 192 ? 0.60 : m > 64 ? 0.30 : 0.0;
+    const alpha = m > 192 ? cfg.blendAlpha.strong : m > 64 ? cfg.blendAlpha.edge : 0.0;
     for (let c = 0; c < 3; c++)
       result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + filtered[i*3+c]*alpha));
   }
@@ -16406,7 +16521,7 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
   result = microTextureClean(result, maskRaw, w, h);
 
   // ── Uniform whitening — even tone, shading preserved ─────────────────────
-  result = uniformWhitening(result, maskRaw, w, h);
+  result = uniformWhitening(result, maskRaw, w, h, cfg.uniformTargetFactor);
 
   // Validation: result must be at least as bright as original in teeth zone
   let origSum = 0, resSum = 0, cnt = 0;
@@ -16432,7 +16547,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h) {
     .jpeg({ quality: 92 }).toBuffer();
 }
 
-async function cropCompositeSimulation(publicImageUrl, patientId) {
+async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natural') {
+  const cfg = SIM_MODES[mode] ?? SIM_MODES.natural;
+  console.log(`[SIM] Mode: ${cfg.name}`);
   // 1. Fetch original
   let origBuf, origW, origH;
   try {
@@ -16465,29 +16582,48 @@ async function cropCompositeSimulation(publicImageUrl, patientId) {
   let blendedCropBuf;
   try {
     const enhancedRaw = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight);
-    blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight);
+    blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight, cfg);
     console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
 
-  // 5a. Micro-alignment (disabled by default — MICRO_ALIGN_ENABLED flag)
-  if (MICRO_ALIGN_ENABLED) {
+  // 5a. Micro-alignment (mode-gated)
+  if (cfg.alignment) {
     try {
       blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
     } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
   }
 
-  // 5b. Sharpening — preserve inter-tooth gaps and surface texture.
-  // Unsharp mask: sigma=1.2 (fine details), m1=0.5 (flat areas), m2=10 (edge boost).
-  // Keeps gap lines crisp without over-sharpening the enamel surface.
+  // Step 6: Shape refinement — soft incisal edges (design mode only)
+  if (cfg.edgeSoftening) {
+    try {
+      blendedCropBuf = await edgeSoftening(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM EDGE-SOFT] non-fatal:', e?.message); }
+  }
+
+  // Step 7: Light & reflection highlights (design mode only)
+  if (cfg.highlights) {
+    try {
+      blendedCropBuf = await addReflectionHighlights(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM HIGHLIGHT] non-fatal:', e?.message); }
+  }
+
+  // Final sharpening — mode-specific sigma keeps gaps crisp
   try {
     blendedCropBuf = await sharp(blendedCropBuf)
-      .sharpen({ sigma: 1.2, m1: 0.5, m2: 10 })
+      .sharpen({ sigma: cfg.sharpenSigma, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
       .jpeg({ quality: 92 })
       .toBuffer();
     console.log('[SIM CROP] Sharpened');
   } catch (e) {
     console.warn('[SIM CROP] Sharpen failed (non-fatal):', e?.message);
   }
+
+  // Confidence score — how much did the tooth area change?
+  let confidence = 0.80, avgPixelChange = 0;
+  try {
+    const conf = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    confidence = conf.confidence; avgPixelChange = conf.avgPixelChange;
+  } catch (e) { console.warn('[SIM CONFIDENCE] non-fatal:', e?.message); }
 
   // 6. Composite onto full original
   let compositedBuf;
@@ -16511,23 +16647,22 @@ async function cropCompositeSimulation(publicImageUrl, patientId) {
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
     console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
-    return { url: finalUrl, failReason: null };
+    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, failReason: null };
   } catch (e) {
     console.error('[SIM CROP] Supabase upload failed:', e?.message);
     return { url: null, failReason: 'supabase_upload: ' + e?.message };
   }
 }
 
-async function runSmileSimulation({ imageUrl, patientId }) {
-  // Convert to public URL (strip query params / signed token)
+async function runSmileSimulation({ imageUrl, patientId, mode = 'natural' }) {
   const publicImageUrl = imageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
     .split('?')[0];
 
-  console.log('[SIM] Starting programmatic whitening | patientId:', patientId);
+  console.log(`[SIM] mode=${mode} | patientId:`, patientId);
   console.log('[SIM] Public URL:', publicImageUrl.slice(0, 120));
 
-  const r = await cropCompositeSimulation(publicImageUrl, patientId);
+  const r = await cropCompositeSimulation(publicImageUrl, patientId, mode);
 
   if (!r.url) {
     console.log('❌ Simulation failed | reason:', r.failReason);
@@ -16535,11 +16670,15 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     return { variations: [], url: null, provider: null, error: r.failReason, fallback: false, debugInfo: [r.failReason] };
   }
 
-  console.log('[SIM] Done ✅ | url:', r.url.slice(0, 80));
-  logAI('info', 'sim_done', { patientId });
+  const label = mode === 'design' ? 'Smile Design' : 'Doğal Beyazlatma';
+  console.log(`[SIM] Done ✅ | mode=${r.mode} | confidence=${r.confidence} | url:`, r.url.slice(0, 80));
+  logAI('info', 'sim_done', { patientId, mode: r.mode, confidence: r.confidence });
   return {
-    variations: [{ id: 'whitened', label: 'Beyazlatma', url: r.url }],
+    variations: [{ id: mode, label, url: r.url }],
     url:        r.url,
+    mode:       r.mode,
+    confidence: r.confidence,
+    avgPixelChange: r.avgPixelChange,
     provider:   'programmatic',
     error:      null,
     fallback:   false,
@@ -16563,25 +16702,29 @@ setInterval(() => {
 // Client polls GET /api/chat/sim-status/:jobId for the result.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   console.log('🎯 SIM ENDPOINT v7 HIT | ASYNC JOB | returning jobId immediately');
-  const { patientId, imageUrl } = req.body || {};
-  console.log('[SIM] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
+  const { patientId, imageUrl, mode = 'natural' } = req.body || {};
+  const simMode = ['natural', 'design'].includes(mode) ? mode : 'natural';
+  console.log('[SIM] patientId:', patientId, '| mode:', simMode, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
   if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
   if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
   if (!ENABLE_SMILE_SIMULATION) return res.status(503).json({ ok: false, error: 'simulation_disabled' });
 
   const jobId = crypto.randomUUID();
-  _simJobs.set(jobId, { status: 'pending', url: null, variations: [], failReason: null, createdAt: Date.now() });
+  _simJobs.set(jobId, { status: 'pending', url: null, variations: [], failReason: null, mode: simMode, createdAt: Date.now() });
 
   // Fire-and-forget — do NOT await this
-  runSmileSimulation({ imageUrl, patientId }).then(result => {
+  runSmileSimulation({ imageUrl, patientId, mode: simMode }).then(result => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, {
       ...existing,
-      status:     result.url ? 'succeeded' : 'failed',
-      url:        result.url ?? null,
-      variations: result.variations ?? [],
-      failReason: result.error ?? null,
+      status:         result.url ? 'succeeded' : 'failed',
+      url:            result.url ?? null,
+      variations:     result.variations ?? [],
+      mode:           result.mode ?? simMode,
+      confidence:     result.confidence ?? null,
+      avgPixelChange: result.avgPixelChange ?? null,
+      failReason:     result.error ?? null,
     });
     console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
@@ -16608,8 +16751,11 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       ok:                true,
       status:            'succeeded',
       simulatedImageUrl: job.url,
-      simulationProvider:'replicate',
+      simulationProvider:'programmatic',
       variations:        job.variations ?? [],
+      mode:              job.mode ?? 'natural',
+      confidence:        job.confidence ?? null,
+      avgPixelChange:    job.avgPixelChange ?? null,
       fallback:          false,
     });
   }
