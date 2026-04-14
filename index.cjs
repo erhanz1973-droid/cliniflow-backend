@@ -16916,7 +16916,7 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
   // Apply bilateral filter to enhanced result for edge preservation
   const filtered = bilateralFilter(enhancedRaw, w, h);
 
-  const result = Buffer.alloc(w * h * 3);
+  let result = Buffer.alloc(w * h * 3);
   for (let i = 0; i < w*h; i++) {
     // Adaptive alpha: strong inside mask, gentler at edges
     const m = maskRaw[i];
