@@ -31001,6 +31001,189 @@ app.post("/api/patient/treatment-plans/:id/reject", requireToken, async (req, re
   }
 });
 
+// ── Treatment Requests & Offers ───────────────────────────────────────────────
+// These endpoints power the patient's "My Requests / Offers" screen.
+// Tables: treatment_requests, treatment_offers, ratings, doctors, clinics.
+
+// GET /api/patient/treatment-requests
+// Returns all requests by the authenticated patient, each with its doctor offers.
+app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    // Fetch requests (with the target clinic name)
+    const { data: requests, error: reqErr } = await supabaseAdmin
+      .from('treatment_requests')
+      .select('*, clinics(id, name)')
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+
+    if (reqErr) {
+      console.error('[TREATMENT-REQUESTS GET]', reqErr.message);
+      return res.status(500).json({ ok: false, error: 'db_error' });
+    }
+
+    if (!requests || requests.length === 0) {
+      return res.json({ ok: true, requests: [] });
+    }
+
+    const requestIds = requests.map(r => r.id);
+
+    // Fetch all offers for these requests (with doctor + clinic names)
+    const { data: offers, error: offErr } = await supabaseAdmin
+      .from('treatment_offers')
+      .select('*, doctors(id, full_name, name), clinics(id, name)')
+      .in('request_id', requestIds)
+      .order('created_at', { ascending: true });
+
+    if (offErr) console.warn('[TREATMENT-REQUESTS OFFERS]', offErr.message);
+
+    const offersByRequest = {};
+    for (const offer of offers || []) {
+      const rId = offer.request_id;
+      if (!offersByRequest[rId]) offersByRequest[rId] = [];
+      offersByRequest[rId].push({
+        id:             offer.id,
+        clinic_id:      offer.clinic_id || null,
+        clinic_name:    offer.clinics?.name || null,
+        doctor_name:    offer.doctors?.full_name || offer.doctors?.name || null,
+        treatment_type: offer.treatment_type,
+        price_range:    offer.price_range || null,
+        duration:       offer.duration    || null,
+        note:           offer.note        || null,
+        disclaimer:     offer.disclaimer  || 'This is a preliminary estimate. Final diagnosis requires clinical examination.',
+        created_at:     offer.created_at,
+      });
+    }
+
+    const result = requests.map(r => ({
+      id:                   r.id,
+      clinic_id:            r.clinic_id   || null,
+      clinic_name:          r.clinics?.name || null,
+      description:          r.description,
+      budget:               r.budget               || null,
+      preferred_treatment:  r.preferred_treatment  || null,
+      status:               r.status,
+      created_at:           r.created_at,
+      offers:               offersByRequest[r.id]  || [],
+    }));
+
+    return res.json({ ok: true, requests: result });
+  } catch (e) {
+    console.error('[TREATMENT-REQUESTS GET]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// POST /api/patient/treatment-requests/mark-seen
+// Sets patient_seen_at = NOW() on all answered requests that haven't been seen yet.
+// Called when the patient opens the My Requests screen — clears the home-screen badge.
+app.post('/api/patient/treatment-requests/mark-seen', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const { error } = await supabaseAdmin
+      .from('treatment_requests')
+      .update({ patient_seen_at: new Date().toISOString() })
+      .eq('patient_id', patientId)
+      .eq('status', 'answered')
+      .is('patient_seen_at', null);
+
+    if (error) console.warn('[MARK-SEEN]', error.message); // non-fatal
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[MARK-SEEN]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// GET /api/patient/ratings
+// Returns all ratings submitted by the authenticated patient.
+app.get('/api/patient/ratings', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const { data: ratings, error } = await supabaseAdmin
+      .from('ratings')
+      .select('id, clinic_id, offer_id, type, overall, created_at')
+      .eq('patient_id', patientId);
+
+    if (error) {
+      console.error('[RATINGS GET]', error.message);
+      return res.status(500).json({ ok: false, error: 'db_error' });
+    }
+    return res.json({ ok: true, ratings: ratings || [] });
+  } catch (e) {
+    console.error('[RATINGS GET]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// GET /api/patient/inbox-summary
+// Returns badge counts: new_offers (answered requests not yet seen) +
+// doctor_messages (unread messages from doctors in offer threads).
+app.get('/api/patient/inbox-summary', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    // Count answered requests the patient hasn't opened yet
+    const { count: newOffers, error: offerErr } = await supabaseAdmin
+      .from('treatment_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('patient_id', patientId)
+      .eq('status', 'answered')
+      .is('patient_seen_at', null);
+
+    if (offerErr) console.warn('[INBOX-SUMMARY offers]', offerErr.message);
+
+    // Count unread doctor messages across all offer threads belonging to this patient
+    // offer_messages.sender_role = 'doctor' AND read_at IS NULL for messages in the
+    // patient's offer threads.
+    let doctorMessages = 0;
+    try {
+      // First get all offer IDs for this patient's requests
+      const { data: reqs } = await supabaseAdmin
+        .from('treatment_requests')
+        .select('id')
+        .eq('patient_id', patientId);
+
+      if (reqs && reqs.length > 0) {
+        const reqIds = reqs.map(r => r.id);
+        const { data: offerRows } = await supabaseAdmin
+          .from('treatment_offers')
+          .select('id')
+          .in('request_id', reqIds);
+
+        if (offerRows && offerRows.length > 0) {
+          const offerIds = offerRows.map(o => o.id);
+          const { count } = await supabaseAdmin
+            .from('offer_messages')
+            .select('id', { count: 'exact', head: true })
+            .in('offer_id', offerIds)
+            .eq('sender_role', 'doctor')
+            .is('read_at', null);
+          doctorMessages = count || 0;
+        }
+      }
+    } catch (e2) {
+      console.warn('[INBOX-SUMMARY messages]', e2?.message);
+    }
+
+    return res.json({
+      ok:              true,
+      new_offers:      newOffers    || 0,
+      doctor_messages: doctorMessages,
+    });
+  } catch (e) {
+    console.error('[INBOX-SUMMARY]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
 async function requireDoctorOrAdminAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
