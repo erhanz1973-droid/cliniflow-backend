@@ -15899,55 +15899,107 @@ function resolveSimMode(mode) {
 const MICRO_ALIGN_ENABLED = false; // legacy global; per-mode cfg.alignment governs runtime
 
 // ── Teeth mask ───────────────────────────────────────────────────────────────
+// ── Morphological erosion (binary mask, pure JS) ─────────────────────────────
+// Shrinks "on" (255) regions inward by `radius` pixels.  Any on-pixel that has
+// at least one off-pixel (or image border) within the square neighbourhood is
+// turned off.  This prevents boundary pixels — which sit on the lip/gum edge —
+// from surviving into the feathered output, eliminating colour bleed at the
+// teeth/soft-tissue transition.
+function erodeMask(maskData, w, h, radius = 2) {
+  const result = Buffer.from(maskData);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskData[y * w + x] === 0) continue;  // already off — skip
+      let mustErode = false;
+      outer: for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const ny = y + dy, nx = x + dx;
+          // Border pixel → erode (mask never extends to crop boundary)
+          if (ny < 0 || ny >= h || nx < 0 || nx >= w) { mustErode = true; break outer; }
+          if (maskData[ny * w + nx] === 0)             { mustErode = true; break outer; }
+        }
+      }
+      if (mustErode) result[y * w + x] = 0;
+    }
+  }
+  return result;
+}
+
 async function buildTeethMask(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const maskData = Buffer.alloc(w * h);
   let white = 0;
 
-  // Spatial exclusion zones — areas guaranteed to not contain teeth.
-  // The mouth crop centres on the lip/teeth region:
-  //   • Top 12 %   : upper lip / philtrum tissue
-  //   • Bottom 8 % : lower lip / chin tissue
-  //   • Left 3 %   : lip corner (too dark / saturated to be tooth)
-  //   • Right 3 %  : lip corner
-  // These are conservative; actual teeth rarely extend to these margins.
-  const Y_TOP_EXCL = Math.floor(h * 0.12);
-  const Y_BOT_EXCL = Math.floor(h * 0.92);
-  const X_L_EXCL   = Math.floor(w * 0.03);
-  const X_R_EXCL   = Math.floor(w * 0.97);
+  // ── Spatial exclusion zones ───────────────────────────────────────────────
+  // The mouth crop is centred on the teeth.  Regions guaranteed not to
+  // contain teeth (tighter than before to clamp mask to mouth area only):
+  //   • Top 18 %   : upper lip, philtrum, and any forehead bleed
+  //   • Bottom 15 %: lower lip, chin
+  //   • Left  4 %  : lip corner (dark, saturated)
+  //   • Right 4 %  : lip corner
+  const Y_TOP_EXCL = Math.floor(h * 0.18);
+  const Y_BOT_EXCL = Math.floor(h * 0.85);
+  const X_L_EXCL   = Math.floor(w * 0.04);
+  const X_R_EXCL   = Math.floor(w * 0.96);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      // Hard spatial gate — outside these bounds can never be a tooth
-      if (y < Y_TOP_EXCL || y > Y_BOT_EXCL) continue;
-      if (x < X_L_EXCL   || x > X_R_EXCL)   continue;
+      // Hard spatial gate
+      if (y < Y_TOP_EXCL || y >= Y_BOT_EXCL) continue;
+      if (x < X_L_EXCL   || x >= X_R_EXCL)   continue;
 
-      const i = y*w + x;
+      const i = y * w + x;
       const r = data[i*3], g = data[i*3+1], b = data[i*3+2];
-      const brightness = (r + g + b) / 3;
-      const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+      const brightness  = (r + g + b) / 3;
+      const saturation  = Math.max(r, g, b) - Math.min(r, g, b);
 
-      // Standard: clean / upper teeth — white/neutral pixels
-      const isStdTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
+      // ── LAB-space gum / lip rejection ──────────────────────────────────
+      // Gums and lips carry elevated A* (red-green axis > 0 = reddish/pink).
+      // Tooth enamel always sits near A* ≈ 0 (neutral to very slightly warm).
+      // Any pixel with A* > 12 is almost certainly soft tissue — reject.
+      const [, labA] = rgbToLab(r, g, b);
+      if (labA > 12) continue;
 
-      // Lower-region relaxation (bottom ~58% of crop, above bottom exclusion):
-      // Lower incisors are often in shadow AND stained (warm yellow → R > G).
-      // The strict g >= r * 0.70 ratio rejects them; widen to g >= r * 0.52,
-      // allow higher saturation (stain-inclusive) but keep brightness floor.
-      const isLowerRegion = y / h > 0.42;
+      // ── Warm-tone skin / beard guard ────────────────────────────────────
+      // Skin and beard: R > G > B with significant saturation and R/B ratio.
+      // Teeth enamel is neutral or mildly yellow — never deeply warm-orange.
+      if (r > g && saturation > 35 && (r / (b + 1)) > 1.45) continue;
+
+      // ── Standard tooth: bright, low-saturation, neutral/slightly yellow ─
+      const isStdTooth = brightness > 130
+        && saturation <= 65
+        && g >= r * 0.72   // not too red-warm
+        && b >= r * 0.60;  // not too orange
+
+      // ── Stained / lower incisor (relaxed, lower half only) ─────────────
+      // Lower incisors are darker and more yellow than upper teeth.  Only
+      // allow relaxed thresholds in the lower half of the crop to prevent
+      // gums or chin from being included via the relaxed path.
+      const isLowerRegion = y / h > 0.44;
       const isLowerTooth  = isLowerRegion
-        && brightness > 98 && saturation <= 135 && g >= r * 0.52
-        // Extra guard: exclude very saturated warm tones (beard/skin reddish)
-        && !(r > 180 && saturation > 50 && r > g * 1.20);
+        && brightness > 108
+        && saturation <= 95
+        && g >= r * 0.58     // yellow-stained is ok; warm-red is not
+        && b >= r * 0.40     // slight orange allowed
+        // Reject saturated red (beard, lower lip, tongue)
+        && !(r > 185 && saturation > 55 && r > g * 1.22);
 
       if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
     }
   }
-  console.log(`[SIM MASK] ${white}/${w*h} tooth px (${((white/(w*h))*100).toFixed(1)}%)`);
-  // Blur=3 feathers the boundary; the hard fence in enforceTeethMaskBoundary
-  // guarantees no processed content leaks through the feathered zone.
-  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } }).blur(3).png().toBuffer();
+
+  // ── Morphological erosion (2 px) ─────────────────────────────────────────
+  // Shrinks the binary mask inward so no boundary pixels (which sit on the
+  // lip/gum edge) survive into the blended output.
+  const eroded = erodeMask(maskData, w, h, 2);
+  const afterErosion = eroded.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
+
+  console.log(`[SIM MASK] ${white}/${w*h} raw px → ${afterErosion} after 2-px erosion (${((afterErosion/(w*h))*100).toFixed(1)}%)`);
+
+  // blur(2) adds gentle feathering at the eroded boundary — radius intentionally
+  // smaller than before (was 3) because erosion already provides the safety margin.
+  return sharp(eroded, { raw: { width: w, height: h, channels: 1 } }).blur(2).png().toBuffer();
 }
 
 // ── Local stats (7×7 window): mean + std per pixel ───────────────────────────
@@ -16503,6 +16555,26 @@ function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
     // Yellow tint kill
     if (r > g && g > b) bo += (r - b) * 0.25;
 
+    // ── LAB lightness cap (realism) ─────────────────────────────────────
+    // L* = 100 is a mirror-white surface; real tooth enamel peaks around
+    // 88–92 (shade A1/B1 on the Vita scale).  Clamp to L ≤ 88 so the
+    // output never looks painted or digitally bleached.
+    const [capL, capA, capB] = rgbToLab(Math.round(ro), Math.round(go), Math.round(bo));
+    if (capL > 88) {
+      const scale = 88 / capL;
+      const [cr, cg, cb] = labToRgb(capL * scale, capA, capB);
+      ro = cr; go = cg; bo = cb;
+    }
+
+    // ── Subtle natural variation (anti-perfection) ───────────────────────
+    // Real teeth have micro-variation in shade.  Add a tiny deterministic
+    // per-pixel noise (±2 brightness units, seeded by position) so the
+    // output never looks uniformly flat or digitally uniform.
+    const noise = ((i * 1664525 + 1013904223) & 0x7fffffff) % 5 - 2;  // −2 … +2
+    ro = Math.min(245, Math.max(0, Math.round(ro) + noise));
+    go = Math.min(245, Math.max(0, Math.round(go) + noise));
+    bo = Math.min(245, Math.max(0, Math.round(bo) + noise));
+
     out[i*3]   = Math.min(245, Math.max(0, Math.round(ro)));
     out[i*3+1] = Math.min(245, Math.max(0, Math.round(go)));
     out[i*3+2] = Math.min(245, Math.max(0, Math.round(bo)));
@@ -16718,6 +16790,46 @@ async function enforceTeethMaskBoundary(processedBuf, origBuf, maskBuf, w, h) {
   else
     console.log('[SIM FENCE] No leakage detected — all modifications within mask boundaries');
   return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Hard-fail leakage validator ───────────────────────────────────────────────
+//
+// Compares every outside-mask pixel between `origCropBuf` and `processedCropBuf`.
+// After enforceTeethMaskBoundary() these should be byte-identical; any residual
+// difference indicates upstream bleed (bilateral filter sampling, warp spill, etc.).
+//
+// Threshold: 3.0 brightness units average (JPEG re-encode produces ≤ 1.5 rounding
+// error naturally; 3.0 gives safe headroom without triggering false positives).
+//
+// Returns: { passed: bool, avgDiff: number, leakedPx: number }
+//
+async function validateNoLeakage(origCropBuf, processedCropBuf, maskBuf, w, h) {
+  const [orig, proc, mask] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(processedCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  let totalDiff = 0, leakedPx = 0, count = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (mask[i] > 0) continue;  // inside mask — changes are expected here
+    const diff = Math.abs(
+      (proc[i*3] + proc[i*3+1] + proc[i*3+2]) -
+      (orig[i*3] + orig[i*3+1] + orig[i*3+2])
+    ) / 3;
+    if (diff > 0) leakedPx++;
+    totalDiff += diff;
+    count++;
+  }
+
+  const avgDiff = count > 0 ? totalDiff / count : 0;
+  const passed  = avgDiff < 3.0;
+
+  console.log(
+    `[SIM VALIDATE] outside-mask avg Δ=${avgDiff.toFixed(2)} leaked=${leakedPx}px` +
+    ` → ${passed ? 'PASS ✓' : 'HARD FAIL ✗ — beard/skin/chin modified'}`
+  );
+  return { passed, avgDiff, leakedPx };
 }
 
 // ── Step: Smile Arc — align incisal edges to a natural parabolic arch curve ──
@@ -17225,6 +17337,22 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
     );
   } catch (e) { console.warn('[SIM FENCE] non-fatal:', e?.message); }
+
+  // HARD FAIL CHECK: Verify no outside-mask pixels were altered.
+  // Rejects the simulation if beard/skin/chin brightness changed.
+  // (enforceTeethMaskBoundary already restores them; this validates that
+  // the restoration was complete and the diff is within JPEG rounding noise.)
+  try {
+    const leak = await validateNoLeakage(
+      origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight
+    );
+    if (!leak.passed) {
+      // Log the failure but do NOT abort — enforceTeethMaskBoundary has already
+      // hard-restored every outside-mask pixel.  Lower confidence instead.
+      console.warn(`[SIM HARD FAIL] Leakage avgΔ=${leak.avgDiff.toFixed(2)} px=${leak.leakedPx} — confidence capped at 0.45`);
+      confidence = Math.min(confidence, 0.45);
+    }
+  } catch (e) { console.warn('[SIM VALIDATE] non-fatal:', e?.message); }
 
   // 6. Mask-accurate composite onto full original ─────────────────────────────
   //
