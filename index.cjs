@@ -19740,60 +19740,6 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
   }
 });
 
-/**
- * Soft blend: feathered alpha mask over mouth rect, then slight extra weight on lower arch (SIM_MERGE_LOWER_BOOST).
- * SIM_MERGE_FEATHER_BLUR=0 skips feather (hard composite only).
- */
-async function featherBlendMouthMerge(origBuf, compositedBuf, ox, oy, mw, mh) {
-  const featherPx = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_FEATHER_BLUR ?? '8'), 10);
-    return Number.isFinite(v) ? Math.min(14, Math.max(0, v)) : 8;
-  })();
-  const lowerBoost = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_BOOST ?? '1.08'), 10);
-    return Number.isFinite(v) ? Math.min(1.22, Math.max(1, v)) : 1.08;
-  })();
-  if (featherPx <= 0) {
-    return compositedBuf;
-  }
-
-  const { data: o, info } = await sharp(origBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const w = info.width;
-  const h = info.height;
-  const c = await sharp(compositedBuf).resize(w, h).removeAlpha().raw().toBuffer();
-  const mh0 = Math.round(mh);
-  const upperH = Math.floor(mh0 / 2);
-  const lowerY = oy + upperH;
-  const mouthBottom = oy + mh0;
-  const ox0 = Math.round(ox);
-  const oy0 = Math.round(oy);
-  const mw0 = Math.round(mw);
-
-  const svg = `<svg width="${w}" height="${h}"><rect x="${ox0}" y="${oy0}" width="${mw0}" height="${mh0}" fill="white"/></svg>`;
-  const maskRaw = await sharp(Buffer.from(svg))
-    .resize(w, h)
-    .blur(featherPx)
-    .greyscale()
-    .raw()
-    .toBuffer();
-
-  const out = Buffer.alloc(w * h * 3);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      let a = maskRaw[i] / 255;
-      if (y >= lowerY && y < mouthBottom && x >= ox0 && x < ox0 + mw0) {
-        a = Math.min(1, a * lowerBoost);
-      }
-      const oi = i * 3;
-      out[oi] = Math.round(o[oi] * (1 - a) + c[oi] * a);
-      out[oi + 1] = Math.round(o[oi + 1] * (1 - a) + c[oi + 1] * a);
-      out[oi + 2] = Math.round(o[oi + 2] * (1 - a) + c[oi + 2] * a);
-    }
-  }
-  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
-}
-
 // POST /api/chat/merge-teeth-strips
 // Composite AI upper/lower strips onto original full image. Body: { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth }
 app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
@@ -19838,19 +19784,23 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
     const loResized = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
 
-    let composited = await sharp(origBuf)
-      .composite([
-        { input: upResized, left: Math.round(ox), top: Math.round(oy) },
-        { input: loResized, left: Math.round(ox), top: Math.round(oy) + upperH },
-      ])
-      .jpeg({ quality: 92 })
-      .toBuffer();
+    const lx = Math.round(ox);
+    const ty = Math.round(oy);
+    const ty2 = Math.round(oy) + upperH;
 
-    try {
-      composited = await featherBlendMouthMerge(origBuf, composited, ox, oy, mw, mh);
-    } catch (fe) {
-      console.warn('[MERGE TEETH] feather blend skipped:', fe?.message);
+    const outputBlur = (() => {
+      const v = parseFloat(String(process.env.SIM_MERGE_OUTPUT_BLUR ?? '1.5'), 10);
+      return Number.isFinite(v) ? Math.min(4, Math.max(0, v)) : 1.5;
+    })();
+
+    let pipeline = sharp(origBuf).composite([
+      { input: upResized, left: lx, top: ty, blend: 'over' },
+      { input: loResized, left: lx, top: ty2, blend: 'over' },
+    ]);
+    if (outputBlur > 0) {
+      pipeline = pipeline.blur(outputBlur);
     }
+    const composited = await pipeline.jpeg({ quality: 92 }).toBuffer();
 
     const fileName = `merge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
     const storagePath = `ai-photos/${patientId}/${fileName}`;
@@ -36534,7 +36484,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v32');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v33');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
