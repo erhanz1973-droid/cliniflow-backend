@@ -16124,9 +16124,11 @@ const SIM_REPLICATE_PROMPT_DEFAULT =
   'strongly enforce equal alignment and correction on lower teeth, do not leave lower teeth unchanged, ' +
   'apply equal correction to both upper and lower teeth, ensure both rows are clearly visible and equally enhanced, ' +
   'match color tone and brightness between upper and lower teeth, ' +
+  'lower teeth brightness must match surrounding inner mouth and gums — not brighter or harsher than the oral cavity, ' +
   'add subtle shadow and depth to lower teeth to match realism of upper teeth, slight natural interdental shading for depth, ' +
-  'add subtle shadow between lower teeth and inner mouth for realistic depth and separation, natural soft shadow under upper teeth where they meet the gum, ' +
+  'add subtle shadow between lower teeth and inner mouth for realistic depth and separation, distinct soft shadow band under upper teeth at the gum line, ' +
   'depth between upper and lower tooth layers, avoid flat lighting on lower arch, ' +
+  'lower teeth slightly darker and softer than a glossy overlay — natural diffuse light, not oversharpened, ' +
   'slightly whiten teeth naturally without over-whitening, perform subtle alignment correction on all visible teeth, ' +
   'preserve natural tooth shapes and small imperfections, avoid artificial veneers or perfect uniform teeth, ' +
   'keep lips, skin, and face completely unchanged, high realism, medical-grade natural result';
@@ -16142,6 +16144,7 @@ const SIM_DUAL_REGION_REPLICATE_ENABLED = String(process.env.SIM_DUAL_REGION_REP
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
   'fake teeth, plastic teeth, overly white, perfect symmetry, cartoon, blurry, distorted face, ' +
   'unnatural smile, duplicated teeth, ignoring lower teeth, unchanged lower teeth, upper teeth only, ' +
+  'lower teeth brighter than inner mouth or gums, oversharpened lower teeth, harsh glossy lower arch, ' +
   'watermark, text, extra teeth, wrong tooth count';
 
 /**
@@ -19730,8 +19733,10 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
       stripOpts.strengthOverride = Math.min(0.98, Math.max(0.35, baseStrength + delta));
       stripOpts.promptSuffix =
         ' Prioritize subtle orthodontic alignment and leveling on these lower teeth — slightly stronger alignment correction than the upper arch. ' +
+        'Match lower-teeth brightness to surrounding inner mouth and oral mucosa — they must not look brighter than gums or cheek; slightly darken lower teeth (~3–4%) vs over-bright AI output. ' +
         'Add subtle shadow and depth to lower teeth to match upper-teeth realism; slight interdental shadow and natural contrast; avoid flat lighting. ' +
-        'Add subtle shadow between lower teeth and inner mouth for realistic depth and separation; natural shadow under upper teeth at gum line; depth between tooth layers.';
+        'Add subtle shadow between lower teeth and inner mouth for realistic depth and separation; soft shadow under upper teeth at gum line; depth between tooth layers. ' +
+        'Lower arch: softer, less sharp detail than harsh digital overlay; natural diffuse lighting.';
     }
 
     const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, stripOpts);
@@ -19760,6 +19765,29 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'strip_exception', message: e?.message });
   }
 });
+
+/**
+ * Lower strip only before merge: slight darken (2–5%) + micro blur to reduce oversharpened AI look.
+ * Does not affect full image. SIM_MERGE_LOWER_LIGHTING=0 to skip.
+ */
+async function applyLowerStripRealismAdjust(rgbBuffer) {
+  if (String(process.env.SIM_MERGE_LOWER_LIGHTING ?? '1').trim() === '0') {
+    return rgbBuffer;
+  }
+  const mult = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_BRIGHTNESS_MULT ?? '0.96'), 10);
+    return Number.isFinite(v) ? Math.min(0.98, Math.max(0.95, v)) : 0.96;
+  })();
+  const blurSigma = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_SOFTEN_SIGMA ?? '0.45'), 10);
+    return Number.isFinite(v) ? Math.min(1.2, Math.max(0, v)) : 0.45;
+  })();
+  let pipeline = sharp(rgbBuffer).removeAlpha();
+  if (blurSigma > 0.01) {
+    pipeline = pipeline.blur(blurSigma);
+  }
+  return pipeline.linear(mult, 0).jpeg({ quality: 95 }).toBuffer();
+}
 
 /**
  * Seamless mouth integration: blend hard composite with original using a blurred mouth mask (sharp center, soft edges only).
@@ -19876,13 +19904,19 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
 
     const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
     const loResizedRgb = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
+    let loAdjusted = loResizedRgb;
+    try {
+      loAdjusted = await applyLowerStripRealismAdjust(loResizedRgb);
+    } catch (le) {
+      console.warn('[MERGE TEETH] lower strip realism adjust skipped:', le?.message);
+    }
     const lowerTeethOpacity = (() => {
       const v = parseFloat(String(process.env.SIM_MERGE_LOWER_TEETH_OPACITY ?? '0.92'), 10);
       return Number.isFinite(v) ? Math.min(1, Math.max(0.65, v)) : 0.92;
     })();
-    let loInput = loResizedRgb;
+    let loInput = loAdjusted;
     if (lowerTeethOpacity < 0.999) {
-      const { data, info } = await sharp(loResizedRgb).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const { data, info } = await sharp(loAdjusted).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
       const lw = info.width;
       const lh = info.height;
       const a = Math.round(lowerTeethOpacity * 255);
@@ -36602,7 +36636,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v36');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v37');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
