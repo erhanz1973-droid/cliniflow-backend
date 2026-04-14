@@ -16126,7 +16126,8 @@ const SIM_REPLICATE_PROMPT_DEFAULT =
 // Override: REPLICATE_DUAL_PROMPT or REPLICATE_TEETH_PROMPT.
 const SIM_REPLICATE_DUAL_PROMPT = SIM_REPLICATE_PROMPT_DEFAULT;
 
-// Default ON — set SIM_DUAL_REGION_REPLICATE=0 to use a single full-crop Replicate pass only.
+// Default: dual upper/lower strips when Replicate is configured (no single full-crop by default).
+// SIM_DUAL_REGION_REPLICATE=0 — skip dual; then programmatic only unless SIM_USE_SINGLE_PASS_REPLICATE=1.
 const SIM_DUAL_REGION_REPLICATE_ENABLED = String(process.env.SIM_DUAL_REGION_REPLICATE || '').trim() !== '0';
 
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
@@ -16335,7 +16336,7 @@ async function applyDualSeamEdgeBlur(jpegBuf, w, h, ySplit, overlap) {
  *        Heuristic fallback matches ~face: x+20%·w, y+55%·h, w=60%·h, h=30% (see getSpecFallbackMouthRectFromFullImage).
  * STEP 2 — Split at 50% height (upper / lower half of mouth) with small overlap for blend.
  * STEP 3–5 — Same prompt both passes; merge overlays strips back to full mouth crop; STEP 6 blurs seam.
- * Falls back to single full-crop Replicate if either region call fails.
+ * Does NOT fall back to single full-crop — caller uses programmatic path or SIM_USE_SINGLE_PASS_REPLICATE=1.
  */
 async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -16353,7 +16354,7 @@ async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) 
   const hLo = h - topLower;
 
   if (hUp < 24 || hLo < 24) {
-    console.warn('[SIM DUAL] crop too small for dual-region — single Replicate pass');
+    console.warn('[SIM DUAL] crop too small for dual-region — skip Replicate (use programmatic)');
     return null;
   }
 
@@ -16411,10 +16412,10 @@ async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) 
       console.warn('[SIM DUAL] merge failed:', e?.message);
     }
   } else {
-    console.warn('[SIM DUAL] one or both region calls failed — fallback single');
+    console.warn('[SIM DUAL] one or both region calls failed — no single-pass fallback (SIM_USE_SINGLE_PASS_REPLICATE=1 for legacy)');
   }
 
-  return replicateTeethImg2ImgOptional(workingCropBuf, w, h, opts);
+  return null;
 }
 
 /**
@@ -18568,14 +18569,23 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     console.warn('[SIMSTEP 3] normalize skipped — using raw crop:', e?.message);
   }
 
-  // STEP 4: optional Replicate img2img (strictly blended through teeth mask in step 5)
-  // Prefer dual upper/lower strips so the model cannot focus on upper arch only (SIM_DUAL_REGION_REPLICATE=0 to disable).
+  const replicateConfigured = !!(
+    process.env.REPLICATE_API_TOKEN &&
+    String(process.env.REPLICATE_API_TOKEN).trim() &&
+    process.env.REPLICATE_IMG2IMG_VERSION &&
+    String(process.env.REPLICATE_IMG2IMG_VERSION).trim()
+  );
+  const allowLegacySinglePassReplicate =
+    String(process.env.SIM_USE_SINGLE_PASS_REPLICATE || '').trim() === '1';
+
+  // STEP 4: Replicate — region-based dual strip only (no single full-crop unless SIM_USE_SINGLE_PASS_REPLICATE=1).
   let blendedCropBuf = null;
   let aiJpeg = null;
-  if (SIM_DUAL_REGION_REPLICATE_ENABLED) {
+  if (replicateConfigured && SIM_DUAL_REGION_REPLICATE_ENABLED) {
     aiJpeg = await replicateDualRegionTeethImg2Img(workingCropBuf, cropWidth, cropHeight, {});
   }
-  if (!aiJpeg) {
+  if (!aiJpeg && replicateConfigured && allowLegacySinglePassReplicate) {
+    console.warn('[SIMSTEP 4] legacy single full-crop Replicate (SIM_USE_SINGLE_PASS_REPLICATE=1)');
     aiJpeg = await replicateTeethImg2ImgOptional(workingCropBuf, cropWidth, cropHeight);
   }
   if (aiJpeg) {
@@ -19006,11 +19016,18 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       console.warn(
         `[SIM LOWER ARCH] Low change meanAbs=${lowM.meanAbs.toFixed(2)} — retry (Replicate or programmatic boost)`
       );
-      const aiRetry = await replicateTeethImg2ImgOptional(workingCropBuf, cropWidth, cropHeight, {
-        promptSuffix:
-          ' must modify both upper and lower teeth equally. Do not leave lower teeth unchanged.',
-        strengthOverride: 0.55,
-      });
+      const aiRetry =
+        replicateConfigured && SIM_DUAL_REGION_REPLICATE_ENABLED
+          ? await replicateDualRegionTeethImg2Img(workingCropBuf, cropWidth, cropHeight, {
+              strengthOverride: 0.55,
+            })
+          : allowLegacySinglePassReplicate
+            ? await replicateTeethImg2ImgOptional(workingCropBuf, cropWidth, cropHeight, {
+                promptSuffix:
+                  ' must modify both upper and lower teeth equally. Do not leave lower teeth unchanged.',
+                strengthOverride: 0.55,
+              })
+            : null;
       if (aiRetry) {
         const aiRaw = await sharp(aiRetry)
           .resize(cropWidth, cropHeight)
@@ -36314,7 +36331,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v27');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v28');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
