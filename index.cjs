@@ -16907,22 +16907,50 @@ function computeTransformationScore({ cfg, stainRemovalRate, stainWarning, struc
 }
 
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
+//
+// STRICT MASK ENFORCEMENT — order of operations matters:
+//
+//  1. Alpha-blend first (mask-gated).
+//     Outside mask: alpha = 0  →  result = origRaw exactly.
+//     This is critical: when the bilateral filter (step 2) samples pixel
+//     neighbourhoods, outside-mask neighbours return the ORIGINAL skin/lip
+//     values — not processed ones — so tooth-edge pixels cannot be
+//     contaminated by modified beard/lip colour.
+//
+//  2. Bilateral filter on the already-blended buffer, write-gated by mask.
+//     Outside mask: never written — original value preserved.
+//
+//  Every subsequent pass (dark-floor, reduceDarkLines, microTextureClean,
+//  uniformWhitening) independently gates its writes on maskRaw > 64.
+//
 async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = SIM_MODES.natural) {
   const [origRaw, maskRaw] = await Promise.all([
     sharp(origCropBuf).resize(w,h).removeAlpha().raw().toBuffer(),
     sharp(maskBuf).resize(w,h).greyscale().raw().toBuffer(),
   ]);
 
-  // Apply bilateral filter to enhanced result for edge preservation
-  const filtered = bilateralFilter(enhancedRaw, w, h);
-
+  // Step 1 — Mask-gated alpha blend (NO filter yet).
+  // Outside mask (alpha = 0): result[i] = origRaw[i]  ← exact original pixel.
+  // Inside mask (alpha > 0):  result[i] = blend of original + enhanced.
   let result = Buffer.alloc(w * h * 3);
   for (let i = 0; i < w*h; i++) {
-    // Adaptive alpha: strong inside mask, gentler at edges
-    const m = maskRaw[i];
+    const m     = maskRaw[i];
     const alpha = m > 192 ? cfg.blendAlpha.strong : m > 64 ? cfg.blendAlpha.edge : 0.0;
     for (let c = 0; c < 3; c++)
-      result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + filtered[i*3+c]*alpha));
+      result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + enhancedRaw[i*3+c]*alpha));
+  }
+
+  // Step 2 — Edge-preserving bilateral filter on the blended buffer.
+  // Because result[outside_mask] = origRaw, neighbourhood sampling near mask
+  // boundaries reads real skin/lip values — zero processed-pixel contamination.
+  // Filtered output is written ONLY inside the mask.
+  {
+    const filtered = bilateralFilter(result, w, h);
+    for (let i = 0; i < w*h; i++) {
+      if (maskRaw[i] <= 64) continue;  // outside mask: preserve exact original
+      for (let c = 0; c < 3; c++)
+        result[i*3+c] = Math.min(245, filtered[i*3+c]);
+    }
   }
 
   // ── Dark-pixel guarantee (inside tooth mask only) ─────────────────────────
