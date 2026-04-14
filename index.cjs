@@ -19761,14 +19761,15 @@ async function featherBlendMouthMerge(origBuf, compositedBuf, ox, oy, mw, mh) {
   const w = info.width;
   const h = info.height;
   const c = await sharp(compositedBuf).resize(w, h).removeAlpha().raw().toBuffer();
-  const upperH = Math.floor(mh / 2);
+  const mh0 = Math.round(mh);
+  const upperH = Math.floor(mh0 / 2);
   const lowerY = oy + upperH;
-  const mouthBottom = oy + mh;
+  const mouthBottom = oy + mh0;
   const ox0 = Math.round(ox);
   const oy0 = Math.round(oy);
   const mw0 = Math.round(mw);
 
-  const svg = `<svg width="${w}" height="${h}"><rect x="${ox0}" y="${oy0}" width="${mw0}" height="${mh}" fill="white"/></svg>`;
+  const svg = `<svg width="${w}" height="${h}"><rect x="${ox0}" y="${oy0}" width="${mw0}" height="${mh0}" fill="white"/></svg>`;
   const maskRaw = await sharp(Buffer.from(svg))
     .resize(w, h)
     .blur(featherPx)
