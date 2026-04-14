@@ -17198,13 +17198,48 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     );
   } catch (e) { console.warn('[SIM FENCE] non-fatal:', e?.message); }
 
-  // 6. Composite onto full original
+  // 6. Mask-accurate composite onto full original ─────────────────────────────
+  //
+  // DO NOT use a plain .composite(blendedCropBuf) — that overlays the entire
+  // crop, touching every pixel inside the crop bounding box (including lips,
+  // beard, and skin), even after enforceTeethMaskBoundary() has been applied.
+  // A JPEG re-encode of those pixels introduces compression artifacts that
+  // alter non-teeth areas.
+  //
+  // Instead: attach the teeth mask as the alpha channel of the processed crop
+  // (RGBA PNG), then composite that over the original.  Sharp's compositing
+  // engine uses the alpha channel so that:
+  //   • mask = 255  → processed tooth pixel fully replaces original
+  //   • mask = 0–254 → proportional blend (feather zone only)
+  //   • mask = 0    → alpha = 0 → original pixel used entirely, untouched
+  //
+  // Outcome: beard, skin, lips, background are taken 100% from origBuf —
+  // they never pass through the crop processing pipeline at all.
+  //
   let compositedBuf;
   try {
+    const [cropRaw, maskRaw] = await Promise.all([
+      sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
+      sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
+    ]);
+
+    // Build RGBA buffer: RGB = processed crop, A = teeth mask
+    const rgbaData = Buffer.alloc(cropWidth * cropHeight * 4);
+    for (let i = 0; i < cropWidth * cropHeight; i++) {
+      rgbaData[i*4]   = cropRaw[i*3];
+      rgbaData[i*4+1] = cropRaw[i*3+1];
+      rgbaData[i*4+2] = cropRaw[i*3+2];
+      rgbaData[i*4+3] = maskRaw[i];   // alpha = mask value (0 = transparent outside teeth)
+    }
+
+    const maskedCropPng = await sharp(rgbaData, {
+      raw: { width: cropWidth, height: cropHeight, channels: 4 },
+    }).png().toBuffer();
+
     compositedBuf = await sharp(origBuf)
-      .composite([{ input: blendedCropBuf, left: cropLeft, top: cropTop }])
+      .composite([{ input: maskedCropPng, left: cropLeft, top: cropTop, blend: 'over' }])
       .jpeg({ quality: 90 }).toBuffer();
-    console.log(`[SIM CROP] Composited: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+    console.log(`[SIM CROP] Mask-composite done: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_composite: ' + e?.message }; }
 
   // 7. Upload to Supabase
