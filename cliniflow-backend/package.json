@@ -2,11 +2,11 @@
   "name": "cliniflow-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Cliniflow API — boots ../index.cjs; production uses Render env (no .env required)",
-  "main": "run.cjs",
+  "description": "DEPRECATED sub-package. Production runs root/index.cjs. Do not use this as an entry point.",
+  "main": "../index.cjs",
   "scripts": {
-    "start": "node run.cjs",
-    "dev": "node run.cjs"
+    "start": "node ../index.cjs",
+    "dev": "node ../index.cjs"
   },
   "engines": {
     "node": ">=18"

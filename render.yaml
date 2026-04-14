@@ -4,9 +4,11 @@ services:
     runtime: node
     region: oregon
     plan: starter
-    rootDir: cliniflow-backend
+    # rootDir intentionally omitted — build and run from repo root.
+    # The authoritative entry point is root/index.cjs (cliniflow-server@1.0.0).
+    # cliniflow-backend/index.cjs is deprecated and must NOT be used.
     buildCommand: npm install
-    startCommand: node run.cjs
+    startCommand: node index.cjs
     envVars:
       - key: NODE_ENV
         value: production
