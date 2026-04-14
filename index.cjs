@@ -16222,7 +16222,10 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h, opts = {}) {
   }
 }
 
-/** Reject input when mask shows almost no lower-arch enamel vs upper (half-smile photos). */
+/**
+ * Heuristic: both arches should have some mask mass. Defaults are lenient — many real
+ * smiles have more upper-mask pixels; set SIM_STRICT_BOTH_ARCH=1 for hard rejects.
+ */
 async function validateBothArchesVisible(maskBuf, w, h) {
   const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
   const yMid = Math.floor(h * 0.5);
@@ -16236,14 +16239,15 @@ async function validateBothArchesVisible(maskBuf, w, h) {
       else lower++;
     }
   }
-  const minPx = Math.max(48, Math.floor(w * h * 0.00075));
+  const minPx = Math.max(28, Math.floor(w * h * 0.00045));
   if (upper < minPx || lower < minPx) {
-    console.warn(`[SIM ARCH] reject sparse: upper=${upper} lower=${lower} min=${minPx}`);
+    console.warn(`[SIM ARCH] sparse: upper=${upper} lower=${lower} min=${minPx}`);
     return { ok: false, upper, lower, reason: 'sparse_arch' };
   }
   const ratio = upper > 0 ? lower / upper : 0;
-  if (ratio < 0.09) {
-    console.warn(`[SIM ARCH] reject imbalance: upper=${upper} lower=${lower} ratio=${ratio.toFixed(3)}`);
+  // Smiles often bias mask to upper incisors — do not fail unless extremely lopsided
+  if (ratio < 0.042) {
+    console.warn(`[SIM ARCH] imbalance: upper=${upper} lower=${lower} ratio=${ratio.toFixed(3)}`);
     return { ok: false, upper, lower, reason: 'lower_arch_weak', ratio };
   }
   return { ok: true, upper, lower };
@@ -18344,13 +18348,17 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     try {
       const archOk = await validateBothArchesVisible(maskBuf, cropWidth, cropHeight);
       if (!archOk.ok) {
-        return {
-          url: null,
-          failReason: 'invalid_photo',
-          errorCode: 'invalid_photo',
-          message: INVALID_PHOTO_BOTH_ARCHES_EN,
-          messageTr: INVALID_PHOTO_BOTH_ARCHES_TR,
-        };
+        const strict = String(process.env.SIM_STRICT_BOTH_ARCH || "").trim() === "1";
+        if (strict) {
+          return {
+            url: null,
+            failReason: 'invalid_photo',
+            errorCode: 'invalid_photo',
+            message: INVALID_PHOTO_BOTH_ARCHES_EN,
+            messageTr: INVALID_PHOTO_BOTH_ARCHES_TR,
+          };
+        }
+        console.warn('[SIM ARCH] soft-pass (set SIM_STRICT_BOTH_ARCH=1 to hard-reject):', archOk.reason);
       }
     } catch (e) {
       console.warn('[SIM ARCH] validation non-fatal:', e?.message);
@@ -18784,14 +18792,15 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     }
   } catch (e) { console.warn('[SIM VALIDATE] non-fatal:', e?.message); }
 
-  // ── Lower-arch output gate: reject if lower teeth barely changed after full pipeline ──
+  // ── Lower-arch boost: retry if lower band barely changed (do not fail the job by default) ──
+  let lowerArchWeak = false;
   const lowerMinAbs = (() => {
-    const v = parseFloat(String(process.env.SIM_LOWER_ARCH_MIN_ABS || '2.5'), 10);
-    return Number.isFinite(v) ? Math.max(1.2, Math.min(8, v)) : 2.5;
+    const v = parseFloat(String(process.env.SIM_LOWER_ARCH_MIN_ABS || '1.85'), 10);
+    return Number.isFinite(v) ? Math.max(1.0, Math.min(8, v)) : 1.85;
   })();
   try {
     let lowM = await measureLowerArchChange(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
-    if (lowM.maskPx >= 45 && lowM.meanAbs < lowerMinAbs) {
+    if (lowM.maskPx >= 40 && lowM.meanAbs < lowerMinAbs) {
       console.warn(
         `[SIM LOWER ARCH] Low change meanAbs=${lowM.meanAbs.toFixed(2)} — retry (Replicate or programmatic boost)`
       );
@@ -18826,18 +18835,25 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
         );
       }
       lowM = await measureLowerArchChange(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
-      if (lowM.maskPx >= 45 && lowM.meanAbs < 2.0) {
-        return {
-          url: null,
-          failReason: 'invalid_photo',
-          errorCode: 'invalid_photo',
-          message: INVALID_PHOTO_LOWER_UNCHANGED_EN,
-          messageTr: INVALID_PHOTO_LOWER_UNCHANGED_TR,
-        };
+      if (lowM.maskPx >= 40 && lowM.meanAbs < 1.35) {
+        lowerArchWeak = true;
+        console.warn('[SIM LOWER ARCH] still soft after retry — continuing (confidence may be capped)');
+        if (String(process.env.SIM_STRICT_LOWER_ARCH_FAIL || "").trim() === "1") {
+          return {
+            url: null,
+            failReason: 'invalid_photo',
+            errorCode: 'invalid_photo',
+            message: INVALID_PHOTO_LOWER_UNCHANGED_EN,
+            messageTr: INVALID_PHOTO_LOWER_UNCHANGED_TR,
+          };
+        }
       }
     }
   } catch (e) {
     console.warn('[SIM LOWER ARCH] gate non-fatal:', e?.message);
+  }
+  if (lowerArchWeak) {
+    confidence = Math.min(confidence, 0.62);
   }
 
   // 6. Raw-pixel surgery composite ────────────────────────────────────────────
@@ -18913,6 +18929,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       url: finalUrl,
       mode: cfg.name,
       confidence,
+      lowerArchWeak,
       avgPixelChange,
       stainWarning,
       structureWarning,
@@ -19125,6 +19142,7 @@ async function runThreeScenarios({ imageUrl, patientId }) {
       label,
       imageUrl:    r.url    ?? null,
       confidence:  r.confidence ?? null,
+      lowerArchWeak: r.lowerArchWeak ?? false,
       description: buildScenarioDescription(type, analysis, r),
       status:      r.url ? (r.status ?? 'success') : 'failed',
       level:       r.level ?? (r.url ? 'strict' : 'fail'),
@@ -19182,6 +19200,7 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
     simulatedImageUrl: r.url,
     mode:           r.mode,
     confidence:     r.confidence,
+    lowerArchWeak:  r.lowerArchWeak ?? false,
     avgPixelChange: r.avgPixelChange,
     stainWarning:     r.stainWarning     ?? false,
     structureWarning: r.structureWarning ?? false,
@@ -19235,6 +19254,7 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       variations:     result.variations ?? [],
       mode:           result.mode ?? simMode,
       confidence:     result.confidence ?? null,
+      lowerArchWeak:  result.lowerArchWeak ?? false,
       avgPixelChange: result.avgPixelChange ?? null,
       stainWarning:     result.stainWarning     ?? false,
       structureWarning: result.structureWarning ?? false,
@@ -19291,6 +19311,7 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       variations:        job.variations ?? [],
       mode:              job.mode ?? 'natural',
       confidence:        job.confidence ?? null,
+      lowerArchWeak:     job.lowerArchWeak ?? false,
       avgPixelChange:    job.avgPixelChange ?? null,
       stainWarning:      job.stainWarning      ?? false,
       structureWarning:  job.structureWarning  ?? false,
@@ -36079,7 +36100,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v23');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v24');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
