@@ -16120,7 +16120,11 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
 // Teeth-aware img2img — set REPLICATE_IMG2IMG_VERSION to stability-ai/stable-diffusion-img2img (version hash on replicate.com).
 // Single-pass + dual-pass default (STEP 4 — same prompt for upper and lower Replicate calls).
 const SIM_REPLICATE_PROMPT_DEFAULT =
-  'realistic dental correction, natural alignment, slight whitening, preserve tooth shape, avoid fake veneers, high realism';
+  'realistic dental smile improvement, apply equal correction to both upper and lower teeth, ' +
+  'ensure both rows are clearly visible and equally enhanced, match color tone and brightness between upper and lower teeth, ' +
+  'slightly whiten teeth naturally without over-whitening, perform subtle alignment correction on all visible teeth, ' +
+  'preserve natural tooth shapes and small imperfections, avoid artificial veneers or perfect uniform teeth, ' +
+  'keep lips, skin, and face completely unchanged, high realism, medical-grade natural result';
 
 // Dual-region: upper strip + lower strip use the SAME prompt (split controls focus, not wording).
 // Override: REPLICATE_DUAL_PROMPT or REPLICATE_TEETH_PROMPT.
@@ -16131,8 +16135,8 @@ const SIM_REPLICATE_DUAL_PROMPT = SIM_REPLICATE_PROMPT_DEFAULT;
 const SIM_DUAL_REGION_REPLICATE_ENABLED = String(process.env.SIM_DUAL_REGION_REPLICATE || '').trim() !== '0';
 
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
-  'fake teeth, plastic, overly white, perfect symmetry, cartoon, distorted face, ' +
-  'watermark, text, extra teeth, wrong tooth count';
+  'fake teeth, plastic teeth, overly white, perfect symmetry, cartoon, blurry, distorted face, ' +
+  'unnatural smile, duplicated teeth, watermark, text, extra teeth, wrong tooth count';
 
 /**
  * Img2img denoise (Replicate prompt_strength). Target ~0.45–0.55 for subtle realism.
@@ -36331,7 +36335,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v28');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v29');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
