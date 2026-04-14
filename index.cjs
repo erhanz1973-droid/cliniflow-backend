@@ -15901,10 +15901,9 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //
 // Canonical “prompt” line for logging / product parity (no external img2img here):
 const SIM_VISUAL_INTENT_PROMPT =
-  'noticeably straighter teeth, whiter enamel, improved symmetry, realistic clinical preview';
+  'realistic dental smile improvement, natural alignment, both arches, same face and lighting';
 //
-// SIM_TRANSFORM_STRENGTH ≈ img2img prompt_strength / denoise (0.35 = timid … 0.98 = strong).
-// Default 0.92 — clearly visible change; tunable via SIM_TRANSFORM_STRENGTH env.
+// SIM_TRANSFORM_STRENGTH: programmatic LAB/blend (0.35 … 0.98). Default 0.5 — natural, not over-edited.
 //
 // QUALITY RULES (canonical):
 //   ACCEPT:          stain removal, tartar cleaning, mild whitening,
@@ -15930,13 +15929,20 @@ const _SIM_STR_NUM =
   _SIM_STR_RAW !== undefined && String(_SIM_STR_RAW).trim() !== ''
     ? Number(_SIM_STR_RAW)
     : NaN;
-/** Effective edit aggressiveness (default 0.92 — clearly visible; max 0.98). */
+/** Programmatic / LAB blend aggressiveness (default 0.5; max 0.98). */
 const SIM_TRANSFORM_STRENGTH = Number.isFinite(_SIM_STR_NUM)
   ? Math.min(0.98, Math.max(0.35, _SIM_STR_NUM))
-  : 0.92;
+  : 0.5;
 
 /** Max RGB in tooth pipeline — avoids chalk-white flat patches (was 245). */
-const ENAMEL_OUTPUT_CAP = 238;
+const ENAMEL_OUTPUT_CAP = 236;
+
+/** Client copy for chat/mobile — use confidenceLabelTr instead of “low confidence”; hide slider if no URL. */
+const SIMULATION_UI_COPY = {
+  confidenceLabelTr: 'AI tahmini sonuç',
+  photoGuidanceTr:
+    'Fotoğrafı önden, iyi ışıkta ve dişleriniz net görünecek şekilde çekin.',
+};
 
 /** Extra L* lift — kept subtle to preserve texture (used in computeEnhancedRaw). */
 function simLabStrengthMultiplier() {
@@ -15968,9 +15974,9 @@ function getSmileMouthCropBox(origW, origH) {
   const Wf = Number(process.env.SMILE_CROP_WIDTH_FRAC);
   const Hf = Number(process.env.SMILE_CROP_HEIGHT_FRAC);
   const left = Number.isFinite(L) ? L : 0.17;
-  const top = Number.isFinite(T) ? T : 0.56;
+  const top = Number.isFinite(T) ? T : 0.54;
   const wid = Number.isFinite(Wf) ? Wf : 0.66;
-  const ht = Number.isFinite(Hf) ? Hf : 0.21;
+  const ht = Number.isFinite(Hf) ? Hf : 0.24;
   return {
     cropLeft:   Math.round(origW * left),
     cropTop:    Math.round(origH * top),
@@ -16068,21 +16074,37 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
 }
 
 const SIM_REPLICATE_PROMPT_DEFAULT =
-  'Realistic dental smile improvement. Straighten teeth, fix misalignment, close small gaps, ' +
-  'improve arch symmetry, noticeably whiter natural enamel, clinical bleaching look. ' +
-  'Keep the exact same person and face; change only teeth in the smile. ' +
-  'Photorealistic, natural translucency, not porcelain.';
+  'realistic dental smile improvement, slightly whiter teeth, natural alignment correction, fix minor crowding, ' +
+  'preserve natural tooth shapes, avoid artificial veneers look, keep imperfections realistic, ' +
+  'modify both upper and lower teeth, keep lips and face unchanged, high realism';
 
-/** Shipped with Replicate SDXL-style img2img; override via REPLICATE_TEETH_NEGATIVE_PROMPT. */
+/** Natural look — avoid uniform white blocks. Override via REPLICATE_TEETH_NEGATIVE_PROMPT. */
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
-  'different face, deformed, plastic skin, fake hollywood smile, chalk white, cartoon, ' +
-  'extra teeth, wrong count, gums only, distorted lips, nose, eyes, beard, mustache, ' +
-  'blurry, watermark, text';
+  'uniform white block, porcelain veneers, fake teeth, perfect hollywood smile, plastic, cartoon, ' +
+  'wrong tooth count, extra teeth, face change, new nose, new eyes, ' +
+  'changed lighting, blur, watermark, text';
+
+/**
+ * Img2img denoise (Replicate prompt_strength). Target ~0.45–0.55 for subtle realism.
+ */
+const REPLICATE_PROMPT_STRENGTH_DEFAULT = 0.5;
+
+/**
+ * Classifier-free guidance — medium (not aggressive). Default 7; clamp 6–8. Set GUIDANCE_SCALE=0 to omit.
+ */
+function replicateGuidanceScaleFromEnv() {
+  const raw = process.env.GUIDANCE_SCALE;
+  if (raw === '0' || raw === 'false') return null;
+  if (raw === undefined || String(raw).trim() === '') return 7;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 7;
+  return Math.min(8, Math.max(6, n));
+}
 
 /**
  * STEP 4 (optional) — Replicate img2img on mouth crop only; result still merged via teeth mask later.
  * Requires REPLICATE_API_TOKEN + REPLICATE_IMG2IMG_VERSION (model version hash from replicate.com).
- * Strength 0.74–0.98: REPLICATE_PROMPT_STRENGTH or defaults to SIM_TRANSFORM_STRENGTH (~0.92).
+ * prompt_strength: REPLICATE_PROMPT_STRENGTH env or default 0.5 (clamped ~0.45–0.55).
  */
 async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -16091,7 +16113,10 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   const envStr = Number(process.env.REPLICATE_PROMPT_STRENGTH);
   const strength = Math.min(
     0.98,
-    Math.max(0.74, Number.isFinite(envStr) ? envStr : SIM_TRANSFORM_STRENGTH)
+    Math.max(
+      0.35,
+      Number.isFinite(envStr) ? envStr : REPLICATE_PROMPT_STRENGTH_DEFAULT
+    )
   );
   const prompt =
     process.env.REPLICATE_TEETH_PROMPT || SIM_REPLICATE_PROMPT_DEFAULT;
@@ -16103,7 +16128,11 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   } else {
     input.negative_prompt = (negRaw && String(negRaw).trim()) || SIM_REPLICATE_NEGATIVE_DEFAULT;
   }
-  console.log(`[SIMSTEP 4] Replicate img2img strength=${strength.toFixed(2)}`);
+  const g = replicateGuidanceScaleFromEnv();
+  if (g != null) input.guidance_scale = g;
+  console.log(
+    `[SIMSTEP 4] Replicate img2img prompt_strength=${strength.toFixed(2)} guidance_scale=${g != null ? g.toFixed(1) : 'omit'}`
+  );
   try {
     const create = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
@@ -16494,8 +16523,9 @@ async function buildTeethMask(origCropBuf, w, h) {
   //     Teeth never extend below this line even in fully open-mouth shots.
   //   • Left  5 %  : lip corner
   //   • Right 5 %  : lip corner
-  const Y_TOP_EXCL = Math.floor(h * 0.20);
-  const Y_BOT_EXCL = Math.floor(h * 0.66);  // keep chin / beard out of initial gate
+  const Y_TOP_EXCL = Math.floor(h * 0.18);
+  // Include lower incisors (was 0.66 — cut off too much of the lower arch).
+  const Y_BOT_EXCL = Math.floor(h * 0.80);
   const X_L_EXCL   = Math.floor(w * 0.05);
   const X_R_EXCL   = Math.floor(w * 0.95);
 
@@ -18118,17 +18148,27 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   } else {
     const mp = await computeMouthCropFromImageBuffer(origBuf);
     if (!mp.ok) {
-      console.warn("[SIM MEDIAPIPE] Mouth ROI rejected:", mp.reason, mp.debug || "");
-      return { url: null, failReason: "mouth_roi: " + (mp.reason || "unknown") };
+      console.warn(
+        "[SIM MEDIAPIPE] Mouth ROI rejected:",
+        mp.reason,
+        mp.debug || "",
+        "— using heuristic mouth band (same image, no strict face dependency)"
+      );
+      const box = enforceMouthOnlyCrop(origW, origH);
+      cropLeft = box.cropLeft;
+      cropTop = box.cropTop;
+      cropWidth = box.cropWidth;
+      cropHeight = box.cropHeight;
+    } else {
+      cropLeft = mp.cropLeft;
+      cropTop = mp.cropTop;
+      cropWidth = mp.cropWidth;
+      cropHeight = mp.cropHeight;
+      console.log(
+        `[SIM MEDIAPIPE] crop rect: left=${cropLeft} top=${cropTop} width=${cropWidth} height=${cropHeight} ` +
+          `mouthOpen≈${(mp.mouthOpenPx || 0).toFixed(1)}px`
+      );
     }
-    cropLeft = mp.cropLeft;
-    cropTop = mp.cropTop;
-    cropWidth = mp.cropWidth;
-    cropHeight = mp.cropHeight;
-    console.log(
-      `[SIM MEDIAPIPE] crop rect: left=${cropLeft} top=${cropTop} width=${cropWidth} height=${cropHeight} ` +
-        `mouthOpen≈${(mp.mouthOpenPx || 0).toFixed(1)}px`
-    );
   }
 
   let origCropBuf;
@@ -18200,11 +18240,11 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
         .removeAlpha()
         .raw()
         .toBuffer();
-      // High α so Replicate changes survive the blend (was 0.48/0.2 → output looked identical).
+      // Moderate α — enough to show img2img but avoid flat “veneer block” look.
       const mergeCfg = {
         ...cfg,
-        blendAlpha: { strong: 0.88, edge: 0.38 },
-        uniformTargetFactor: Math.min(1.28, cfg.uniformTargetFactor * 1.02),
+        blendAlpha: { strong: 0.72, edge: 0.32 },
+        uniformTargetFactor: Math.min(1.18, cfg.uniformTargetFactor * 0.98),
       };
       blendedCropBuf = await blendCropWithMask(
         origCropBuf, aiRaw, maskBuf, cropWidth, cropHeight, mergeCfg
@@ -18919,8 +18959,19 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   if (!r.url) {
     console.log('❌ Simulation failed | reason:', r.failReason);
     logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
-    return { variations: [], url: null, provider: null, error: r.failReason,
-             fallback: false, level: 'fail', status: 'failed', debugInfo: [r.failReason] };
+    return {
+      success: false,
+      variations: [],
+      url: null,
+      simulatedImageUrl: null,
+      provider: null,
+      error: 'simulation_failed',
+      failReason: r.failReason,
+      fallback: false,
+      level: 'fail',
+      status: 'failed',
+      debugInfo: [r.failReason],
+    };
   }
 
   const label = resolveSimMode(mode).label;
@@ -18929,8 +18980,10 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   console.log(`[SIM] Done ✅ | mode=${r.mode} | level=${simLevel} | confidence=${r.confidence}`);
   logAI('info', 'sim_done', { patientId, mode: r.mode, level: simLevel, confidence: r.confidence });
   return {
+    success: true,
     variations:     [{ id: mode, label, url: r.url, level: simLevel }],
     url:            r.url,
+    simulatedImageUrl: r.url,
     mode:           r.mode,
     confidence:     r.confidence,
     avgPixelChange: r.avgPixelChange,
@@ -18942,6 +18995,7 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
     level:          simLevel,
     status:         simStatus,
     debugInfo:      [],
+    ...SIMULATION_UI_COPY,
   };
 }
 
@@ -18975,25 +19029,36 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   // Fire-and-forget — do NOT await this
   runSmileSimulation({ imageUrl, patientId, mode: simMode }).then(result => {
     const existing = _simJobs.get(jobId) ?? {};
+    const okUrl = result.url || result.simulatedImageUrl;
     _simJobs.set(jobId, {
       ...existing,
-      status:         result.url ? 'succeeded' : 'failed',
-      url:            result.url ?? null,
+      success:        !!okUrl,
+      status:         okUrl ? 'succeeded' : 'failed',
+      url:            okUrl ?? null,
       variations:     result.variations ?? [],
       mode:           result.mode ?? simMode,
       confidence:     result.confidence ?? null,
       avgPixelChange: result.avgPixelChange ?? null,
       stainWarning:     result.stainWarning     ?? false,
       structureWarning: result.structureWarning ?? false,
-      failReason:       result.error ?? null,
-      level:            result.level    ?? (result.url ? 'strict' : 'fail'),
-      simStatus:        result.status   ?? (result.url ? 'success' : 'failed'),
+      failReason:       result.failReason ?? result.error ?? null,
+      error:            okUrl ? null : (result.error || 'simulation_failed'),
+      level:            result.level    ?? (okUrl ? 'strict' : 'fail'),
+      simStatus:        result.status   ?? (okUrl ? 'success' : 'failed'),
       fallback:         result.fallback ?? false,
+      confidenceLabelTr: result.confidenceLabelTr ?? SIMULATION_UI_COPY.confidenceLabelTr,
+      photoGuidanceTr:   result.photoGuidanceTr ?? SIMULATION_UI_COPY.photoGuidanceTr,
     });
-    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} level=${result.level ?? '-'} | failReason: ${result.error ?? '-'}`);
+    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${okUrl ? 'succeeded ✅' : 'failed ❌'} level=${result.level ?? '-'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
     const existing = _simJobs.get(jobId) ?? {};
-    _simJobs.set(jobId, { ...existing, status: 'failed', failReason: err?.message });
+    _simJobs.set(jobId, {
+      ...existing,
+      status: 'failed',
+      success: false,
+      error: 'simulation_failed',
+      failReason: err?.message,
+    });
     console.error(`[SIM JOB ${jobId.slice(0,8)}] exception:`, err?.message);
   });
 
@@ -19009,11 +19074,16 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
   if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
 
   if (job.status === 'pending') {
-    return res.json({ ok: true, status: 'pending' });
+    return res.json({
+      ok: true,
+      status: 'pending',
+      ...SIMULATION_UI_COPY,
+    });
   }
-  if (job.status === 'succeeded') {
+  if (job.status === 'succeeded' && job.url) {
     return res.json({
       ok:                true,
+      success:           true,
       status:            'succeeded',
       simulatedImageUrl: job.url,
       simulationProvider:'programmatic',
@@ -19024,15 +19094,24 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       stainWarning:      job.stainWarning      ?? false,
       structureWarning:  job.structureWarning  ?? false,
       fallback:          job.fallback     ?? false,
-      // Simulation quality level: 'strict' | 'relaxed' | 'minimal' (mask path never hard-fails)
       level:             job.level       ?? 'strict',
-      simStatus:         job.simStatus   ?? 'success',  // 'success' | 'fallback'
-      // Scenarios fields (populated only for /api/chat/smile-scenarios jobs)
+      simStatus:         job.simStatus   ?? 'success',
+      confidenceLabelTr: job.confidenceLabelTr ?? SIMULATION_UI_COPY.confidenceLabelTr,
+      photoGuidanceTr:   job.photoGuidanceTr ?? SIMULATION_UI_COPY.photoGuidanceTr,
       scenarios:         job.scenarios  ?? null,
       analysis:          job.analysis   ?? null,
     });
   }
-  return res.json({ ok: false, status: 'failed', error: job.failReason ?? 'unknown' });
+  return res.json({
+    ok: false,
+    success: false,
+    status: 'failed',
+    error: 'simulation_failed',
+    simulatedImageUrl: null,
+    message: job.failReason || job.error || 'simulation_failed',
+    failReason: job.failReason ?? null,
+    ...SIMULATION_UI_COPY,
+  });
 });
 
 // ── POST /api/chat/smile-scenarios ───────────────────────────────────────────
@@ -35795,7 +35874,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v19');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v21');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
