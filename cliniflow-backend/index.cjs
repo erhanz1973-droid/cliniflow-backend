@@ -34074,13 +34074,21 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
+// ── Global JSON 404 — API routes never return HTML ────────────────────────────
+// Any request that didn't match a route above returns a JSON 404 so the
+// mobile app can always parse the response (no "json parse error" on unknown paths).
+app.use((req, res) => {
+  res.status(404).json({ ok: false, error: 'not_found', path: req.path });
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v8');
-  console.log('🚀  SIM: programmatic teeth whitening (NO AI / NO Replicate)');
-  console.log('🚀  SIM: brightness floor + post-blend validation active');
-  console.log('🚀  commit: e8ff58b3');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v12');
+  console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
+  console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
+  console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
+  console.log('🚀  commit: 0bd30f59  built: ' + new Date().toISOString());
   console.log('🚀 ============================================');
 
 
