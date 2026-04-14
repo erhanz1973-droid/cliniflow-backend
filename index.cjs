@@ -17247,11 +17247,11 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     const ts = Date.now(), rand = Math.random().toString(36).slice(2, 8);
     const storagePath = `ai-photos/${patientId}/sim-${ts}-${rand}.jpg`;
     console.log('[SIM CROP] Uploading to Supabase:', storagePath);
-    const { error: upErr } = await supabaseAdmin.storage
+    const { error: upErr } = await supabase.storage
       .from('patient-files')
       .upload(storagePath, compositedBuf, { contentType: 'image/jpeg', upsert: false });
     if (upErr) throw new Error(upErr.message);
-    const { data: urlData } = supabaseAdmin.storage.from('patient-files').getPublicUrl(storagePath);
+    const { data: urlData } = supabase.storage.from('patient-files').getPublicUrl(storagePath);
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
     console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
@@ -31337,7 +31337,7 @@ app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
 
     // Fetch requests (with the target clinic name)
-    const { data: requests, error: reqErr } = await supabaseAdmin
+    const { data: requests, error: reqErr } = await supabase
       .from('treatment_requests')
       .select('*, clinics(id, name)')
       .eq('patient_id', patientId)
@@ -31355,7 +31355,7 @@ app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
     const requestIds = requests.map(r => r.id);
 
     // Fetch all offers for these requests (with doctor + clinic names)
-    const { data: offers, error: offErr } = await supabaseAdmin
+    const { data: offers, error: offErr } = await supabase
       .from('treatment_offers')
       .select('*, doctors(id, full_name, name), clinics(id, name)')
       .in('request_id', requestIds)
@@ -31408,7 +31408,7 @@ app.post('/api/patient/treatment-requests/mark-seen', requireToken, async (req, 
     const patientId = String(req.patientId || '').trim();
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
 
-    const { error } = await supabaseAdmin
+    const { error } = await supabase
       .from('treatment_requests')
       .update({ patient_seen_at: new Date().toISOString() })
       .eq('patient_id', patientId)
@@ -31430,7 +31430,7 @@ app.get('/api/patient/ratings', requireToken, async (req, res) => {
     const patientId = String(req.patientId || '').trim();
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
 
-    const { data: ratings, error } = await supabaseAdmin
+    const { data: ratings, error } = await supabase
       .from('ratings')
       .select('id, clinic_id, offer_id, type, overall, created_at')
       .eq('patient_id', patientId);
@@ -31455,7 +31455,7 @@ app.get('/api/patient/inbox-summary', requireToken, async (req, res) => {
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
 
     // Count answered requests the patient hasn't opened yet
-    const { count: newOffers, error: offerErr } = await supabaseAdmin
+    const { count: newOffers, error: offerErr } = await supabase
       .from('treatment_requests')
       .select('id', { count: 'exact', head: true })
       .eq('patient_id', patientId)
@@ -31470,21 +31470,21 @@ app.get('/api/patient/inbox-summary', requireToken, async (req, res) => {
     let doctorMessages = 0;
     try {
       // First get all offer IDs for this patient's requests
-      const { data: reqs } = await supabaseAdmin
+      const { data: reqs } = await supabase
         .from('treatment_requests')
         .select('id')
         .eq('patient_id', patientId);
 
       if (reqs && reqs.length > 0) {
         const reqIds = reqs.map(r => r.id);
-        const { data: offerRows } = await supabaseAdmin
+        const { data: offerRows } = await supabase
           .from('treatment_offers')
           .select('id')
           .in('request_id', reqIds);
 
         if (offerRows && offerRows.length > 0) {
           const offerIds = offerRows.map(o => o.id);
-          const { count } = await supabaseAdmin
+          const { count } = await supabase
             .from('offer_messages')
             .select('id', { count: 'exact', head: true })
             .in('offer_id', offerIds)
