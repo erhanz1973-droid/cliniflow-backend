@@ -17462,6 +17462,79 @@ async function measureTeethBrightnessLiftPct(origCropBuf, resultBuf, maskBuf, w,
   return ((meanR - meanO) / (meanO + 1e-6)) * 100;
 }
 
+/**
+ * Post-generation quality gate: masked weighted mean |ΔRGB|/3, luma lift %, and
+ * Bhattacharyya coefficient between 16-bin Luma histograms (1 = identical).
+ * Used to detect no-op outputs that slipped through variant selection.
+ */
+async function assessPostGenerationChange(origCropBuf, resultBuf, maskBuf, w, h) {
+  const [o, r, m] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const BINS = 16;
+  const histO = new Array(BINS).fill(0);
+  const histR = new Array(BINS).fill(0);
+  let sumAbs = 0, sumW = 0;
+
+  for (let i = 0; i < w * h; i++) {
+    const wgt = m[i] / 255;
+    if (wgt < 0.01) continue;
+    const d =
+      (Math.abs(o[i*3]   - r[i*3])
+        + Math.abs(o[i*3+1] - r[i*3+1])
+        + Math.abs(o[i*3+2] - r[i*3+2])) / 3;
+    sumAbs += d * wgt;
+    sumW   += wgt;
+
+    const lo = (o[i*3] + o[i*3+1] + o[i*3+2]) / 3;
+    const lr = (r[i*3] + r[i*3+1] + r[i*3+2]) / 3;
+    const bo = Math.min(BINS - 1, Math.floor((lo / 256) * BINS));
+    const br = Math.min(BINS - 1, Math.floor((lr / 256) * BINS));
+    histO[bo] += wgt;
+    histR[br] += wgt;
+  }
+
+  const meanAbs = sumW > 0 ? sumAbs / sumW : 0;
+  const lumaLiftPct = await measureTeethBrightnessLiftPct(origCropBuf, resultBuf, maskBuf, w, h);
+
+  let histBC = 1;
+  const nO = histO.reduce((a, b) => a + b, 0);
+  const nR = histR.reduce((a, b) => a + b, 0);
+  if (nO > 1e-6 && nR > 1e-6) {
+    let s = 0;
+    for (let k = 0; k < BINS; k++)
+      s += Math.sqrt((histO[k] / nO) * (histR[k] / nR));
+    histBC = Math.max(0, Math.min(1, s));
+  }
+
+  return { meanAbs, lumaLiftPct, histBC };
+}
+
+/** Returns true if output is still too close to input (pixel + histogram sense). */
+function shouldPostGenRegenerate(metrics, simLevel) {
+  const { meanAbs, lumaLiftPct, histBC } = metrics;
+  const absMin = simLevel === 'minimal' ? 3.4 : simLevel === 'relaxed' ? 4.2 : 4.9;
+  const liftMin = simLevel === 'minimal' ? 5.0 : simLevel === 'relaxed' ? 7.0 : 8.5;
+  // Primary: both low pixel delta AND low brightness lift → likely no-op
+  const bothWeak = meanAbs < absMin && lumaLiftPct < liftMin;
+  // Secondary: histograms nearly identical AND weak pixel delta
+  const histTooClose = histBC > (simLevel === 'minimal' ? 0.994 : 0.988) && meanAbs < absMin + 1.2;
+  return bothWeak || histTooClose;
+}
+
+/**
+ * Stronger enhance+blend only (no alignment re-run — avoids double geometry).
+ * attempt 0 → ×~2.0 strength, attempt 1 → ×~2.45
+ */
+async function regenerateBlendPostCheck(origCropBuf, maskBuf, w, h, cfg, attempt) {
+  const mult = 1.88 + attempt * 0.55;
+  const cfgStrong = scaleSimStrength(cfg, mult);
+  const enc = await computeEnhancedRaw(origCropBuf, w, h, true);
+  return blendCropWithMask(origCropBuf, enc, maskBuf, w, h, cfgStrong);
+}
+
 async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
   const cfg = resolveSimMode(mode);
   console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label})`);
@@ -17742,6 +17815,49 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
     );
   } catch (e) { console.warn('[SIM FENCE] non-fatal:', e?.message); }
+
+  // ── Post-generation gate: pixel + histogram vs original ────────────────────
+  // If the fenced crop still looks almost identical to the input, run one or
+  // two stronger enhance+blend passes (then re-sharpen + re-fence).
+  const POST_GEN_MAX = simLevel === 'minimal' ? 1 : 2;
+  for (let pg = 0; pg < POST_GEN_MAX; pg++) {
+    try {
+      const pm = await assessPostGenerationChange(
+        origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight
+      );
+      console.log(
+        `[SIM POST-GEN] check=${pg} meanAbs=${pm.meanAbs.toFixed(2)} ` +
+        `lumaLift=${pm.lumaLiftPct.toFixed(1)}% histBC=${pm.histBC.toFixed(4)}`
+      );
+      if (!shouldPostGenRegenerate(pm, simLevel)) break;
+
+      console.warn(`[SIM POST-GEN] Output too close to original — regenerating (pass ${pg + 1}/${POST_GEN_MAX})`);
+      blendedCropBuf = await regenerateBlendPostCheck(
+        origCropBuf, maskBuf, cropWidth, cropHeight, cfg, pg
+      );
+      try {
+        blendedCropBuf = await sharp(blendedCropBuf)
+          .sharpen({ sigma: cfg.sharpenSigma * 1.08, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
+          .jpeg({ quality: 92 })
+          .toBuffer();
+      } catch (e) {
+        console.warn('[SIM POST-GEN] sharpen failed:', e?.message);
+      }
+      blendedCropBuf = await enforceTeethMaskBoundary(
+        blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+      );
+    } catch (e) {
+      console.warn('[SIM POST-GEN] non-fatal:', e?.message);
+      break;
+    }
+  }
+
+  try {
+    const confPost = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    avgPixelChange = confPost.avgPixelChange;
+    confidence = computeTransformationScore({ cfg, stainRemovalRate, stainWarning, structureWarning });
+    console.log(`[SIM CONFIDENCE] after post-gen gate avgΔ=${avgPixelChange}`);
+  } catch (e) { console.warn('[SIM CONFIDENCE] post-gen update failed:', e?.message); }
 
   // HARD FAIL CHECK: Verify no outside-mask pixels were altered.
   // Rejects the simulation if beard/skin/chin brightness changed.
