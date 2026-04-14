@@ -15888,7 +15888,9 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Dental Enhancement Engine (programmatic pipeline — not img2img) ─────────
+// ─── Dental Enhancement Engine — structured teeth-first pipeline ───────────────
+// Steps: (1) mouth crop (2) teeth mask + feather (3) normalize (4) Replicate? or LAB
+// (5) mask-only blend (6) geometry/highlights (7) QC + composite. Not orthodontic simulation.
 //
 // TRANSFORM INTENT (product requirement — implemented via blend/LAB below):
 //   "Visibly improve the smile. Teeth must look whiter, cleaner, and more
@@ -15955,14 +15957,140 @@ function applySimTransformStrength(cfg) {
   };
 }
 
-/** Tight mouth ROI on full portrait — not whole face (reduces beard / chin in frame). */
+/**
+ * STEP 1 — Mouth region (nose-bottom → upper chin), not full face.
+ * Tunable: SMILE_CROP_LEFT_FRAC, SMILE_CROP_TOP_FRAC, SMILE_CROP_WIDTH_FRAC, SMILE_CROP_HEIGHT_FRAC
+ */
 function getSmileMouthCropBox(origW, origH) {
+  const L = Number(process.env.SMILE_CROP_LEFT_FRAC);
+  const T = Number(process.env.SMILE_CROP_TOP_FRAC);
+  const Wf = Number(process.env.SMILE_CROP_WIDTH_FRAC);
+  const Hf = Number(process.env.SMILE_CROP_HEIGHT_FRAC);
+  const left = Number.isFinite(L) ? L : 0.15;
+  const top = Number.isFinite(T) ? T : 0.57;
+  const wid = Number.isFinite(Wf) ? Wf : 0.70;
+  const ht = Number.isFinite(Hf) ? Hf : 0.20;
   return {
-    cropLeft:   Math.round(origW * 0.14),
-    cropTop:    Math.round(origH * 0.58),
-    cropWidth:  Math.round(origW * 0.72),
-    cropHeight: Math.round(origH * 0.22),
+    cropLeft:   Math.round(origW * left),
+    cropTop:    Math.round(origH * top),
+    cropWidth:  Math.round(origW * wid),
+    cropHeight: Math.round(origH * ht),
   };
+}
+
+/** STEP 2 follow-up — softer mask edges before blend (reduces sharp teeth border). */
+async function featherTeethMaskForBlend(maskBuf, w, h) {
+  return sharp(maskBuf).resize(w, h).blur(2.8).png().toBuffer();
+}
+
+/**
+ * STEP 3 — Teeth normalization (pre-enhancement): mild brightness + contrast + yellow pull inside mask.
+ * Stabilizes input; does not replace final clinical blend.
+ */
+async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  let sumL = 0, n = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    const r = raw[i * 3], g = raw[i * 3 + 1], b = raw[i * 3 + 2];
+    const [L] = rgbToLab(r, g, b);
+    sumL += L;
+    n++;
+  }
+  const meanL = n > 0 ? sumL / n : 76;
+  const targetL = Math.min(86, Math.max(70, meanL + 3.5));
+  const out = Buffer.from(raw);
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    const r0 = raw[i * 3], g0 = raw[i * 3 + 1], b0 = raw[i * 3 + 2];
+    const [L, A, B] = rgbToLab(r0, g0, b0);
+    const Ln = L + (targetL - meanL) * 0.38;
+    const An = A * 0.96;
+    const Bn = B * 0.88;
+    let [r, g, b] = labToRgb(Math.min(94, Ln), An, Bn);
+    const k = 0.62;
+    r = Math.min(ENAMEL_OUTPUT_CAP, Math.round(r0 * (1 - k) + r * k));
+    g = Math.min(ENAMEL_OUTPUT_CAP, Math.round(g0 * (1 - k) + g * k));
+    b = Math.min(ENAMEL_OUTPUT_CAP, Math.round(b0 * (1 - k) + b * k));
+    out[i * 3] = r;
+    out[i * 3 + 1] = g;
+    out[i * 3 + 2] = b;
+  }
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+}
+
+const SIM_REPLICATE_PROMPT_DEFAULT =
+  'natural aligned teeth, improved symmetry, slightly whiter teeth, realistic dental aesthetics, natural enamel texture, subtle shading';
+
+/**
+ * STEP 4 (optional) — Replicate img2img on mouth crop only; result still merged via teeth mask later.
+ * Requires REPLICATE_API_TOKEN + REPLICATE_IMG2IMG_VERSION (model version hash from replicate.com).
+ * Strength 0.6–0.8: REPLICATE_PROMPT_STRENGTH (default 0.68). Custom prompt: REPLICATE_TEETH_PROMPT
+ */
+async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
+  const token = process.env.REPLICATE_API_TOKEN;
+  const version = process.env.REPLICATE_IMG2IMG_VERSION;
+  if (!token || !version) return null;
+  const strength = Math.min(
+    0.8,
+    Math.max(0.6, Number(process.env.REPLICATE_PROMPT_STRENGTH) || 0.68)
+  );
+  const prompt =
+    process.env.REPLICATE_TEETH_PROMPT || SIM_REPLICATE_PROMPT_DEFAULT;
+  const image = `data:image/jpeg;base64,${cropJpegBuf.toString('base64')}`;
+  const input = { image, prompt, prompt_strength: strength };
+  console.log(`[SIMSTEP 4] Replicate img2img strength=${strength.toFixed(2)}`);
+  try {
+    const create = await fetch('https://api.replicate.com/v1/predictions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ version, input }),
+    });
+    const txt = await create.text();
+    if (!create.ok) {
+      console.warn('[SIMSTEP 4] Replicate create failed:', txt.slice(0, 400));
+      return null;
+    }
+    const pred = JSON.parse(txt);
+    const pollUrl = pred.urls?.get;
+    if (!pollUrl) return null;
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const pr = await fetch(pollUrl, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      const st = await pr.json();
+      if (st.status === 'succeeded') {
+        const out = st.output;
+        const url = Array.isArray(out) ? out[0] : out;
+        if (typeof url !== 'string') {
+          console.warn('[SIMSTEP 4] Replicate unexpected output shape');
+          return null;
+        }
+        const imgRes = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+        if (!imgRes.ok) return null;
+        return Buffer.from(await imgRes.arrayBuffer());
+      }
+      if (st.status === 'failed' || st.status === 'canceled') {
+        console.warn('[SIMSTEP 4] Replicate job:', st.status, st.error);
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    console.warn('[SIMSTEP 4] Replicate timeout');
+    return null;
+  } catch (e) {
+    console.warn('[SIMSTEP 4] Replicate error:', e?.message);
+    return null;
+  }
 }
 
 // ─── Simulation mode configs ─────────────────────────────────────────────────
@@ -17904,50 +18032,144 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
 
   cfg = applySimTransformStrength(cfg);
 
-  // 4+5. Enhance + blend — multi-variation: pick strongest realistic candidate,
-  // then force a max pass if mean tooth brightness still improved < target.
-  let blendedCropBuf;
+  // ── Structured pipeline (teeth-focused cosmetic preview — not full orthodontic sim) ──
+  console.log('[SIMSTEP 1] Mouth region crop (face → mouth band)');
+  console.log('[SIMSTEP 2] Teeth segmentation mask (+ soft feather)');
   try {
-    const minLift =
-      simLevel === 'minimal'  ? MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL :
-      simLevel === 'relaxed'  ? MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED :
-                               MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT;
-    const mults =
-      simLevel === 'minimal'
-        ? [1.0, 1.2, 1.38]
-        : [1.0, 1.1, 1.22, 1.34, 1.42];
+    maskBuf = await featherTeethMaskForBlend(maskBuf, cropWidth, cropHeight);
+  } catch (e) {
+    console.warn('[SIMSTEP 2] mask feather non-fatal:', e?.message);
+  }
 
-    let bestBuf  = null;
-    let bestLift = -Infinity;
-    let bestTag  = '';
+  let workingCropBuf = origCropBuf;
+  try {
+    workingCropBuf = await normalizeTeethPreEnhance(origCropBuf, maskBuf, cropWidth, cropHeight);
+    console.log('[SIMSTEP 3] Normalization: brightness / mild contrast / yellow pull (masked)');
+  } catch (e) {
+    console.warn('[SIMSTEP 3] normalize skipped — using raw crop:', e?.message);
+  }
 
-    for (const mult of mults) {
-      const cfgTry  = scaleSimStrength(cfg, mult);
-      const boosted = mult > 1.05;
-      const enhancedRaw = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, boosted);
-      const buf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight, cfgTry);
-      const lift = await measureTeethBrightnessLiftPct(origCropBuf, buf, maskBuf, cropWidth, cropHeight);
-      console.log(`[SIM VARIANT] mult=${mult.toFixed(2)} boosted=${boosted} meanLift=${lift.toFixed(1)}%`);
-      if (lift > bestLift) {
-        bestLift = lift;
-        bestBuf  = buf;
-        bestTag  = `×${mult.toFixed(2)}`;
+  // STEP 4: optional Replicate img2img (strictly blended through teeth mask in step 5)
+  let blendedCropBuf = null;
+  const aiJpeg = await replicateTeethImg2ImgOptional(workingCropBuf, cropWidth, cropHeight);
+  if (aiJpeg) {
+    try {
+      const aiRaw = await sharp(aiJpeg)
+        .resize(cropWidth, cropHeight)
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+      const mergeCfg = {
+        ...cfg,
+        blendAlpha: { strong: 0.48, edge: 0.2 },
+        uniformTargetFactor: Math.min(1.12, cfg.uniformTargetFactor * 0.92),
+      };
+      blendedCropBuf = await blendCropWithMask(
+        origCropBuf, aiRaw, maskBuf, cropWidth, cropHeight, mergeCfg
+      );
+      console.log('[SIMSTEP 4] External img2img merged (soft edges, teeth-only via mask)');
+    } catch (e) {
+      console.warn('[SIMSTEP 4] AI merge failed — programmatic path:', e?.message);
+      blendedCropBuf = null;
+    }
+  }
+
+  // STEP 4b: programmatic enhancement (always if Replicate off or failed)
+  if (!blendedCropBuf) {
+    console.log('[SIMSTEP 4b] Programmatic enhancement (LAB + blend — not generic full-image img2img)');
+    try {
+      const minLift =
+        simLevel === 'minimal'
+          ? MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL
+          : simLevel === 'relaxed'
+            ? MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED
+            : MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT;
+      const mults =
+        simLevel === 'minimal'
+          ? [1.0, 1.2, 1.38]
+          : [1.0, 1.1, 1.22, 1.34, 1.42];
+
+      let bestBuf = null;
+      let bestLift = -Infinity;
+      let bestTag = '';
+
+      for (const mult of mults) {
+        const cfgTry = scaleSimStrength(cfg, mult);
+        const boosted = mult > 1.05;
+        const enhancedRaw = await computeEnhancedRaw(
+          workingCropBuf,
+          cropWidth,
+          cropHeight,
+          boosted
+        );
+        const buf = await blendCropWithMask(
+          origCropBuf,
+          enhancedRaw,
+          maskBuf,
+          cropWidth,
+          cropHeight,
+          cfgTry
+        );
+        const lift = await measureTeethBrightnessLiftPct(
+          origCropBuf,
+          buf,
+          maskBuf,
+          cropWidth,
+          cropHeight
+        );
+        console.log(
+          `[SIM VARIANT] mult=${mult.toFixed(2)} boosted=${boosted} meanLift=${lift.toFixed(1)}%`
+        );
+        if (lift > bestLift) {
+          bestLift = lift;
+          bestBuf = buf;
+          bestTag = `×${mult.toFixed(2)}`;
+        }
       }
-    }
 
-    if (bestLift < minLift && simLevel !== 'minimal') {
-      console.warn(`[SIM VIS] best lift ${bestLift.toFixed(1)}% < ${minLift}% — forced high-strength pass`);
-      const forced    = scaleSimStrength(cfg, 1.55);
-      const encForced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
-      bestBuf = await blendCropWithMask(origCropBuf, encForced, maskBuf, cropWidth, cropHeight, forced);
-      bestLift = await measureTeethBrightnessLiftPct(origCropBuf, bestBuf, maskBuf, cropWidth, cropHeight);
-      bestTag  = 'forced';
-      console.log(`[SIM VIS] forced pass meanLift=${bestLift.toFixed(1)}%`);
-    }
+      if (bestLift < minLift && simLevel !== 'minimal') {
+        console.warn(
+          `[SIM VIS] best lift ${bestLift.toFixed(1)}% < ${minLift}% — forced pass`
+        );
+        const forced = scaleSimStrength(cfg, 1.55);
+        const encForced = await computeEnhancedRaw(
+          workingCropBuf,
+          cropWidth,
+          cropHeight,
+          true
+        );
+        bestBuf = await blendCropWithMask(
+          origCropBuf,
+          encForced,
+          maskBuf,
+          cropWidth,
+          cropHeight,
+          forced
+        );
+        bestLift = await measureTeethBrightnessLiftPct(
+          origCropBuf,
+          bestBuf,
+          maskBuf,
+          cropWidth,
+          cropHeight
+        );
+        bestTag = 'forced';
+        console.log(`[SIM VIS] forced pass meanLift=${bestLift.toFixed(1)}%`);
+      }
 
-    blendedCropBuf = bestBuf;
-    console.log(`[SIM CROP] Blended [${simLevel}] picked ${bestTag} meanLift≈${bestLift.toFixed(1)}% | ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
-  } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
+      blendedCropBuf = bestBuf;
+      console.log(
+        `[SIM CROP] Blended [${simLevel}] picked ${bestTag} meanLift≈${bestLift.toFixed(1)}% | ${Math.round(
+          blendedCropBuf.byteLength / 1024
+        )} KB`
+      );
+    } catch (e) {
+      return { url: null, failReason: 'crop_blend: ' + e?.message };
+    }
+  }
+
+  // STEP 5–6: geometry + highlights + QC continue below (blend-back to full frame at composite)
+  console.log('[SIMSTEP 5] Teeth result ready for geometry/highlights + quality gates');
 
   // Step 5a: Horizontal micro-alignment (alignment + full modes)
   if (cfg.alignment) {
@@ -35411,7 +35633,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v16');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v17');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
