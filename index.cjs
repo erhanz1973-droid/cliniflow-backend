@@ -16008,6 +16008,24 @@ function buildCropFeatherMap(w, h, featherPx) {
   return out;
 }
 
+/**
+ * MVP mouth band when face landmarks are unavailable (full-frame relative).
+ * Matches product spec: x≈20%, y≈55%, w≈60%, h≈30% of image.
+ */
+function getSpecFallbackMouthRectFromFullImage(origW, origH) {
+  let cropLeft = Math.floor(origW * 0.2);
+  let cropTop = Math.floor(origH * 0.55);
+  let cropWidth = Math.round(origW * 0.6);
+  let cropHeight = Math.round(origH * 0.3);
+  cropLeft = Math.max(0, Math.min(cropLeft, origW - 64));
+  cropTop = Math.max(0, Math.min(cropTop, origH - 64));
+  if (cropLeft + cropWidth > origW) cropWidth = origW - cropLeft;
+  if (cropTop + cropHeight > origH) cropHeight = origH - cropTop;
+  cropWidth = Math.max(64, cropWidth);
+  cropHeight = Math.max(64, cropHeight);
+  return { cropLeft, cropTop, cropWidth, cropHeight };
+}
+
 /** Reject full-face-sized extracts — recrop to a fixed mouth band. */
 function enforceMouthOnlyCrop(origW, origH) {
   let box = getSmileMouthCropBox(origW, origH);
@@ -16073,16 +16091,15 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
     .toBuffer();
 }
 
+// Teeth-aware img2img — set REPLICATE_IMG2IMG_VERSION to stability-ai/stable-diffusion-img2img (version hash on replicate.com).
 const SIM_REPLICATE_PROMPT_DEFAULT =
   'realistic dental smile improvement, slightly whiter teeth, natural alignment correction, fix minor crowding, ' +
-  'preserve natural tooth shapes, avoid artificial veneers look, keep imperfections realistic, ' +
-  'modify both upper and lower teeth, keep lips and face unchanged, high realism';
+  'apply changes to both upper and lower teeth, preserve natural tooth shape, avoid artificial veneers, ' +
+  'keep imperfections realistic, keep lips and face unchanged, high realism';
 
-/** Natural look — avoid uniform white blocks. Override via REPLICATE_TEETH_NEGATIVE_PROMPT. */
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
-  'uniform white block, porcelain veneers, fake teeth, perfect hollywood smile, plastic, cartoon, ' +
-  'wrong tooth count, extra teeth, face change, new nose, new eyes, ' +
-  'changed lighting, blur, watermark, text';
+  'fake teeth, plastic, overly white, perfect symmetry, cartoon, distorted face, ' +
+  'watermark, text, extra teeth, wrong tooth count';
 
 /**
  * Img2img denoise (Replicate prompt_strength). Target ~0.45–0.55 for subtle realism.
@@ -16090,15 +16107,25 @@ const SIM_REPLICATE_NEGATIVE_DEFAULT =
 const REPLICATE_PROMPT_STRENGTH_DEFAULT = 0.5;
 
 /**
- * Classifier-free guidance — medium (not aggressive). Default 7; clamp 6–8. Set GUIDANCE_SCALE=0 to omit.
+ * Classifier-free guidance — medium (not aggressive). Default 6.5; clamp 5–9. Set GUIDANCE_SCALE=0 to omit.
  */
 function replicateGuidanceScaleFromEnv() {
   const raw = process.env.GUIDANCE_SCALE;
   if (raw === '0' || raw === 'false') return null;
-  if (raw === undefined || String(raw).trim() === '') return 7;
+  if (raw === undefined || String(raw).trim() === '') return 6.5;
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 7;
-  return Math.min(8, Math.max(6, n));
+  if (!Number.isFinite(n)) return 6.5;
+  return Math.min(9, Math.max(5, n));
+}
+
+function replicateNumInferenceStepsFromEnv() {
+  const raw = process.env.REPLICATE_NUM_INFERENCE_STEPS;
+  if (raw === '0' || raw === 'false') return null;
+  const def = 30;
+  if (raw === undefined || String(raw).trim() === '') return def;
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(50, Math.max(15, n));
 }
 
 /**
@@ -16130,8 +16157,10 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   }
   const g = replicateGuidanceScaleFromEnv();
   if (g != null) input.guidance_scale = g;
+  const steps = replicateNumInferenceStepsFromEnv();
+  if (steps != null) input.num_inference_steps = steps;
   console.log(
-    `[SIMSTEP 4] Replicate img2img prompt_strength=${strength.toFixed(2)} guidance_scale=${g != null ? g.toFixed(1) : 'omit'}`
+    `[SIMSTEP 4] Replicate img2img strength=${strength.toFixed(2)} guidance=${g != null ? g.toFixed(1) : 'omit'} steps=${steps ?? 'omit'}`
   );
   try {
     const create = await fetch('https://api.replicate.com/v1/predictions', {
@@ -18154,7 +18183,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
         mp.debug || "",
         "— using heuristic mouth band (same image, no strict face dependency)"
       );
-      const box = enforceMouthOnlyCrop(origW, origH);
+      const box = getSpecFallbackMouthRectFromFullImage(origW, origH);
       cropLeft = box.cropLeft;
       cropTop = box.cropTop;
       cropWidth = box.cropWidth;
@@ -35874,7 +35903,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v21');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v22');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
