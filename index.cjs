@@ -16036,7 +16036,7 @@ function buildCropFeatherMap(w, h, featherPx) {
 
 /**
  * MVP mouth band when face landmarks are unavailable (full-frame relative).
- * Matches product spec: x≈20%, y≈55%, w≈60%, h≈30% of image.
+ * STEP 1 approximate mouth: mouth.x ≈ 0.2·W, mouth.y ≈ 0.55·H, width ≈ 0.6·W, height ≈ 0.3·H (face-sized frame).
  */
 function getSpecFallbackMouthRectFromFullImage(origW, origH) {
   let cropLeft = Math.floor(origW * 0.2);
@@ -16118,17 +16118,13 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
 }
 
 // Teeth-aware img2img — set REPLICATE_IMG2IMG_VERSION to stability-ai/stable-diffusion-img2img (version hash on replicate.com).
+// Single-pass + dual-pass default (STEP 4 — same prompt for upper and lower Replicate calls).
 const SIM_REPLICATE_PROMPT_DEFAULT =
-  'realistic dental correction, modify visible teeth, natural alignment and whitening, preserve real tooth shapes, ' +
-  'avoid artificial veneers, ensure both upper and lower teeth are edited equally';
+  'realistic dental correction, natural alignment, slight whitening, preserve tooth shape, avoid fake veneers, high realism';
 
-// Dual-region Replicate: separate img2img on upper vs lower strips (see replicateDualRegionTeethImg2Img).
-const SIM_REPLICATE_DUAL_UPPER_PROMPT =
-  'realistic dental correction, modify visible UPPER teeth arch only, natural alignment and whitening, ' +
-  'preserve real tooth shapes, avoid artificial veneers, natural occlusion';
-const SIM_REPLICATE_DUAL_LOWER_PROMPT =
-  'realistic dental correction, modify visible LOWER teeth arch only, natural alignment and whitening, ' +
-  'preserve real tooth shapes, avoid artificial veneers, natural occlusion';
+// Dual-region: upper strip + lower strip use the SAME prompt (split controls focus, not wording).
+// Override: REPLICATE_DUAL_PROMPT or REPLICATE_TEETH_PROMPT.
+const SIM_REPLICATE_DUAL_PROMPT = SIM_REPLICATE_PROMPT_DEFAULT;
 
 // Default ON — set SIM_DUAL_REGION_REPLICATE=0 to use a single full-crop Replicate pass only.
 const SIM_DUAL_REGION_REPLICATE_ENABLED = String(process.env.SIM_DUAL_REGION_REPLICATE || '').trim() !== '0';
@@ -16297,22 +16293,60 @@ async function mergeDualVerticalReplicateStrips(upperOutBuf, lowerOutBuf, w, h, 
       out[di + 2] = Math.round(b);
     }
   }
-  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+  const mergedJpeg = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+  return applyDualSeamEdgeBlur(mergedJpeg, w, h, ySplit, overlap);
 }
 
 /**
- * Split mouth crop into upper / lower overlapping strips, run Replicate img2img on each,
- * merge with a vertical feather. Falls back to single full-crop Replicate if either fails.
+ * STEP 6 — slight blur on the horizontal seam band to hide strip boundaries.
+ * Set SIM_DUAL_SEAM_BLUR=0 to disable.
+ */
+async function applyDualSeamEdgeBlur(jpegBuf, w, h, ySplit, overlap) {
+  const raw = process.env.SIM_DUAL_SEAM_BLUR;
+  if (raw === '0' || raw === 'false') return jpegBuf;
+  let sigma = 0.85;
+  if (raw !== undefined && String(raw).trim() !== '') {
+    const n = parseFloat(String(raw), 10);
+    if (Number.isFinite(n)) sigma = Math.min(3, Math.max(0.25, n));
+  }
+  const pad = Math.max(4, Math.min(28, Math.floor(overlap * 0.65)));
+  const top = Math.max(0, ySplit - pad);
+  const height = Math.min(h - top, 2 * pad + 4);
+  if (height < 6) return jpegBuf;
+  try {
+    const blurredStrip = await sharp(jpegBuf)
+      .extract({ left: 0, top, width: w, height })
+      .blur(sigma)
+      .toBuffer();
+    return await sharp(jpegBuf)
+      .composite([{ input: blurredStrip, left: 0, top }])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+  } catch (e) {
+    console.warn('[SIM DUAL] seam blur skipped:', e?.message);
+    return jpegBuf;
+  }
+}
+
+/**
+ * STEP 1 — Mouth ROI is already the working crop (MediaPipe lips/teeth or heuristic band).
+ *        Heuristic fallback matches ~face: x+20%·w, y+55%·h, w=60%·h, h=30% (see getSpecFallbackMouthRectFromFullImage).
+ * STEP 2 — Split at 50% height (upper / lower half of mouth) with small overlap for blend.
+ * STEP 3–5 — Same prompt both passes; merge overlays strips back to full mouth crop; STEP 6 blurs seam.
+ * Falls back to single full-crop Replicate if either region call fails.
  */
 async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) {
   const token = process.env.REPLICATE_API_TOKEN;
   const version = process.env.REPLICATE_IMG2IMG_VERSION;
   if (!token || !version) return null;
 
+  // Top 50% / bottom 50% of mouth (default); SIM_DUAL_REGION_SPLIT_Y overrides (clamped).
   const splitEnv = parseFloat(String(process.env.SIM_DUAL_REGION_SPLIT_Y || '0.5'), 10);
   const yFrac = Number.isFinite(splitEnv) ? Math.min(0.62, Math.max(0.38, splitEnv)) : 0.5;
   const ySplit = Math.floor(h * yFrac);
-  const overlap = Math.max(8, Math.min(28, Math.floor(h * 0.05)));
+  const overlap = Math.max(8, Math.min(32, Math.floor(h * 0.06)));
 
   const hUp = Math.min(ySplit + overlap, h);
   const topLower = Math.max(0, ySplit - overlap);
@@ -16339,12 +16373,10 @@ async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) 
     return null;
   }
 
-  const upperPrompt =
-    (process.env.REPLICATE_DUAL_UPPER_PROMPT && String(process.env.REPLICATE_DUAL_UPPER_PROMPT).trim()) ||
-    SIM_REPLICATE_DUAL_UPPER_PROMPT;
-  const lowerPrompt =
-    (process.env.REPLICATE_DUAL_LOWER_PROMPT && String(process.env.REPLICATE_DUAL_LOWER_PROMPT).trim()) ||
-    SIM_REPLICATE_DUAL_LOWER_PROMPT;
+  const dualPrompt =
+    (process.env.REPLICATE_DUAL_PROMPT && String(process.env.REPLICATE_DUAL_PROMPT).trim()) ||
+    (process.env.REPLICATE_TEETH_PROMPT && String(process.env.REPLICATE_TEETH_PROMPT).trim()) ||
+    SIM_REPLICATE_DUAL_PROMPT;
 
   const strengthDual = (() => {
     const o = opts.strengthOverride;
@@ -16354,8 +16386,8 @@ async function replicateDualRegionTeethImg2Img(workingCropBuf, w, h, opts = {}) 
     return undefined;
   })();
 
-  const upOpts = { promptOverride: upperPrompt };
-  const loOpts = { promptOverride: lowerPrompt };
+  const upOpts = { promptOverride: dualPrompt };
+  const loOpts = { promptOverride: dualPrompt };
   if (strengthDual != null) {
     upOpts.strengthOverride = strengthDual;
     loOpts.strengthOverride = strengthDual;
@@ -36282,7 +36314,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v26');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v27');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
