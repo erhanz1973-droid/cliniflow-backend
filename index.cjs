@@ -15898,7 +15898,7 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //
 // Canonical “prompt” line for logging / product parity (no external img2img here):
 const SIM_VISUAL_INTENT_PROMPT =
-  'perfect aligned teeth, straight dental arch, bright white teeth, cosmetic dental improvement';
+  'natural healthy teeth, subtle whitening, preserved enamel texture, realistic shading';
 //
 // SIM_TRANSFORM_STRENGTH ≈ img2img prompt_strength / denoise (0.35 = timid … 0.95 = max).
 // Default 0.88 — clearly visible whitening; tunable via SIM_TRANSFORM_STRENGTH env.
@@ -15927,28 +15927,31 @@ const _SIM_STR_NUM =
   _SIM_STR_RAW !== undefined && String(_SIM_STR_RAW).trim() !== ''
     ? Number(_SIM_STR_RAW)
     : NaN;
-/** Effective edit aggressiveness ~ img2img strength (0.35 … 0.95). */
+/** Effective edit aggressiveness ~ img2img strength (0.35 … 0.88; default natural). */
 const SIM_TRANSFORM_STRENGTH = Number.isFinite(_SIM_STR_NUM)
-  ? Math.min(0.95, Math.max(0.35, _SIM_STR_NUM))
-  : 0.88;
+  ? Math.min(0.88, Math.max(0.35, _SIM_STR_NUM))
+  : 0.62;
 
-/** Extra L* / blend lift when strength is high (used in computeEnhancedRaw). */
+/** Max RGB in tooth pipeline — avoids chalk-white flat patches (was 245). */
+const ENAMEL_OUTPUT_CAP = 238;
+
+/** Extra L* lift — kept subtle to preserve texture (used in computeEnhancedRaw). */
 function simLabStrengthMultiplier() {
   const s = SIM_TRANSFORM_STRENGTH;
-  return 1 + Math.max(0, s - 0.52) * 0.48;
+  return 1 + Math.max(0, s - 0.52) * 0.22;
 }
 
 function applySimTransformStrength(cfg) {
   const s = SIM_TRANSFORM_STRENGTH;
-  const kBlend = 0.70 + s * 0.52;
-  const uniBoost = 1 + (s - 0.35) * 0.44;
+  const kBlend = 0.88 + s * 0.26;
+  const uniBoost = 1 + (s - 0.4) * 0.22;
   return {
     ...cfg,
     blendAlpha: {
-      strong: Math.min(0.98, cfg.blendAlpha.strong * kBlend),
-      edge: Math.min(0.74, cfg.blendAlpha.edge * kBlend),
+      strong: Math.min(0.92, cfg.blendAlpha.strong * kBlend),
+      edge: Math.min(0.58, cfg.blendAlpha.edge * kBlend),
     },
-    uniformTargetFactor: Math.min(1.55, cfg.uniformTargetFactor * uniBoost),
+    uniformTargetFactor: Math.min(1.38, cfg.uniformTargetFactor * uniBoost),
   };
 }
 
@@ -16022,8 +16025,8 @@ const SIM_MODES = {
   full: {
     name:                'full',
     label:               'Tam Smile Design',
-    blendAlpha:          { strong: 0.82, edge: 0.42 },
-    uniformTargetFactor: 1.24,
+    blendAlpha:          { strong: 0.76, edge: 0.38 },
+    uniformTargetFactor: 1.18,
     alignment:           true,
     smileArc:            true,
     edgeSoftening:       true,
@@ -16032,8 +16035,8 @@ const SIM_MODES = {
     sharpenM1:           0.6,
     sharpenM2:           11,
     maxConfidence:       0.96,
-    microShiftMax:       3,
-    alignSymmetryMix:    0.74,
+    microShiftMax:       2,
+    alignSymmetryMix:    0.68,
     alignArchCurveMix:   0.6,
     alignOrganicJitter:  0.18,
     smileArcDepthPx:     4,
@@ -16045,8 +16048,8 @@ const SIM_MODES = {
   premium: {
     name:                'premium',
     label:               'Premium Estetik Gülüş',
-    blendAlpha:          { strong: 0.86, edge: 0.46 },
-    uniformTargetFactor: 1.24,
+    blendAlpha:          { strong: 0.78, edge: 0.40 },
+    uniformTargetFactor: 1.20,
     alignment:           true,
     smileArc:            true,
     edgeSoftening:       true,
@@ -16055,8 +16058,8 @@ const SIM_MODES = {
     sharpenM1:           0.58,
     sharpenM2:           11,
     maxConfidence:       0.94,
-    microShiftMax:       3,
-    alignSymmetryMix:    0.7,
+    microShiftMax:       2,
+    alignSymmetryMix:    0.65,
     alignArchCurveMix:   0.64,
     alignOrganicJitter:  0.2,
     smileArcDepthPx:     4,
@@ -16089,8 +16092,8 @@ SIM_MODES.basic = {
 SIM_MODES.perfect = {
   name:                'perfect',
   label:               'Mükemmel Gülüş Tasarımı',
-  blendAlpha:          { strong: 0.88, edge: 0.48 },
-  uniformTargetFactor: 1.28,
+  blendAlpha:          { strong: 0.82, edge: 0.42 },
+  uniformTargetFactor: 1.22,
   alignment:           true,
   smileArc:            true,
   edgeSoftening:       true,
@@ -16099,8 +16102,8 @@ SIM_MODES.perfect = {
   sharpenM1:           0.62,
   sharpenM2:           12,
   maxConfidence:       0.97,
-  microShiftMax:       4,
-  alignSymmetryMix:    0.84,
+  microShiftMax:       3,
+  alignSymmetryMix:    0.78,
   alignArchCurveMix:   0.48,
   alignOrganicJitter:  0.12,
   smileArcDepthPx:     5,
@@ -16523,10 +16526,10 @@ async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
     // Stage 2 — LAB colour neutralization + lightness boost
     const [L, Alab, Blab] = rgbToLab(r, g, b);
 
-    // Lightness boost — scales with SIM_TRANSFORM_STRENGTH (high = clearly visible).
+    // Lightness boost — conservative to avoid flat painted enamel.
     const sLab = simLabStrengthMultiplier();
-    const Lmult = (boosted ? 1.22 : 1.17) * sLab;
-    const Lw    = Math.min(100, L * Lmult);
+    const Lmult = (boosted ? 1.1 : 1.06) * sLab;
+    const Lw    = Math.min(96, L * Lmult);
 
     // A axis (green-red): brown/red stains — pull harder toward neutral
     const Aw = Alab > 5  ? Alab + (0 - Alab) * (boosted ? 0.78 : 0.72) : Alab * 0.92;
@@ -16540,9 +16543,9 @@ async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
     const [ro, go, bo] = labToRgb(Lw, Aw, Bw);
 
     // Safety: result must be ≥ original on every channel (never darken)
-    out[i*3]   = Math.min(245, Math.max(origR, ro));
-    out[i*3+1] = Math.min(245, Math.max(origG, go));
-    out[i*3+2] = Math.min(245, Math.max(origB, bo));
+    out[i*3]   = Math.min(ENAMEL_OUTPUT_CAP, Math.max(origR, ro));
+    out[i*3+1] = Math.min(ENAMEL_OUTPUT_CAP, Math.max(origG, go));
+    out[i*3+2] = Math.min(ENAMEL_OUTPUT_CAP, Math.max(origB, bo));
   }
   return out;
 }
@@ -16818,7 +16821,7 @@ function reduceDarkLines(result, maskRaw, w, h) {
 function microTextureClean(result, maskRaw, w, h) {
   const STD_THRESH  = 12;  // std > 12 = rough texture / speckled surface
   const EDGE_THRESH = 20;  // gradient > 20 = tooth boundary — do not touch
-  const MIX         = 0.72;
+  const MIX         = 0.48;
 
   const br = new Float32Array(w * h);
   for (let i = 0; i < w*h; i++)
@@ -16838,7 +16841,7 @@ function microTextureClean(result, maskRaw, w, h) {
     if (std[i]  <= STD_THRESH)    continue; // already smooth — leave it
     if (grad[i] > EDGE_THRESH)    continue; // tooth border — preserve
     for (let c = 0; c < 3; c++)
-      out[i*3+c] = Math.min(245, Math.round(result[i*3+c]*(1-MIX) + smoothed[i*3+c]*MIX));
+      out[i*3+c] = Math.min(ENAMEL_OUTPUT_CAP, Math.round(result[i*3+c]*(1-MIX) + smoothed[i*3+c]*MIX));
     count++;
   }
   if (count > 0)
@@ -16895,21 +16898,21 @@ function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
 
     const pixBr = br[i];
     const delta  = target - pixBr;
-    const lift   = Math.min(0.84, Math.max(0.16, delta / 255));
+    const lift   = Math.min(0.62, Math.max(0.12, delta / 255));
 
     let r = snap[i*3], g = snap[i*3+1], b = snap[i*3+2];
     const rn = r + delta * lift, gn = g + delta * lift, bn = b + delta * lift;
-    let ro = r * 0.18 + rn * 0.82;
-    let go = g * 0.18 + gn * 0.82;
-    let bo = b * 0.18 + bn * 0.82;
+    let ro = r * 0.32 + rn * 0.68;
+    let go = g * 0.32 + gn * 0.68;
+    let bo = b * 0.32 + bn * 0.68;
 
-    // Yellow tint kill (visible desaturation — must not preserve dull yellow)
-    if (r > g && g > b) bo += (r - b) * 0.44;
+    // Yellow reduction — gentle (harsh kills read as flat paint)
+    if (r > g && g > b) bo += (r - b) * 0.28;
 
     // ── LAB lightness cap (realism) ─────────────────────────────────────
     // Allow slightly higher L* than before so whitening reads at first glance
     // (clinical A1–B1 band), without mirror-white.
-    const LAB_L_CAP = 90;
+    const LAB_L_CAP = 86;
     const [capL, capA, capB] = rgbToLab(Math.round(ro), Math.round(go), Math.round(bo));
     if (capL > LAB_L_CAP) {
       const scale = LAB_L_CAP / capL;
@@ -16919,13 +16922,13 @@ function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
 
     // ── Subtle natural variation (anti-plastic) ───────────────────────────
     const noise = ((i * 1664525 + 1013904223) & 0x7fffffff) % 3 - 1;  // −1 … +1
-    ro = Math.min(245, Math.max(0, Math.round(ro) + noise));
-    go = Math.min(245, Math.max(0, Math.round(go) + noise));
-    bo = Math.min(245, Math.max(0, Math.round(bo) + noise));
+    ro = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(ro) + noise));
+    go = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(go) + noise));
+    bo = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(bo) + noise));
 
-    out[i*3]   = Math.min(245, Math.max(0, Math.round(ro)));
-    out[i*3+1] = Math.min(245, Math.max(0, Math.round(go)));
-    out[i*3+2] = Math.min(245, Math.max(0, Math.round(bo)));
+    out[i*3]   = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(ro)));
+    out[i*3+1] = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(go)));
+    out[i*3+2] = Math.min(ENAMEL_OUTPUT_CAP, Math.max(0, Math.round(bo)));
   }
   return out;
 }
@@ -17117,7 +17120,7 @@ async function microAlignment(cropBuf, maskBuf, w, h, cfg = {}) {
       const x1    = Math.min(w - 1, x0 + 1);
       for (let c = 0; c < 3; c++) {
         const warped = imgRaw[(y*w+x0)*3+c] * (1-fx) + imgRaw[(y*w+x1)*3+c] * fx;
-        output[(y*w+x)*3+c] = Math.min(245, Math.round(
+        output[(y*w+x)*3+c] = Math.min(ENAMEL_OUTPUT_CAP, Math.round(
           imgRaw[(y*w+x)*3+c] * (1 - blend) + warped * blend
         ));
       }
@@ -17491,7 +17494,7 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
     const m     = maskRaw[i];
     const alpha = m > 192 ? cfg.blendAlpha.strong : m > 64 ? cfg.blendAlpha.edge : 0.0;
     for (let c = 0; c < 3; c++)
-      result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + enhancedRaw[i*3+c]*alpha));
+      result[i*3+c] = Math.min(ENAMEL_OUTPUT_CAP, Math.round(origRaw[i*3+c]*(1-alpha) + enhancedRaw[i*3+c]*alpha));
   }
 
   // Step 2 — Edge-preserving bilateral filter on the blended buffer.
@@ -17499,11 +17502,12 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
   // boundaries reads real skin/lip values — zero processed-pixel contamination.
   // Filtered output is written ONLY inside the mask.
   {
-    const filtered = bilateralFilter(result, w, h, 2, 28, 2);
+    // Narrower bilateral → less merging of inter-tooth boundaries
+    const filtered = bilateralFilter(result, w, h, 1, 18, 2);
     for (let i = 0; i < w*h; i++) {
       if (maskRaw[i] <= 64) continue;  // outside mask: preserve exact original
       for (let c = 0; c < 3; c++)
-        result[i*3+c] = Math.min(245, filtered[i*3+c]);
+        result[i*3+c] = Math.min(ENAMEL_OUTPUT_CAP, filtered[i*3+c]);
     }
   }
 
@@ -17526,9 +17530,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
       const isLower = Math.floor(i / w) > h * 0.42;
       const floor   = lm * (isLower ? 0.88 : 0.85);
       if (pixBr < floor) {
-        const liftDelta = (lm - pixBr) * 0.6; // additive lift toward local mean
+        const liftDelta = (lm - pixBr) * 0.42; // gentler — preserves local shading
         for (let c = 0; c < 3; c++) {
-          result[i*3+c] = Math.min(245, Math.max(
+          result[i*3+c] = Math.min(ENAMEL_OUTPUT_CAP, Math.max(
             origRaw[i*3+c],                           // never darker than original
             Math.round(floor),                        // hard floor
             Math.round(result[i*3+c] + liftDelta),   // lift
@@ -17576,8 +17580,8 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
             const o = origRaw[i * 3 + c];
             const v = result[i * 3 + c];
             result[i * 3 + c] = Math.min(
-              245,
-              Math.round(Math.max(o, v * 1.048 + 1.5))
+              ENAMEL_OUTPUT_CAP,
+              Math.round(Math.max(o, v * 1.022 + 0.8))
             );
           }
         }
@@ -17681,13 +17685,13 @@ function levelCfg(requestedCfg, level) {
       };
 
     case 'minimal':
-      // Best-effort: strong whitening, no geometry — mask was sparse / beard-heavy.
+      // Best-effort: visible but natural — mask was sparse / beard-heavy.
       return {
         ...SIM_MODES.whitening,
         name:                `${requestedCfg.name}→minimal`,
         label:               requestedCfg.label,
-        blendAlpha:          { strong: 0.74, edge: 0.36 },
-        uniformTargetFactor: Math.min(1.28, requestedCfg.uniformTargetFactor),
+        blendAlpha:          { strong: 0.62, edge: 0.30 },
+        uniformTargetFactor: Math.min(1.18, requestedCfg.uniformTargetFactor),
         alignment:    false,
         smileArc:     false,
         edgeSoftening:false,
@@ -17704,9 +17708,9 @@ function levelCfg(requestedCfg, level) {
 }
 
 // ── Visible-improvement helpers (multi-variation + minimum lift guarantee) ───
-const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 22;  // % mean brightness Δ inside mask
-const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 17;
-const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL    = 12;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 14;  // avoid over-forcing chalky passes
+const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 12;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL    = 9;
 
 /** Scale blend strength & uniform whitening target for internal A/B/C candidates. */
 function scaleSimStrength(baseCfg, mult) {
@@ -17714,10 +17718,10 @@ function scaleSimStrength(baseCfg, mult) {
   return {
     ...baseCfg,
     blendAlpha: {
-      strong: Math.min(0.99, baseCfg.blendAlpha.strong * mult),
-      edge:   Math.min(0.76, baseCfg.blendAlpha.edge * mult),
+      strong: Math.min(0.94, baseCfg.blendAlpha.strong * mult),
+      edge:   Math.min(0.62, baseCfg.blendAlpha.edge * mult),
     },
-    uniformTargetFactor: Math.min(1.58, baseCfg.uniformTargetFactor * (1 + (mult - 1) * 0.45)),
+    uniformTargetFactor: Math.min(1.42, baseCfg.uniformTargetFactor * (1 + (mult - 1) * 0.32)),
   };
 }
 
@@ -17794,9 +17798,9 @@ async function assessPostGenerationChange(origCropBuf, resultBuf, maskBuf, w, h)
 function shouldPostGenRegenerate(metrics, simLevel) {
   const { meanAbs, lumaLiftPct, histBC } = metrics;
   const absMin =
-    simLevel === 'minimal' ? 5.0 : simLevel === 'relaxed' ? 6.0 : 7.5;
+    simLevel === 'minimal' ? 3.8 : simLevel === 'relaxed' ? 4.5 : 5.5;
   const liftMin =
-    simLevel === 'minimal' ? 8.0 : simLevel === 'relaxed' ? 11.0 : 14.0;
+    simLevel === 'minimal' ? 5.5 : simLevel === 'relaxed' ? 7.5 : 9.5;
   // Regenerate if EITHER dimension is weak (AND was too easy to pass with whitening-only).
   const tooFlatPixels = meanAbs < absMin;
   const tooFlatBright = lumaLiftPct < liftMin;
@@ -17809,8 +17813,33 @@ function shouldPostGenRegenerate(metrics, simLevel) {
  * Stronger enhance+blend only (no alignment re-run — avoids double geometry).
  * attempt 0 → ×~2.0 strength, attempt 1 → ×~2.45
  */
+/** Chalk patches / extreme lifts vs original — triggers gentle re-blend. */
+async function detectWhiteningArtifacts(origCropBuf, resultBuf, maskBuf, w, h) {
+  const [o, r, m] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  let hiJump = 0, n = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (m[i] <= 64) continue;
+    n++;
+    const lo = (o[i * 3] + o[i * 3 + 1] + o[i * 3 + 2]) / 3;
+    const lr = (r[i * 3] + r[i * 3 + 1] + r[i * 3 + 2]) / 3;
+    if (lr > 230 && lr - lo > 32) hiJump++;
+  }
+  const ratio = n > 0 ? hiJump / n : 0;
+  const bad = ratio > 0.065 || hiJump > 220;
+  if (bad) {
+    console.warn(
+      `[SIM ARTIFACT] unnatural bright lifts: ${hiJump}px (${(ratio * 100).toFixed(1)}% of mask)`
+    );
+  }
+  return { bad, ratio, hiJump };
+}
+
 async function regenerateBlendPostCheck(origCropBuf, maskBuf, w, h, cfg, attempt) {
-  const mult = 2.35 + attempt * 0.75;
+  const mult = 1.48 + attempt * 0.52;
   const cfgStrong = scaleSimStrength(cfg, mult);
   const enc = await computeEnhancedRaw(origCropBuf, w, h, true);
   return blendCropWithMask(origCropBuf, enc, maskBuf, w, h, cfgStrong);
@@ -17886,7 +17915,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     const mults =
       simLevel === 'minimal'
         ? [1.0, 1.2, 1.38]
-        : [1.0, 1.12, 1.26, 1.42, 1.58];
+        : [1.0, 1.1, 1.22, 1.34, 1.42];
 
     let bestBuf  = null;
     let bestLift = -Infinity;
@@ -17908,7 +17937,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
 
     if (bestLift < minLift && simLevel !== 'minimal') {
       console.warn(`[SIM VIS] best lift ${bestLift.toFixed(1)}% < ${minLift}% — forced high-strength pass`);
-      const forced    = scaleSimStrength(cfg, 2.35);
+      const forced    = scaleSimStrength(cfg, 1.55);
       const encForced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
       bestBuf = await blendCropWithMask(origCropBuf, encForced, maskBuf, cropWidth, cropHeight, forced);
       bestLift = await measureTeethBrightnessLiftPct(origCropBuf, bestBuf, maskBuf, cropWidth, cropHeight);
@@ -18039,8 +18068,8 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       // Safe fallback: still visibly brighter teeth (never near-identical to input)
       const safeCfg = {
         ...cfg,
-        blendAlpha:          { strong: 0.76, edge: 0.34 },
-        uniformTargetFactor: 1.26,
+        blendAlpha:          { strong: 0.64, edge: 0.30 },
+        uniformTargetFactor: 1.18,
         edgeSoftening:       false,
         highlights:          false,
         alignment:           false,
@@ -18125,17 +18154,17 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     }
   }
 
-  // Mandatory last resort: never ship an identical-looking crop
+  // If still too flat vs original, one moderate pass (not chalk-boost)
   try {
     const pmEnd = await assessPostGenerationChange(
       origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight
     );
     if (shouldPostGenRegenerate(pmEnd, simLevel)) {
-      console.warn('[SIM POST-GEN] Mandatory ultra pass — forced visible delta');
-      const ultraCfg = scaleSimStrength(cfg, 3.05);
+      console.warn('[SIM POST-GEN] Moderate boost pass (natural, not ultra-white)');
+      const midCfg = scaleSimStrength(cfg, 1.42);
       const encU = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
       blendedCropBuf = await blendCropWithMask(
-        origCropBuf, encU, maskBuf, cropWidth, cropHeight, ultraCfg
+        origCropBuf, encU, maskBuf, cropWidth, cropHeight, midCfg
       );
       blendedCropBuf = await sharp(blendedCropBuf)
         .sharpen({ sigma: cfg.sharpenSigma * 1.1, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
@@ -18146,7 +18175,31 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       );
     }
   } catch (e) {
-    console.warn('[SIM POST-GEN] mandatory pass non-fatal:', e?.message);
+    console.warn('[SIM POST-GEN] moderate pass non-fatal:', e?.message);
+  }
+
+  // Artifact guard: chalky flat patches → regenerate with gentle natural blend
+  try {
+    const art = await detectWhiteningArtifacts(
+      origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight
+    );
+    if (art.bad) {
+      console.warn('[SIM ARTIFACT] Regenerating with gentle natural blend');
+      const gentleCfg = scaleSimStrength(cfg, 0.55);
+      const encG = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, false);
+      blendedCropBuf = await blendCropWithMask(
+        origCropBuf, encG, maskBuf, cropWidth, cropHeight, gentleCfg
+      );
+      blendedCropBuf = await sharp(blendedCropBuf)
+        .sharpen({ sigma: cfg.sharpenSigma * 0.95, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+      blendedCropBuf = await enforceTeethMaskBoundary(
+        blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+      );
+    }
+  } catch (e) {
+    console.warn('[SIM ARTIFACT] handler non-fatal:', e?.message);
   }
 
   try {
@@ -35358,7 +35411,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v15');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v16');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
