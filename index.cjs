@@ -17244,6 +17244,104 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
     .jpeg({ quality: 92 }).toBuffer();
 }
 
+// ── Mask quality assessor ─────────────────────────────────────────────────────
+//
+// Analyses the built mask and returns a simulation LEVEL that controls which
+// passes are safe to apply.  The level drives the fallback cascade — we never
+// hard-fail unless truly zero teeth are found.
+//
+//  strict  → full simulation (alignment + whitening)     dangerRatio ≤ 5%, totalOn ≥ 300
+//  relaxed → whitening only, no shape changes            dangerRatio ≤ 12%, totalOn ≥ 120
+//  minimal → subtle colour correction only               dangerRatio ≤ 25%, totalOn ≥ 40
+//  fail    → return original image                       below all thresholds
+//
+async function assessMaskQuality(maskBuf, w, h) {
+  const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
+  const dangerRowStart = Math.floor(h * 0.72);  // bottom 28 % of crop = chin/beard zone
+  let dangerOn = 0, totalOn = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 0) continue;
+    totalOn++;
+    if (Math.floor(i / w) >= dangerRowStart) dangerOn++;
+  }
+  const dangerRatio = totalOn > 0 ? dangerOn / totalOn : 0;
+
+  let level;
+  if      (totalOn < 40  || dangerRatio > 0.25) level = 'fail';
+  else if (totalOn < 120 || dangerRatio > 0.12) level = 'minimal';
+  else if (totalOn < 300 || dangerRatio > 0.05) level = 'relaxed';
+  else                                           level = 'strict';
+
+  console.log(
+    `[SIM LEVEL] ${level.toUpperCase()} | totalOn=${totalOn} dangerOn=${dangerOn} ` +
+    `dangerRatio=${(dangerRatio * 100).toFixed(1)}%`
+  );
+  return { level, totalOn, dangerRatio };
+}
+
+// ── Safe-region mask clamp ────────────────────────────────────────────────────
+// Zeroes all mask pixels below `safeRowFraction` of the crop height.
+// Called for relaxed/minimal levels so that any borderline chin pixels are
+// surgically removed before the blending pass.
+async function clampMaskToSafeRegion(maskBuf, w, h, safeRowFraction = 0.72) {
+  const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
+  const cutRow  = Math.floor(h * safeRowFraction);
+  let zeroed = 0;
+  for (let y = cutRow; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRaw[y * w + x] > 0) { maskRaw[y * w + x] = 0; zeroed++; }
+    }
+  }
+  if (zeroed > 0)
+    console.log(`[SIM CLAMP] Zeroed ${zeroed} px below row ${cutRow} (${(safeRowFraction*100).toFixed(0)}%)`);
+  return sharp(maskRaw, { raw: { width: w, height: h, channels: 1 } }).png().toBuffer();
+}
+
+// ── Level → cfg override table ────────────────────────────────────────────────
+// The caller's requested mode defines the upper bound; level can only reduce the
+// intensity — never increase it above what was requested.
+function levelCfg(requestedCfg, level) {
+  switch (level) {
+    case 'strict':
+      return requestedCfg;  // full requested mode as-is
+
+    case 'relaxed':
+      // Whitening only — no geometric changes that could spill outside mask.
+      return {
+        ...SIM_MODES.whitening,
+        name:                `${requestedCfg.name}→relaxed`,
+        label:               requestedCfg.label,
+        blendAlpha:          {
+          strong: Math.min(requestedCfg.blendAlpha.strong, 0.45),
+          edge:   Math.min(requestedCfg.blendAlpha.edge,   0.20),
+        },
+        uniformTargetFactor: Math.min(requestedCfg.uniformTargetFactor, 1.09),
+        alignment:    false,
+        smileArc:     false,
+        edgeSoftening:false,
+        highlights:   false,
+      };
+
+    case 'minimal':
+      // Subtle colour correction only — barely visible, purely inside mask.
+      return {
+        ...SIM_MODES.basic,
+        name:                `${requestedCfg.name}→minimal`,
+        label:               requestedCfg.label,
+        blendAlpha:          { strong: 0.22, edge: 0.08 },
+        uniformTargetFactor: 1.04,   // +4 % above average only
+        alignment:    false,
+        smileArc:     false,
+        edgeSoftening:false,
+        highlights:   false,
+        maxConfidence:0.55,
+      };
+
+    default:
+      return requestedCfg;
+  }
+}
+
 async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
   const cfg = resolveSimMode(mode);
   console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label})`);
@@ -17284,45 +17382,46 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   try { maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight); }
   catch (e) { return { url: null, failReason: 'crop_mask: ' + e?.message }; }
 
-  // 3b. Mask safety check — abort if mask bleeds into chin/beard territory.
+  // 3b. Assess mask quality → determine fallback level ─────────────────────
   //
-  // The bottom 28 % of the crop (≈ the lowest 7 % of the full image) is below
-  // the lower-incisal edge in any realistic portrait.  If more than 8 % of the
-  // mask pixels fall in that region, the mask has grabbed chin or beard pixels.
-  // Return the original image unchanged with confidence = 'low'.
+  // Instead of hard-failing, we cascade through four levels:
+  //   strict  → run full requested mode (alignment + whitening)
+  //   relaxed → whitening only, no geometry (mask slightly dirty / sparse)
+  //   minimal → subtle colour correction only (barely detectable teeth)
+  //   fail    → return original image (truly no teeth found)
+  //
+  // For relaxed/minimal: also clamp mask to top 72% of crop so that any
+  // chin/beard pixels that survived the colour filter are surgically removed
+  // before the blending pass.
+  let simLevel = 'strict';
   try {
-    const maskRawCheck = await sharp(maskBuf)
-      .resize(cropWidth, cropHeight).greyscale().raw().toBuffer();
-    const dangerRowStart = Math.floor(cropHeight * 0.72);  // bottom 28 %
-    let dangerOn = 0, totalOn = 0;
-    for (let i = 0; i < cropWidth * cropHeight; i++) {
-      if (maskRawCheck[i] <= 0) continue;
-      totalOn++;
-      if (Math.floor(i / cropWidth) >= dangerRowStart) dangerOn++;
-    }
-    const dangerRatio = totalOn > 0 ? dangerOn / totalOn : 0;
-    console.log(`[SIM SAFETY] mask in bottom-28%: ${dangerOn}/${totalOn} px (${(dangerRatio*100).toFixed(1)}%)`);
+    const qa = await assessMaskQuality(maskBuf, cropWidth, cropHeight);
+    simLevel  = qa.level;
 
-    // Abort conditions (tuned for stained/tartar teeth that legitimately have
-    // fewer mask pixels after CC cleanup + erosion):
-    //   totalOn < 80   : even badly stained arches produce ≥ 80 px after 2px erosion
-    //   dangerRatio > 0.15 : > 15% of mask in chin zone = clear beard leakage
-    if (dangerRatio > 0.15 || totalOn < 80) {
-      console.warn(`[SIM SAFETY] ABORT — dangerRatio=${(dangerRatio*100).toFixed(1)}% totalOn=${totalOn}`);
+    if (simLevel === 'fail') {
+      console.warn('[SIM LEVEL] FAIL — no usable teeth detected; returning original unchanged');
       return {
-        url: null,
-        confidence: 'low',
-        failReason: 'mask_safety: mask leaked into chin/beard or insufficient teeth detected',
+        url: null, confidence: 0.0, level: 'fail',
+        status: 'failed',
+        failReason: 'mask_safety: no teeth detected',
       };
     }
-  } catch (e) { console.warn('[SIM SAFETY] non-fatal:', e?.message); }
+
+    // Downgrade cfg if mask quality is sub-optimal
+    if (simLevel !== 'strict') {
+      cfg = levelCfg(cfg, simLevel);
+      console.log(`[SIM LEVEL] Downgraded to ${simLevel} — mode overridden to ${cfg.name}`);
+      // Clamp mask to remove borderline chin/beard pixels
+      maskBuf = await clampMaskToSafeRegion(maskBuf, cropWidth, cropHeight, 0.72);
+    }
+  } catch (e) { console.warn('[SIM LEVEL] non-fatal:', e?.message); }
 
   // 4+5. Enhance (tartar + LAB whitening) + bilateral blend
   let blendedCropBuf;
   try {
     const enhancedRaw = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight);
     blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight, cfg);
-    console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
+    console.log(`[SIM CROP] Blended [${simLevel}]: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
 
   // Step 5a: Horizontal micro-alignment (alignment + full modes)
@@ -17575,7 +17674,18 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
     console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
-    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, stainWarning, structureWarning, failReason: null };
+    return {
+      url: finalUrl,
+      mode: cfg.name,
+      confidence,
+      avgPixelChange,
+      stainWarning,
+      structureWarning,
+      failReason: null,
+      // Fallback level fields
+      level:  simLevel,                                // 'strict' | 'relaxed' | 'minimal'
+      status: simLevel === 'strict' ? 'success' : 'fallback',
+    };
   } catch (e) {
     console.error('[SIM CROP] Supabase upload failed:', e?.message);
     return { url: null, failReason: 'supabase_upload: ' + e?.message };
@@ -17784,6 +17894,8 @@ async function runThreeScenarios({ imageUrl, patientId }) {
       imageUrl:    r.url    ?? null,
       confidence:  r.confidence ?? null,
       description: buildScenarioDescription(type, analysis, r),
+      status:      r.url ? (r.status ?? 'success') : 'failed',
+      level:       r.level ?? (r.url ? 'strict' : 'fail'),
       failed:      !r.url,
       failReason:  r.failReason ?? null,
     });
@@ -17806,14 +17918,17 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   if (!r.url) {
     console.log('❌ Simulation failed | reason:', r.failReason);
     logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
-    return { variations: [], url: null, provider: null, error: r.failReason, fallback: false, debugInfo: [r.failReason] };
+    return { variations: [], url: null, provider: null, error: r.failReason,
+             fallback: false, level: 'fail', status: 'failed', debugInfo: [r.failReason] };
   }
 
   const label = resolveSimMode(mode).label;
-  console.log(`[SIM] Done ✅ | mode=${r.mode} | confidence=${r.confidence} | url:`, r.url.slice(0, 80));
-  logAI('info', 'sim_done', { patientId, mode: r.mode, confidence: r.confidence });
+  const simStatus = r.status ?? 'success';
+  const simLevel  = r.level  ?? 'strict';
+  console.log(`[SIM] Done ✅ | mode=${r.mode} | level=${simLevel} | confidence=${r.confidence}`);
+  logAI('info', 'sim_done', { patientId, mode: r.mode, level: simLevel, confidence: r.confidence });
   return {
-    variations:     [{ id: mode, label, url: r.url }],
+    variations:     [{ id: mode, label, url: r.url, level: simLevel }],
     url:            r.url,
     mode:           r.mode,
     confidence:     r.confidence,
@@ -17822,7 +17937,9 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
     structureWarning: r.structureWarning ?? false,
     provider:         'programmatic',
     error:          null,
-    fallback:       false,
+    fallback:       simStatus === 'fallback',
+    level:          simLevel,
+    status:         simStatus,
     debugInfo:      [],
   };
 }
@@ -17868,8 +17985,11 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       stainWarning:     result.stainWarning     ?? false,
       structureWarning: result.structureWarning ?? false,
       failReason:       result.error ?? null,
+      level:            result.level    ?? (result.url ? 'strict' : 'fail'),
+      simStatus:        result.status   ?? (result.url ? 'success' : 'failed'),
+      fallback:         result.fallback ?? false,
     });
-    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
+    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} level=${result.level ?? '-'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, { ...existing, status: 'failed', failReason: err?.message });
@@ -17902,7 +18022,10 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       avgPixelChange:    job.avgPixelChange ?? null,
       stainWarning:      job.stainWarning      ?? false,
       structureWarning:  job.structureWarning  ?? false,
-      fallback:          false,
+      fallback:          job.fallback     ?? false,
+      // Simulation quality level: 'strict' | 'relaxed' | 'minimal' | 'fail'
+      level:             job.level       ?? 'strict',
+      simStatus:         job.simStatus   ?? 'success',  // 'success' | 'fallback'
       // Scenarios fields (populated only for /api/chat/smile-scenarios jobs)
       scenarios:         job.scenarios  ?? null,
       analysis:          job.analysis   ?? null,
