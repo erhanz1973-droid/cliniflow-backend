@@ -15896,8 +15896,12 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 // NEGATIVE CONSTRAINTS: never ship a no-op visually identical to the input;
 //   the final look inside the teeth mask must not keep a yellow / dull tooth color.
 //
-// SIM_TRANSFORM_STRENGTH is the analogue to img2img prompt_strength / denoise in
-// the 0.35–0.70 range (default 0.68 = strong, visible change). Tunable via env.
+// Canonical “prompt” line for logging / product parity (no external img2img here):
+const SIM_VISUAL_INTENT_PROMPT =
+  'perfect aligned teeth, straight dental arch, bright white teeth, cosmetic dental improvement';
+//
+// SIM_TRANSFORM_STRENGTH ≈ img2img prompt_strength / denoise (0.35 = timid … 0.95 = max).
+// Default 0.88 — clearly visible whitening; tunable via SIM_TRANSFORM_STRENGTH env.
 //
 // QUALITY RULES (canonical):
 //   ACCEPT:          stain removal, tartar cleaning, mild whitening,
@@ -15908,7 +15912,7 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //   KEY PRINCIPLE:   "Improve quality, not geometry"
 //
 // Pipeline:
-//  1. Fetch original → crop lower-face (Y 55–90%, X 15–85%)
+//  1. Fetch original → tight mouth crop (lips + teeth; excludes most chin/beard)
 //  2. Build teeth mask (brightness+saturation+hue filter, σ=3 blur)
 //  3. computeLocalStats  → per-pixel 7×7 mean + std (adaptive tartar detection)
 //  4. computeEnhancedRaw → tartar removal + LAB whitening (strong visible lift)
@@ -15923,22 +15927,38 @@ const _SIM_STR_NUM =
   _SIM_STR_RAW !== undefined && String(_SIM_STR_RAW).trim() !== ''
     ? Number(_SIM_STR_RAW)
     : NaN;
-/** Effective edit aggressiveness ~ img2img strength (0.35 = timid … 0.7 = strong). */
+/** Effective edit aggressiveness ~ img2img strength (0.35 … 0.95). */
 const SIM_TRANSFORM_STRENGTH = Number.isFinite(_SIM_STR_NUM)
-  ? Math.min(0.7, Math.max(0.35, _SIM_STR_NUM))
-  : 0.72;
+  ? Math.min(0.95, Math.max(0.35, _SIM_STR_NUM))
+  : 0.88;
+
+/** Extra L* / blend lift when strength is high (used in computeEnhancedRaw). */
+function simLabStrengthMultiplier() {
+  const s = SIM_TRANSFORM_STRENGTH;
+  return 1 + Math.max(0, s - 0.52) * 0.48;
+}
 
 function applySimTransformStrength(cfg) {
   const s = SIM_TRANSFORM_STRENGTH;
-  const kBlend = 0.85 + s * 0.32;
-  const uniBoost = 1 + (s - 0.4) * 0.28;
+  const kBlend = 0.70 + s * 0.52;
+  const uniBoost = 1 + (s - 0.35) * 0.44;
   return {
     ...cfg,
     blendAlpha: {
-      strong: Math.min(0.97, cfg.blendAlpha.strong * kBlend),
-      edge: Math.min(0.64, cfg.blendAlpha.edge * kBlend),
+      strong: Math.min(0.98, cfg.blendAlpha.strong * kBlend),
+      edge: Math.min(0.74, cfg.blendAlpha.edge * kBlend),
     },
-    uniformTargetFactor: Math.min(1.45, cfg.uniformTargetFactor * uniBoost),
+    uniformTargetFactor: Math.min(1.55, cfg.uniformTargetFactor * uniBoost),
+  };
+}
+
+/** Tight mouth ROI on full portrait — not whole face (reduces beard / chin in frame). */
+function getSmileMouthCropBox(origW, origH) {
+  return {
+    cropLeft:   Math.round(origW * 0.14),
+    cropTop:    Math.round(origH * 0.58),
+    cropWidth:  Math.round(origW * 0.72),
+    cropHeight: Math.round(origH * 0.22),
   };
 }
 
@@ -16259,7 +16279,7 @@ async function buildTeethMask(origCropBuf, w, h) {
   //   • Left  5 %  : lip corner
   //   • Right 5 %  : lip corner
   const Y_TOP_EXCL = Math.floor(h * 0.20);
-  const Y_BOT_EXCL = Math.floor(h * 0.70);  // keep chin / beard stubble out of gate
+  const Y_BOT_EXCL = Math.floor(h * 0.66);  // keep chin / beard out of initial gate
   const X_L_EXCL   = Math.floor(w * 0.05);
   const X_R_EXCL   = Math.floor(w * 0.95);
 
@@ -16503,8 +16523,9 @@ async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
     // Stage 2 — LAB colour neutralization + lightness boost
     const [L, Alab, Blab] = rgbToLab(r, g, b);
 
-    // Lightness boost — must read as clearly brighter teeth at first glance.
-    const Lmult = boosted ? 1.2 : 1.155;
+    // Lightness boost — scales with SIM_TRANSFORM_STRENGTH (high = clearly visible).
+    const sLab = simLabStrengthMultiplier();
+    const Lmult = (boosted ? 1.22 : 1.17) * sLab;
     const Lw    = Math.min(100, L * Lmult);
 
     // A axis (green-red): brown/red stains — pull harder toward neutral
@@ -17683,9 +17704,9 @@ function levelCfg(requestedCfg, level) {
 }
 
 // ── Visible-improvement helpers (multi-variation + minimum lift guarantee) ───
-const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 18;  // % mean brightness Δ inside mask
-const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 14;
-const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL    = 10;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 22;  // % mean brightness Δ inside mask
+const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 17;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL    = 12;
 
 /** Scale blend strength & uniform whitening target for internal A/B/C candidates. */
 function scaleSimStrength(baseCfg, mult) {
@@ -17693,10 +17714,10 @@ function scaleSimStrength(baseCfg, mult) {
   return {
     ...baseCfg,
     blendAlpha: {
-      strong: Math.min(0.97, baseCfg.blendAlpha.strong * mult),
-      edge:   Math.min(0.64, baseCfg.blendAlpha.edge * mult),
+      strong: Math.min(0.99, baseCfg.blendAlpha.strong * mult),
+      edge:   Math.min(0.76, baseCfg.blendAlpha.edge * mult),
     },
-    uniformTargetFactor: Math.min(1.45, baseCfg.uniformTargetFactor * (1 + (mult - 1) * 0.42)),
+    uniformTargetFactor: Math.min(1.58, baseCfg.uniformTargetFactor * (1 + (mult - 1) * 0.45)),
   };
 }
 
@@ -17773,9 +17794,9 @@ async function assessPostGenerationChange(origCropBuf, resultBuf, maskBuf, w, h)
 function shouldPostGenRegenerate(metrics, simLevel) {
   const { meanAbs, lumaLiftPct, histBC } = metrics;
   const absMin =
-    simLevel === 'minimal' ? 4.2 : simLevel === 'relaxed' ? 5.2 : 6.2;
+    simLevel === 'minimal' ? 5.0 : simLevel === 'relaxed' ? 6.0 : 7.5;
   const liftMin =
-    simLevel === 'minimal' ? 6.5 : simLevel === 'relaxed' ? 9.5 : 11.5;
+    simLevel === 'minimal' ? 8.0 : simLevel === 'relaxed' ? 11.0 : 14.0;
   // Regenerate if EITHER dimension is weak (AND was too easy to pass with whitening-only).
   const tooFlatPixels = meanAbs < absMin;
   const tooFlatBright = lumaLiftPct < liftMin;
@@ -17789,7 +17810,7 @@ function shouldPostGenRegenerate(metrics, simLevel) {
  * attempt 0 → ×~2.0 strength, attempt 1 → ×~2.45
  */
 async function regenerateBlendPostCheck(origCropBuf, maskBuf, w, h, cfg, attempt) {
-  const mult = 2.12 + attempt * 0.7;
+  const mult = 2.35 + attempt * 0.75;
   const cfgStrong = scaleSimStrength(cfg, mult);
   const enc = await computeEnhancedRaw(origCropBuf, w, h, true);
   return blendCropWithMask(origCropBuf, enc, maskBuf, w, h, cfgStrong);
@@ -17798,6 +17819,7 @@ async function regenerateBlendPostCheck(origCropBuf, maskBuf, w, h, cfg, attempt
 async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
   let cfg = { ...resolveSimMode(mode) };
   console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label}) strength≈${SIM_TRANSFORM_STRENGTH}`);
+  console.log('[SIM INTENT]', SIM_VISUAL_INTENT_PROMPT);
   // 1. Fetch original
   let origBuf, origW, origH;
   try {
@@ -17809,19 +17831,9 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     console.log(`[SIM CROP] Original: ${origW}×${origH}`);
   } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
 
-  // 2. Crop lower face — DELIBERATELY TIGHT
-  // The crop must contain upper lip → upper teeth → lower teeth → lower lip ONLY.
-  // Wider crops include chin and beard, which JPEG re-encode can alter even if the
-  // teeth mask correctly excludes them.  Smaller crop = smaller risk surface.
-  //   top   = 56 % of image height  (below nose, just above upper lip)
-  //   height= 26 % of image height  (covers ~lip-to-chin, stops well above beard)
-  // In a standard portrait this box ends at ~82 % of image height — comfortably
-  // above where a beard or heavy chin would start.
-  const cropLeft   = Math.round(origW * 0.12);
-  const cropTop    = Math.round(origH * 0.56);
-  const cropWidth  = Math.round(origW * 0.76);
-  const cropHeight = Math.round(origH * 0.26);
-  console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
+  // 2. Mouth-only crop (preprocess) — not full face: less chin/beard in frame.
+  const { cropLeft, cropTop, cropWidth, cropHeight } = getSmileMouthCropBox(origW, origH);
+  console.log(`[SIM CROP] Mouth box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
   let origCropBuf;
   try {
@@ -17896,7 +17908,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
 
     if (bestLift < minLift && simLevel !== 'minimal') {
       console.warn(`[SIM VIS] best lift ${bestLift.toFixed(1)}% < ${minLift}% — forced high-strength pass`);
-      const forced    = scaleSimStrength(cfg, 2.05);
+      const forced    = scaleSimStrength(cfg, 2.35);
       const encForced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
       bestBuf = await blendCropWithMask(origCropBuf, encForced, maskBuf, cropWidth, cropHeight, forced);
       bestLift = await measureTeethBrightnessLiftPct(origCropBuf, bestBuf, maskBuf, cropWidth, cropHeight);
@@ -18120,7 +18132,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     );
     if (shouldPostGenRegenerate(pmEnd, simLevel)) {
       console.warn('[SIM POST-GEN] Mandatory ultra pass — forced visible delta');
-      const ultraCfg = scaleSimStrength(cfg, 2.55);
+      const ultraCfg = scaleSimStrength(cfg, 3.05);
       const encU = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
       blendedCropBuf = await blendCropWithMask(
         origCropBuf, encU, maskBuf, cropWidth, cropHeight, ultraCfg
@@ -18410,10 +18422,7 @@ async function runThreeScenarios({ imageUrl, patientId }) {
       const meta    = await sharp(origBuf).metadata();
       const origW   = meta.width, origH = meta.height;
 
-      const cropLeft   = Math.round(origW * 0.12);
-      const cropTop    = Math.round(origH * 0.56);
-      const cropWidth  = Math.round(origW * 0.76);
-      const cropHeight = Math.round(origH * 0.26);
+      const { cropLeft, cropTop, cropWidth, cropHeight } = getSmileMouthCropBox(origW, origH);
 
       const origCropBuf = await sharp(origBuf)
         .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
@@ -35349,7 +35358,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v14');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v15');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
