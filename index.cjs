@@ -19680,13 +19680,14 @@ app.post('/api/chat/ai-upload', requireToken, chatUpload.single('file'), async (
 
 // POST /api/chat/replicate-teeth-strip
 // Single Replicate img2img on one image URL (upper or lower mouth strip from client split flow).
-// Body: { patientId, imageUrl } → { ok, url, output: [url] }
+// Body: { patientId, imageUrl, arch?: 'upper' | 'lower' } — lower strip gets slightly higher strength + alignment suffix.
+// → { ok, url, output: [url] }
 app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
   try {
     if (!ENABLE_SMILE_SIMULATION) {
       return res.status(503).json({ ok: false, error: 'simulation_disabled' });
     }
-    const { patientId, imageUrl } = req.body || {};
+    const { patientId, imageUrl, arch } = req.body || {};
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
     if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
     if (!imageUrl) return res.status(400).json({ ok: false, error: 'imageUrl_required' });
@@ -19713,7 +19714,22 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'invalid_image' });
     }
     const jpegBuf = await sharp(buf).jpeg({ quality: 95 }).toBuffer();
-    const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, {});
+
+    const stripOpts = {};
+    const archNorm = String(arch || '').toLowerCase();
+    if (archNorm === 'lower') {
+      const delta = (() => {
+        const v = parseFloat(String(process.env.SIM_STRIP_LOWER_STRENGTH_DELTA || '0.045'), 10);
+        return Number.isFinite(v) ? Math.min(0.12, Math.max(0, v)) : 0.045;
+      })();
+      const envStr = Number(process.env.REPLICATE_PROMPT_STRENGTH);
+      const baseStrength = Number.isFinite(envStr) ? envStr : REPLICATE_PROMPT_STRENGTH_DEFAULT;
+      stripOpts.strengthOverride = Math.min(0.98, Math.max(0.35, baseStrength + delta));
+      stripOpts.promptSuffix =
+        ' Prioritize subtle orthodontic alignment and leveling on these lower teeth — slightly stronger alignment correction than the upper arch.';
+    }
+
+    const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, stripOpts);
     if (!outBuf) {
       return res.status(502).json({ ok: false, error: 'replicate_failed' });
     }
@@ -36484,7 +36500,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v33');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v34');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
