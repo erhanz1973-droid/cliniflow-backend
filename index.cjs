@@ -15886,6 +15886,43 @@ const SIM_MODES = {
   },
 };
 
+// ── Scenario A: Basic ─────────────────────────────────────────────────────────
+// Cleaning + very gentle whitening. No alignment, no shaping. Represents the
+// result of professional scaling and polishing with mild office bleaching.
+SIM_MODES.basic = {
+  name:                'basic',
+  label:               'Temel Temizleme & Beyazlatma',
+  blendAlpha:          { strong: 0.38, edge: 0.16 },  // very conservative blend
+  uniformTargetFactor: 1.06,    // only +6% above average — scaling/polish result
+  alignment:           false,
+  smileArc:            false,
+  edgeSoftening:       false,
+  highlights:          false,
+  sharpenSigma:        0.8,
+  sharpenM1:           0.4,
+  sharpenM2:           7,
+  maxConfidence:       0.72,
+};
+
+// ── Scenario C: Perfect ───────────────────────────────────────────────────────
+// Veneer / zirconium look. Full smile design, maximum whitening within realism
+// bounds (L* capped at 88 by uniformWhitening — never pure white), full arc and
+// highlights. Represents E-max porcelain veneer outcome.
+SIM_MODES.perfect = {
+  name:                'perfect',
+  label:               'Mükemmel Gülüş Tasarımı',
+  blendAlpha:          { strong: 0.72, edge: 0.40 },  // stronger blend for veneer look
+  uniformTargetFactor: 1.18,    // +18% — veneer-grade uniformity (L* cap still applies)
+  alignment:           true,
+  smileArc:            true,
+  edgeSoftening:       true,
+  highlights:          true,
+  sharpenSigma:        1.3,
+  sharpenM1:           0.6,
+  sharpenM2:           11,
+  maxConfidence:       0.97,
+};
+
 // Backward-compat aliases
 SIM_MODES.natural = { ...SIM_MODES.whitening, name: 'natural', label: 'Doğal Beyazlatma' };
 SIM_MODES.design  = { ...SIM_MODES.full,      name: 'design',  label: 'Smile Design'      };
@@ -17535,6 +17572,217 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   }
 }
 
+// ── Teeth condition analyser ──────────────────────────────────────────────────
+//
+// Runs a pure-pixel analysis over the teeth mask and returns a structured
+// clinical summary (problems / treatments / priority) suitable for display
+// in the patient-facing UI.  No AI model required — brightness and LAB colour
+// statistics reliably distinguish enamel shade from tartar / stain.
+//
+async function analyzeTeethCondition(origCropBuf, maskBuf, w, h) {
+  const [cropRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  const pixels = [];
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    const r = cropRaw[i*3], g = cropRaw[i*3+1], b = cropRaw[i*3+2];
+    const [L, A, B] = rgbToLab(r, g, b);
+    pixels.push({ L, A, B });
+  }
+
+  if (pixels.length < 150) return null;   // not enough tooth pixels for analysis
+
+  const avgL = pixels.reduce((s, p) => s + p.L, 0) / pixels.length;
+  const avgB = pixels.reduce((s, p) => s + p.B, 0) / pixels.length;  // + = yellow
+  const avgA = pixels.reduce((s, p) => s + p.A, 0) / pixels.length;  // + = reddish
+
+  // Stain: very dark pixels (L < 52) within the enamel region
+  const stainRate  = pixels.filter(p => p.L < 52).length / pixels.length;
+  // Yellow/brown: elevated B* or reddish A*
+  const yellowRate = pixels.filter(p => p.B > 11 || p.A > 7).length / pixels.length;
+  // Dark overall: enamel shade below A2 reference (L ≈ 70)
+  const darkRate   = pixels.filter(p => p.L < 68).length / pixels.length;
+  // Uniformity: std of L across all tooth pixels
+  const meanL = avgL;
+  const stdL  = Math.sqrt(pixels.reduce((s, p) => s + (p.L - meanL) ** 2, 0) / pixels.length);
+
+  // ── Problem → treatment mapping ─────────────────────────────────────────
+  const problems   = [];
+  const treatments = [];
+  const priority   = [];
+
+  if (stainRate > 0.10) {
+    problems.push('Diş yüzeyinde tartar ve koyu leke birikimi tespit edildi');
+    treatments.push('Profesyonel diş temizleme (scaling & polishing)');
+    priority.push('high');
+  }
+  if (yellowRate > 0.18 || avgB > 10) {
+    problems.push('Sarı/kahverengi renk bozukluğu (intrinsik veya ekstrinsik)');
+    treatments.push('Ofis tipi diş beyazlatma (zoom / laser whitening)');
+    priority.push('high');
+  }
+  if (darkRate > 0.30 || avgL < 62) {
+    problems.push('Orta-şiddetli diş rengi bozukluğu — yüzey tedavisi yetersiz kalabilir');
+    treatments.push('Porselen veneer veya zirkonyum kaplama');
+    priority.push('medium');
+  } else if (darkRate > 0.15) {
+    problems.push('Hafif diş rengi bozukluğu');
+    treatments.push('Ev tipi veya ofis beyazlatma');
+    priority.push('medium');
+  }
+  if (stdL > 18) {
+    problems.push('Dişler arasında belirgin ton farklılığı (renk uyumsuzluğu)');
+    treatments.push('Estetik bonding veya veneer ile ton eşitleme');
+    priority.push('low');
+  }
+
+  // If no specific issue found → note baseline
+  if (problems.length === 0) {
+    problems.push('Dişlerde belirgin leke veya renk bozukluğu tespit edilmedi');
+    treatments.push('Koruyucu temizlik ve periyodik kontrol');
+    priority.push('low');
+  }
+
+  return {
+    problems,
+    treatments,
+    priority,
+    stats: {
+      avgL:       Math.round(avgL * 10) / 10,
+      avgB:       Math.round(avgB * 10) / 10,
+      stainRate:  Math.round(stainRate  * 100),
+      yellowRate: Math.round(yellowRate * 100),
+      darkRate:   Math.round(darkRate   * 100),
+      teethPx:    pixels.length,
+    },
+  };
+}
+
+// ── Scenario description builder ──────────────────────────────────────────────
+// Produces a concise Turkish clinical description for each scenario type,
+// contextualised by the analysis result.
+function buildScenarioDescription(type, analysis, simResult) {
+  const stain  = analysis?.stats?.stainRate  ?? 0;
+  const dark   = analysis?.stats?.darkRate   ?? 0;
+  const yellow = analysis?.stats?.yellowRate ?? 0;
+
+  const hasStain  = stain  > 10;
+  const hasDark   = dark   > 20;
+  const hasYellow = yellow > 18;
+  const conf      = simResult?.confidence ?? null;
+  const confTxt   = conf !== null
+    ? ` (simülasyon güveni: ${Math.round(conf * 100)}%)`
+    : '';
+
+  switch (type) {
+    case 'basic':
+      return [
+        'Profesyonel diş temizleme ve polishing uygulaması sonrası beklenen görünüm.',
+        hasStain  ? 'Yüzeysel tartar ve lekeler giderilmiş.' : '',
+        hasYellow ? 'Hafif sarılık azaltılmış, doğal diş tonu korunmuş.' : 'Doğal diş tonu korunmuş.',
+        'Diş şekli ve dizilimi değiştirilmemiştir.',
+        confTxt,
+      ].filter(Boolean).join(' ');
+
+    case 'improved':
+      return [
+        'Ofis tipi beyazlatma ve hafif estetik düzeltme (bonding/kompozit) sonrası beklenen görünüm.',
+        hasDark   ? 'Belirgin renk bozukluğu beyazlatma ile normalize edilmiş.' : 'Diş tonu belirgin şekilde iyileştirilmiş.',
+        'Hafif hizalama ve gülüş eğrisi düzeltmesi uygulanmış.',
+        confTxt,
+      ].filter(Boolean).join(' ');
+
+    case 'perfect':
+      return [
+        'Porselen veneer veya zirkonyum kaplama tedavisi sonrası beklenen görünüm.',
+        'İdeal gülüş tasarımı: simetri, oran ve renk uyumu optimize edilmiş.',
+        'Veneer estetiği yansıtılmakla birlikte aşırı beyazlık (L*>88) engellenmiştir — klinik gerçekçilik korunmuştur.',
+        confTxt,
+      ].filter(Boolean).join(' ');
+
+    default:
+      return 'Simülasyon sonucu.';
+  }
+}
+
+// ── Three-scenario simulation pipeline ───────────────────────────────────────
+//
+// Runs three sequential simulation passes (basic / improved / perfect) for a
+// single patient image and returns:
+//   {
+//     analysis:  { problems, treatments, priority, stats }
+//     scenarios: [ { type, label, imageUrl, confidence, description }, … ]
+//   }
+//
+// Sequential (not parallel) to avoid Render free-tier OOM on large crops.
+//
+async function runThreeScenarios({ imageUrl, patientId }) {
+  const publicImageUrl = imageUrl
+    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+    .split('?')[0];
+
+  console.log('[SIM SCENARIOS] Starting 3-scenario pipeline for patient:', patientId);
+
+  // ── 1. Shared crop + mask for the analysis step ──────────────────────────
+  let analysis = null;
+  try {
+    const res = await fetch(publicImageUrl, { signal: AbortSignal.timeout(25_000) });
+    if (res.ok) {
+      const origBuf = Buffer.from(await res.arrayBuffer());
+      const meta    = await sharp(origBuf).metadata();
+      const origW   = meta.width, origH = meta.height;
+
+      const cropLeft   = Math.round(origW * 0.12);
+      const cropTop    = Math.round(origH * 0.56);
+      const cropWidth  = Math.round(origW * 0.76);
+      const cropHeight = Math.round(origH * 0.26);
+
+      const origCropBuf = await sharp(origBuf)
+        .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
+        .jpeg({ quality: 95 }).toBuffer();
+
+      const maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight);
+      analysis = await analyzeTeethCondition(origCropBuf, maskBuf, cropWidth, cropHeight);
+      console.log('[SIM SCENARIOS] Analysis:', JSON.stringify(analysis?.stats));
+    }
+  } catch (e) {
+    console.warn('[SIM SCENARIOS] Analysis step failed (non-fatal):', e?.message);
+  }
+
+  // ── 2. Run three scenarios sequentially ──────────────────────────────────
+  const SCENARIO_PLAN = [
+    { key: 'basic',     type: 'basic',    label: SIM_MODES.basic.label    },
+    { key: 'alignment', type: 'improved', label: SIM_MODES.alignment.label },
+    { key: 'perfect',   type: 'perfect',  label: SIM_MODES.perfect.label  },
+  ];
+
+  const scenarios = [];
+  for (const { key, type, label } of SCENARIO_PLAN) {
+    console.log(`[SIM SCENARIOS] Running scenario: ${type} (mode=${key})`);
+    let r;
+    try {
+      r = await cropCompositeSimulation(publicImageUrl, patientId, key);
+    } catch (e) {
+      r = { url: null, failReason: e?.message };
+    }
+    scenarios.push({
+      type,
+      label,
+      imageUrl:    r.url    ?? null,
+      confidence:  r.confidence ?? null,
+      description: buildScenarioDescription(type, analysis, r),
+      failed:      !r.url,
+      failReason:  r.failReason ?? null,
+    });
+    console.log(`[SIM SCENARIOS] ${type}: ${r.url ? '✅' : '❌'} conf=${r.confidence ?? '-'}`);
+  }
+
+  return { analysis, scenarios };
+}
+
 async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   const publicImageUrl = imageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
@@ -17624,6 +17872,7 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
 
 // GET /api/chat/sim-status/:jobId
 // Returns { ok, status:"pending"|"succeeded"|"failed", simulatedImageUrl?, variations?, error? }
+// For scenario jobs also returns: analysis, scenarios[]
 app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
   const job = _simJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
@@ -17644,9 +17893,64 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       stainWarning:      job.stainWarning      ?? false,
       structureWarning:  job.structureWarning  ?? false,
       fallback:          false,
+      // Scenarios fields (populated only for /api/chat/smile-scenarios jobs)
+      scenarios:         job.scenarios  ?? null,
+      analysis:          job.analysis   ?? null,
     });
   }
   return res.json({ ok: false, status: 'failed', error: job.failReason ?? 'unknown' });
+});
+
+// ── POST /api/chat/smile-scenarios ───────────────────────────────────────────
+// Generates three treatment-based smile simulations (basic / improved / perfect)
+// plus a structured dental-issues analysis.  Returns jobId immediately; client
+// polls GET /api/chat/sim-status/:jobId for the result.
+//
+// Request:  { patientId, imageUrl }
+// Response: { ok, jobId, status:"pending" }
+//
+// Completed job (sim-status): {
+//   status:    "succeeded",
+//   scenarios: [ { type, label, imageUrl, confidence, description }, … ],
+//   analysis:  { problems[], treatments[], priority[], stats{} }
+// }
+app.post('/api/chat/smile-scenarios', requireToken, async (req, res) => {
+  console.log('🎯 SCENARIOS ENDPOINT HIT | async job');
+  const { patientId, imageUrl } = req.body || {};
+
+  if (!patientId)  return res.status(400).json({ ok: false, error: 'patientId_required' });
+  if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
+  if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
+  if (!ENABLE_SMILE_SIMULATION) return res.status(503).json({ ok: false, error: 'simulation_disabled' });
+
+  const jobId = crypto.randomUUID();
+  _simJobs.set(jobId, {
+    status: 'pending', type: 'scenarios',
+    url: null, variations: [], scenarios: null, analysis: null,
+    failReason: null, createdAt: Date.now(),
+  });
+
+  // Fire-and-forget
+  runThreeScenarios({ imageUrl, patientId }).then(({ scenarios, analysis }) => {
+    const succeededScenarios = scenarios.filter(s => s.imageUrl);
+    _simJobs.set(jobId, {
+      ..._simJobs.get(jobId),
+      status:     succeededScenarios.length > 0 ? 'succeeded' : 'failed',
+      // Primary url = "perfect" scenario for backward compat fields
+      url:        scenarios.find(s => s.type === 'perfect')?.imageUrl ?? succeededScenarios[0]?.imageUrl ?? null,
+      variations: scenarios.map(s => ({ id: s.type, label: s.label, url: s.imageUrl })),
+      scenarios,
+      analysis,
+      confidence: scenarios.find(s => s.type === 'perfect')?.confidence ?? null,
+      failReason: succeededScenarios.length === 0 ? 'all_scenarios_failed' : null,
+    });
+    console.log(`[SIM SCENARIOS JOB ${jobId.slice(0,8)}] done — ${succeededScenarios.length}/3 succeeded`);
+  }).catch(err => {
+    _simJobs.set(jobId, { ..._simJobs.get(jobId), status: 'failed', failReason: err?.message });
+    console.error(`[SIM SCENARIOS JOB ${jobId.slice(0,8)}] exception:`, err?.message);
+  });
+
+  return res.json({ ok: true, jobId, status: 'pending' });
 });
 
 // POST /api/chat/ai-upload
