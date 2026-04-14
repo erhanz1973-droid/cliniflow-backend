@@ -15820,38 +15820,83 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //  7. [optional] microAlignment — disabled; enable via MICRO_ALIGN_ENABLED
 //  8. sharpen + composite onto full original + upload Supabase
 
-// ─── Simulation mode configs ──────────────────────────────────────────────────
+// ─── Simulation mode configs ─────────────────────────────────────────────────
 //
-// Mode 1 — natural:  cleaning ON, whitening SOFT, alignment OFF, no extras
-// Mode 2 — design:   cleaning ON, whitening ON,   alignment ON,  highlights + shape
+// Three treatment modes (+ backward-compat aliases):
+//
+//  whitening  — Cleaning + LAB colour normalisation only.
+//               No geometry changes. Safe, fast, conservative.
+//               Max confidence cap: 0.82 (whitening alone is not a full result).
+//
+//  alignment  — Cleaning + horizontal alignment + smile-arc curve.
+//               Soft whitening to maintain realism.
+//               Max confidence: 0.90.
+//
+//  full       — Full smile design: all of the above + shape refinement +
+//               highlights. Closest to a real clinical outcome.
+//               Max confidence: 0.96.
+//
+// Legacy aliases: 'natural' → whitening, 'design' → full.
 //
 const SIM_MODES = {
-  natural: {
-    name:                'natural',
+  // ── Mode 1: Whitening only ─────────────────────────────────────────────────
+  whitening: {
+    name:                'whitening',
+    label:               'Beyazlatma',
     blendAlpha:          { strong: 0.55, edge: 0.25 },
-    uniformTargetFactor: 1.10,   // conservative: +10% above average
+    uniformTargetFactor: 1.10,
     alignment:           false,
+    smileArc:            false,
     edgeSoftening:       false,
     highlights:          false,
     sharpenSigma:        1.0,
     sharpenM1:           0.5,
     sharpenM2:           8,
+    maxConfidence:       0.82,   // HIGH confidence not allowed for whitening alone
   },
-  design: {
-    name:                'design',
-    blendAlpha:          { strong: 0.65, edge: 0.35 },
-    uniformTargetFactor: 1.15,   // fuller whitening: +15% above average
+  // ── Mode 2: Alignment only ─────────────────────────────────────────────────
+  alignment: {
+    name:                'alignment',
+    label:               'Düzeltme & Dizilim',
+    blendAlpha:          { strong: 0.45, edge: 0.20 },   // softer blend — geometry speaks
+    uniformTargetFactor: 1.07,   // minimal whitening (keep focus on shape)
     alignment:           true,
+    smileArc:            true,
+    edgeSoftening:       true,
+    highlights:          false,
+    sharpenSigma:        1.1,
+    sharpenM1:           0.5,
+    sharpenM2:           9,
+    maxConfidence:       0.90,
+  },
+  // ── Mode 3: Full smile design (default) ────────────────────────────────────
+  full: {
+    name:                'full',
+    label:               'Tam Smile Design',
+    blendAlpha:          { strong: 0.65, edge: 0.35 },
+    uniformTargetFactor: 1.15,
+    alignment:           true,
+    smileArc:            true,
     edgeSoftening:       true,
     highlights:          true,
     sharpenSigma:        1.2,
     sharpenM1:           0.5,
     sharpenM2:           10,
+    maxConfidence:       0.96,
   },
 };
 
+// Backward-compat aliases
+SIM_MODES.natural = { ...SIM_MODES.whitening, name: 'natural', label: 'Doğal Beyazlatma' };
+SIM_MODES.design  = { ...SIM_MODES.full,      name: 'design',  label: 'Smile Design'      };
+
+// Resolve incoming mode string → canonical config
+function resolveSimMode(mode) {
+  return SIM_MODES[mode] ?? SIM_MODES.full;  // default: full
+}
+
 // Feature flags
-const MICRO_ALIGN_ENABLED = false; // overridden per mode at runtime
+const MICRO_ALIGN_ENABLED = false; // legacy global; per-mode cfg.alignment governs runtime
 
 // ── Teeth mask ───────────────────────────────────────────────────────────────
 async function buildTeethMask(origCropBuf, w, h) {
@@ -16612,6 +16657,135 @@ async function addReflectionHighlights(cropBuf, maskBuf, w, h) {
   return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
 }
 
+// ── Step: Smile Arc — align incisal edges to a natural parabolic arch curve ──
+//
+// The natural smile arc means upper central incisors are the longest teeth,
+// lateral incisors slightly shorter, canines at intermediate height — the
+// bottom edge of upper teeth follows a gentle concave-upward parabola.
+//
+// Algorithm:
+//  1. Per column, detect the bottommost masked pixel of the upper arch
+//     (incisal edge) and the topmost (gingival margin).
+//  2. Fit an ideal parabola:
+//       y_ideal(x) = median_edge + ARC_DEPTH × (1 − ((x−cx)/(span/2))²)
+//     → center columns sit ARC_DEPTH px lower = teeth appear longer.
+//  3. For columns where actual edge < ideal (tooth too short): apply a
+//     gradual downward warp in the bottom 35 % of the tooth with bilinear
+//     interpolation.  Max correction: ±4 px.
+//  4. For columns already longer than ideal (too long): apply a gentle
+//     upward compression (max −3 px).
+//
+async function applySmileArc(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  const upperLimit = Math.floor(h * 0.52); // upper arch only
+
+  // Per-column: topmost and bottommost masked pixel in the upper half
+  const colTop = new Int32Array(w).fill(-1);
+  const colBot = new Int32Array(w).fill(-1);
+  for (let y = 0; y < upperLimit; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRaw[y*w+x] > 128) {
+        if (colTop[x] === -1) colTop[x] = y;
+        colBot[x] = y;
+      }
+    }
+  }
+
+  const validCols = [];
+  for (let x = 0; x < w; x++) {
+    if (colBot[x] !== -1 && colTop[x] !== -1 && colBot[x] - colTop[x] > 5)
+      validCols.push(x);
+  }
+  if (validCols.length < 10) {
+    console.log('[SIM ARC] Not enough upper tooth data — skipping');
+    return cropBuf;
+  }
+
+  // Arch centre (x-axis) and span
+  const cx   = validCols.reduce((s, x) => s + x, 0) / validCols.length;
+  const minX = validCols[0];
+  const maxX = validCols[validCols.length - 1];
+  const span = Math.max(maxX - minX, 1);
+
+  // Median incisal edge (baseline)
+  const botArr = validCols.map(x => colBot[x]).sort((a, b) => a - b);
+  const medianBot = botArr[Math.floor(botArr.length / 2)];
+
+  // Ideal parabola — positive ARC_DEPTH means centre teeth extend further down
+  const ARC_DEPTH = 4; // pixels
+
+  function idealBot(x) {
+    const t = Math.min(1, Math.abs(x - cx) / (span / 2 + 1));
+    return medianBot + Math.round(ARC_DEPTH * (1 - t * t));
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  const out = Buffer.from(raw);
+  let corrected = 0;
+
+  for (const x of validCols) {
+    const tTop = colTop[x];
+    const tBot = colBot[x];
+    const tH   = tBot - tTop;
+    if (tH < 6) continue;
+
+    const target     = idealBot(x);
+    const correction = Math.max(-3, Math.min(4, Math.round(target - tBot)));
+    if (correction === 0) continue;
+
+    const warpStart = tTop + Math.floor(tH * 0.65); // bottom 35% of tooth
+    const warpEnd   = Math.min(tBot + Math.abs(correction) + 2, upperLimit - 1);
+    const zoneH     = warpEnd - warpStart;
+    if (zoneH < 2) continue;
+
+    if (correction > 0) {
+      // Elongate: shift pixels DOWN (process bottom-to-top)
+      for (let y = warpEnd; y >= warpStart; y--) {
+        const t    = (y - warpStart) / zoneH;
+        const srcY = y - correction * t;
+        const yf   = Math.max(0, Math.floor(srcY));
+        const yc   = Math.min(yf + 1, upperLimit - 1);
+        const frac = srcY - yf;
+
+        const di = y * w * 3 + x * 3;
+        if (di + 2 >= out.length) continue;
+        for (let c = 0; c < 3; c++) {
+          const v1 = raw[yf * w * 3 + x * 3 + c] ?? raw[di + c];
+          const v2 = raw[yc * w * 3 + x * 3 + c] ?? v1;
+          out[di + c] = Math.round(lerp(v1, v2, frac));
+        }
+      }
+    } else {
+      // Shorten: compress pixels UP (process top-to-bottom)
+      const compAmt = -correction;
+      for (let y = warpStart; y <= warpEnd; y++) {
+        const t    = (y - warpStart) / zoneH;
+        const srcY = Math.min(y + compAmt * t, upperLimit - 1);
+        const yf   = Math.floor(srcY);
+        const yc   = Math.min(yf + 1, upperLimit - 1);
+        const frac = srcY - yf;
+
+        const di = y * w * 3 + x * 3;
+        if (di + 2 >= out.length) continue;
+        for (let c = 0; c < 3; c++) {
+          const v1 = raw[yf * w * 3 + x * 3 + c] ?? raw[di + c];
+          const v2 = raw[yc * w * 3 + x * 3 + c] ?? v1;
+          out[di + c] = Math.round(lerp(v1, v2, frac));
+        }
+      }
+    }
+    corrected++;
+  }
+
+  console.log(`[SIM ARC] Smile arc applied: ${corrected}/${validCols.length} columns adjusted  ARC_DEPTH=${ARC_DEPTH}px`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
 // ── Confidence — how much did the tooth area change? ─────────────────────────
 // Low modification → high confidence (result is safe/believable).
 // avgPixelChange 0–10: high, 10–30: medium, >30: aggressive/risky.
@@ -16632,6 +16806,35 @@ async function computeConfidence(origCropBuf, resultCropBuf, maskBuf, w, h) {
   const score     = Math.max(0.45, Math.min(1.00, 1 - avgChange / 60));
   console.log(`[SIM CONFIDENCE] avgChange=${avgChange.toFixed(1)}  score=${score.toFixed(2)}`);
   return { confidence: Math.round(score * 100) / 100, avgPixelChange: Math.round(avgChange * 10) / 10 };
+}
+
+// ── Transformation-aware confidence score ────────────────────────────────────
+//
+// Unlike the raw pixel-delta score, this considers WHAT was applied:
+//
+//   whitening mode  → max 0.82 (colour change alone ≠ clinical result)
+//   alignment mode  → max 0.90 (geometry improved)
+//   full mode       → max 0.96 (full smile design)
+//
+// Stain / structure warnings degrade the score.
+// stainRemovalRate: fraction of original stains that were removed (0–1).
+//
+function computeTransformationScore({ cfg, stainRemovalRate, stainWarning, structureWarning }) {
+  const maxScore = cfg.maxConfidence ?? 0.88;
+  let score = maxScore;
+
+  // Stain removal contribution
+  if (stainRemovalRate >= 0.70)      score *= 1.00;   // full credit
+  else if (stainRemovalRate >= 0.50) score *= 0.96;
+  else if (stainRemovalRate >= 0.30) score *= 0.90;
+  else                               score *= 0.80;   // stains mostly remain
+
+  // Penalties
+  if (stainWarning)     score = Math.min(score, 0.50); // residual stain after retry
+  if (structureWarning) score = Math.min(score, 0.40); // structure was compromised
+
+  score = Math.max(0.40, Math.min(maxScore, score));
+  return Math.round(score * 100) / 100;
 }
 
 // ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
@@ -16722,9 +16925,9 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
     .jpeg({ quality: 92 }).toBuffer();
 }
 
-async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natural') {
-  const cfg = SIM_MODES[mode] ?? SIM_MODES.natural;
-  console.log(`[SIM] Mode: ${cfg.name}`);
+async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
+  const cfg = resolveSimMode(mode);
+  console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label})`);
   // 1. Fetch original
   let origBuf, origW, origH;
   try {
@@ -16761,21 +16964,28 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
 
-  // 5a. Micro-alignment (mode-gated)
+  // Step 5a: Horizontal micro-alignment (alignment + full modes)
   if (cfg.alignment) {
     try {
       blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
     } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
   }
 
-  // Step 6: Shape refinement — soft incisal edges (design mode only)
+  // Step 5b: Smile arc — parabolic incisal-edge correction (alignment + full modes)
+  if (cfg.smileArc) {
+    try {
+      blendedCropBuf = await applySmileArc(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM ARC] non-fatal:', e?.message); }
+  }
+
+  // Step 6: Shape refinement — soft incisal edges (alignment + full modes)
   if (cfg.edgeSoftening) {
     try {
       blendedCropBuf = await edgeSoftening(blendedCropBuf, maskBuf, cropWidth, cropHeight);
     } catch (e) { console.warn('[SIM EDGE-SOFT] non-fatal:', e?.message); }
   }
 
-  // Step 7: Light & reflection highlights (design mode only)
+  // Step 7: Light & reflection highlights (full mode only)
   if (cfg.highlights) {
     try {
       blendedCropBuf = await addReflectionHighlights(blendedCropBuf, maskBuf, cropWidth, cropHeight);
@@ -16788,6 +16998,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
   // begin with, retry the entire enhance+blend pass with boosted parameters.
   //
   let stainWarning = false;
+  let stainRemovalRate = 1.0; // assume clean unless we detect otherwise
   try {
     const [origDecoded, maskDecoded] = await Promise.all([
       sharp(origCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
@@ -16800,6 +17011,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
       const resDecoded   = await sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer();
       const afterStains  = detectStains(resDecoded, maskDecoded, cropWidth, cropHeight);
       const removalRate  = beforeStains.count > 0 ? (beforeStains.count - afterStains.count) / beforeStains.count : 1;
+      stainRemovalRate   = Math.max(0, Math.min(1, removalRate));
       console.log(`[SIM VALIDATE] after: count=${afterStains.count} ratio=${(afterStains.ratio*100).toFixed(1)}%  removed=${(removalRate*100).toFixed(1)}%`);
 
       if (removalRate < PASS_REMOVAL_RATE) {
@@ -16898,15 +17110,14 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
     console.warn('[SIM CROP] Sharpen failed (non-fatal):', e?.message);
   }
 
-  // Confidence score — how much did the tooth area change?
-  let confidence = 0.80, avgPixelChange = 0;
+  // Confidence score — transformation-aware (mode + stain removal + warnings)
+  let confidence = 0.75, avgPixelChange = 0;
   try {
     const conf = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
-    confidence = conf.confidence; avgPixelChange = conf.avgPixelChange;
-    // Stain warning degrades maximum confidence: output is sub-optimal
-    if (stainWarning)     confidence = Math.min(confidence, 0.50);
-    // Structure problems are more serious than residual stains — lower cap
-    if (structureWarning) confidence = Math.min(confidence, 0.40);
+    avgPixelChange = conf.avgPixelChange;
+    // Transformation-aware score (replaces raw pixel-delta score)
+    confidence = computeTransformationScore({ cfg, stainRemovalRate, stainWarning, structureWarning });
+    console.log(`[SIM CONFIDENCE] mode=${cfg.name} stainRemoval=${(stainRemovalRate*100).toFixed(0)}% score=${confidence}`);
   } catch (e) { console.warn('[SIM CONFIDENCE] non-fatal:', e?.message); }
 
   // 6. Composite onto full original
@@ -16938,7 +17149,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'natura
   }
 }
 
-async function runSmileSimulation({ imageUrl, patientId, mode = 'natural' }) {
+async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   const publicImageUrl = imageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
     .split('?')[0];
@@ -16954,7 +17165,7 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'natural' }) {
     return { variations: [], url: null, provider: null, error: r.failReason, fallback: false, debugInfo: [r.failReason] };
   }
 
-  const label = mode === 'design' ? 'Smile Design' : 'Doğal Beyazlatma';
+  const label = resolveSimMode(mode).label;
   console.log(`[SIM] Done ✅ | mode=${r.mode} | confidence=${r.confidence} | url:`, r.url.slice(0, 80));
   logAI('info', 'sim_done', { patientId, mode: r.mode, confidence: r.confidence });
   return {
@@ -16988,8 +17199,8 @@ setInterval(() => {
 // Client polls GET /api/chat/sim-status/:jobId for the result.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   console.log('🎯 SIM ENDPOINT v7 HIT | ASYNC JOB | returning jobId immediately');
-  const { patientId, imageUrl, mode = 'natural' } = req.body || {};
-  const simMode = ['natural', 'design'].includes(mode) ? mode : 'natural';
+  const { patientId, imageUrl, mode = 'full' } = req.body || {};
+  const simMode = SIM_MODES[mode] ? mode : 'full';
   console.log('[SIM] patientId:', patientId, '| mode:', simMode, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
   if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
