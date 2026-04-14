@@ -5,6 +5,7 @@ require("dotenv").config();
 
 const express = require("express");
 const sharp = require("sharp");
+const { computeMouthCropFromImageBuffer } = require("./lib/mouthRoiMediaPipeFaceMesh.cjs");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
@@ -15978,6 +15979,29 @@ function getSmileMouthCropBox(origW, origH) {
   };
 }
 
+/** Debug: log a short data-URL prefix for JPEG buffers (server logs). */
+function logSimDebugPreview(label, buf) {
+  if (!buf || !buf.length) return;
+  const b64 = buf.toString("base64");
+  const clip = b64.length > 220 ? b64.slice(0, 220) + "…" : b64;
+  console.log(`[SIM DEBUG] ${label}: data:image/jpeg;base64,${clip}`);
+}
+
+/** Soft edge weight 0–1 inside crop (distance to crop border), for feathered merge. */
+function buildCropFeatherMap(w, h, featherPx) {
+  const out = new Float32Array(w * h);
+  const f = Math.max(1, featherPx);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = Math.min(x, w - 1 - x);
+      const dy = Math.min(y, h - 1 - y);
+      const d = Math.min(dx, dy);
+      out[y * w + x] = Math.min(1, d / f);
+    }
+  }
+  return out;
+}
+
 /** Reject full-face-sized extracts — recrop to a fixed mouth band. */
 function enforceMouthOnlyCrop(origW, origH) {
   let box = getSmileMouthCropBox(origW, origH);
@@ -18062,9 +18086,34 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     console.log(`[SIM CROP] Original: ${origW}×${origH}`);
   } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
 
-  // 2. Mouth-only crop (preprocess) — enforced band; full-face ratios are rejected/recropped.
-  const { cropLeft, cropTop, cropWidth, cropHeight } = enforceMouthOnlyCrop(origW, origH);
-  console.log(`[SIM CROP] Mouth box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
+  // 2. Mouth-only crop — MediaPipe Face Mesh via TF.js (landmarks on lips → expand for teeth).
+  //    SIM_FORCE_HEURISTIC_CROP=1 bypasses mesh (emergency / dev only).
+  let cropLeft;
+  let cropTop;
+  let cropWidth;
+  let cropHeight;
+  if (String(process.env.SIM_FORCE_HEURISTIC_CROP || "").trim() === "1") {
+    const box = enforceMouthOnlyCrop(origW, origH);
+    cropLeft = box.cropLeft;
+    cropTop = box.cropTop;
+    cropWidth = box.cropWidth;
+    cropHeight = box.cropHeight;
+    console.warn("[SIM CROP] SIM_FORCE_HEURISTIC_CROP=1 — fraction-based band (face mesh skipped)");
+  } else {
+    const mp = await computeMouthCropFromImageBuffer(origBuf);
+    if (!mp.ok) {
+      console.warn("[SIM MEDIAPIPE] Mouth ROI rejected:", mp.reason, mp.debug || "");
+      return { url: null, failReason: "mouth_roi: " + (mp.reason || "unknown") };
+    }
+    cropLeft = mp.cropLeft;
+    cropTop = mp.cropTop;
+    cropWidth = mp.cropWidth;
+    cropHeight = mp.cropHeight;
+    console.log(
+      `[SIM MEDIAPIPE] crop rect: left=${cropLeft} top=${cropTop} width=${cropWidth} height=${cropHeight} ` +
+        `mouthOpen≈${(mp.mouthOpenPx || 0).toFixed(1)}px`
+    );
+  }
 
   let origCropBuf;
   try {
@@ -18072,6 +18121,8 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
       .jpeg({ quality: 95 }).toBuffer();
   } catch (e) { return { url: null, failReason: 'crop_extract: ' + e?.message }; }
+
+  logSimDebugPreview("cropped_input_to_simulation (AI + programmatic path)", origCropBuf);
 
   // 3. Build teeth mask
   let maskBuf;
