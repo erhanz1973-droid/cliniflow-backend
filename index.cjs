@@ -16124,6 +16124,7 @@ const SIM_REPLICATE_PROMPT_DEFAULT =
   'strongly enforce equal alignment and correction on lower teeth, do not leave lower teeth unchanged, ' +
   'apply equal correction to both upper and lower teeth, ensure both rows are clearly visible and equally enhanced, ' +
   'match color tone and brightness between upper and lower teeth, ' +
+  'add subtle shadow and depth to lower teeth to match realism of upper teeth, slight natural interdental shading for depth, ' +
   'slightly whiten teeth naturally without over-whitening, perform subtle alignment correction on all visible teeth, ' +
   'preserve natural tooth shapes and small imperfections, avoid artificial veneers or perfect uniform teeth, ' +
   'keep lips, skin, and face completely unchanged, high realism, medical-grade natural result';
@@ -19726,7 +19727,8 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
       const baseStrength = Number.isFinite(envStr) ? envStr : REPLICATE_PROMPT_STRENGTH_DEFAULT;
       stripOpts.strengthOverride = Math.min(0.98, Math.max(0.35, baseStrength + delta));
       stripOpts.promptSuffix =
-        ' Prioritize subtle orthodontic alignment and leveling on these lower teeth — slightly stronger alignment correction than the upper arch.';
+        ' Prioritize subtle orthodontic alignment and leveling on these lower teeth — slightly stronger alignment correction than the upper arch. ' +
+        'Add subtle shadow and depth to lower teeth to match upper-teeth realism; slight interdental shadow and natural contrast; avoid flat lighting.';
     }
 
     const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, stripOpts);
@@ -19755,6 +19757,78 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'strip_exception', message: e?.message });
   }
 });
+
+/**
+ * Seamless mouth integration: blend hard composite with original using a blurred mouth mask (sharp center, soft edges only).
+ * No full-image blur. SIM_MERGE_EDGE_FEATHER_SIGMA 6–14 (default 8). Optional lower-half alpha boost.
+ */
+async function featherBlendMouthComposite(origBuf, compositedBuf, ox, oy, mw, mh) {
+  const edgeSigma = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_SIGMA ?? '8'), 10);
+    return Number.isFinite(v) ? Math.min(14, Math.max(4, v)) : 8;
+  })();
+  const lowerAlphaBoost = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_ALPHA_BOOST ?? '1.06'), 10);
+    return Number.isFinite(v) ? Math.min(1.15, Math.max(1, v)) : 1.06;
+  })();
+
+  const { data: o, info } = await sharp(origBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width;
+  const h = info.height;
+  const c = await sharp(compositedBuf).resize(w, h).removeAlpha().raw().toBuffer();
+  const ox0 = Math.round(ox);
+  const oy0 = Math.round(oy);
+  const mw0 = Math.round(mw);
+  const mh0 = Math.round(mh);
+  const midY = oy0 + Math.floor(mh0 / 2);
+  const mouthBottom = oy0 + mh0;
+  const rx = Math.min(14, Math.max(4, Math.floor(mw0 * 0.06)));
+
+  const svg = `<svg width="${w}" height="${h}"><rect x="${ox0}" y="${oy0}" width="${mw0}" height="${mh0}" fill="white" rx="${rx}"/></svg>`;
+  const maskRaw = await sharp(Buffer.from(svg))
+    .resize(w, h)
+    .blur(edgeSigma)
+    .greyscale()
+    .raw()
+    .toBuffer();
+
+  const out = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let a = maskRaw[i] / 255;
+      if (y >= midY && y < mouthBottom && x >= ox0 && x < ox0 + mw0) {
+        a = Math.min(1, a * lowerAlphaBoost);
+      }
+      const oi = i * 3;
+      out[oi] = Math.round(o[oi] * (1 - a) + c[oi] * a);
+      out[oi + 1] = Math.round(o[oi + 1] * (1 - a) + c[oi + 1] * a);
+      out[oi + 2] = Math.round(o[oi + 2] * (1 - a) + c[oi + 2] * a);
+    }
+  }
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+/** Very light post: +contrast / −saturation to reduce “AI overlay” look. SIM_MERGE_MICRO_* to tune. */
+async function applyMergeMicroPostProcess(jpegBuf) {
+  const sat = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_MICRO_SAT ?? '0.98'), 10);
+    return Number.isFinite(v) ? Math.min(1.05, Math.max(0.92, v)) : 0.98;
+  })();
+  const contrastMult = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_MICRO_CONTRAST ?? '1.05'), 10);
+    return Number.isFinite(v) ? Math.min(1.1, Math.max(0.98, v)) : 1.05;
+  })();
+  const b = 128 * (1 - contrastMult);
+  if (String(process.env.SIM_MERGE_MICRO_POST ?? '1').trim() === '0') {
+    return jpegBuf;
+  }
+  return sharp(jpegBuf)
+    .modulate({ saturation: sat })
+    .linear(contrastMult, b)
+    .jpeg({ quality: 92 })
+    .toBuffer();
+}
 
 // POST /api/chat/merge-teeth-strips
 // Composite AI upper/lower strips onto original full image. Body: { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth }
@@ -19804,19 +19878,27 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     const ty = Math.round(oy);
     const ty2 = Math.round(oy) + upperH;
 
-    const outputBlur = (() => {
-      const v = parseFloat(String(process.env.SIM_MERGE_OUTPUT_BLUR ?? '1.5'), 10);
-      return Number.isFinite(v) ? Math.min(4, Math.max(0, v)) : 1.5;
-    })();
+    const hardComposite = await sharp(origBuf)
+      .composite([
+        { input: upResized, left: lx, top: ty, blend: 'over' },
+        { input: loResized, left: lx, top: ty2, blend: 'over' },
+      ])
+      .jpeg({ quality: 92 })
+      .toBuffer();
 
-    let pipeline = sharp(origBuf).composite([
-      { input: upResized, left: lx, top: ty, blend: 'over' },
-      { input: loResized, left: lx, top: ty2, blend: 'over' },
-    ]);
-    if (outputBlur > 0) {
-      pipeline = pipeline.blur(outputBlur);
+    let composited = hardComposite;
+    try {
+      composited = await featherBlendMouthComposite(origBuf, hardComposite, ox, oy, mw, mh);
+    } catch (fe) {
+      console.warn('[MERGE TEETH] feather blend fallback to hard composite:', fe?.message);
+      composited = hardComposite;
     }
-    const composited = await pipeline.jpeg({ quality: 92 }).toBuffer();
+
+    try {
+      composited = await applyMergeMicroPostProcess(composited);
+    } catch (pe) {
+      console.warn('[MERGE TEETH] micro post skipped:', pe?.message);
+    }
 
     const fileName = `merge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
     const storagePath = `ai-photos/${patientId}/${fileName}`;
@@ -36500,7 +36582,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v34');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v35');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
