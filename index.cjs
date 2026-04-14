@@ -6195,6 +6195,83 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
   }
 });
 
+// ================== PATIENT: BROWSE CLINICS ("Find a clinic") ==================
+// Returns active clinics for the in-app directory.  Uses the same status rule
+// as getRecommendedClinics: NULL or ilike 'active' (fixes ACTIVE vs active mismatch).
+// GET /api/patient/clinics
+app.get("/api/patient/clinics", requireToken, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, clinics: [] });
+    }
+
+    let excludeClinicId = null;
+    const pid = req.patientId;
+    if (pid) {
+      let pt = null;
+      const r1 = await supabase.from("patients").select("clinic_id").eq("id", pid).maybeSingle();
+      if (!r1.error && r1.data) pt = r1.data;
+      if (!pt?.clinic_id) {
+        const r2 = await supabase.from("patients").select("clinic_id").eq("patient_id", pid).maybeSingle();
+        if (!r2.error && r2.data) pt = r2.data;
+      }
+      excludeClinicId = pt?.clinic_id || null;
+    }
+
+    let q = supabase
+      .from("clinics")
+      .select("id, name, city, country, clinic_code, latitude, longitude, status")
+      .or("status.is.null,status.ilike.active")
+      .order("name", { ascending: true })
+      .limit(120);
+    if (excludeClinicId) q = q.neq("id", excludeClinicId);
+
+    const { data: raw, error } = await q;
+    if (error) throw error;
+
+    const rows = (raw || []).filter((c) => {
+      const s = String(c.status ?? "active").toLowerCase();
+      return !["suspended", "reject", "rejected", "inactive", "closed"].includes(s);
+    });
+
+    const ids = rows.map((c) => c.id);
+    const ratingMap = {};
+    if (ids.length) {
+      const { data: ratingRows } = await supabase
+        .from("ratings")
+        .select("clinic_id, overall")
+        .in("clinic_id", ids);
+      if (ratingRows?.length) {
+        const grouped = {};
+        for (const r of ratingRows) {
+          if (!grouped[r.clinic_id]) grouped[r.clinic_id] = [];
+          grouped[r.clinic_id].push(r.overall);
+        }
+        for (const [id, scores] of Object.entries(grouped)) {
+          ratingMap[id] =
+            Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10;
+        }
+      }
+    }
+
+    const clinics = rows.map((c) => ({
+      id: c.id,
+      name: c.name || "Klinik",
+      city: c.city || null,
+      country: c.country || null,
+      clinicCode: c.clinic_code || null,
+      rating: ratingMap[c.id] ?? null,
+      latitude: c.latitude ?? null,
+      longitude: c.longitude ?? null,
+    }));
+
+    return res.json({ ok: true, clinics });
+  } catch (e) {
+    console.error("[GET /api/patient/clinics]", e?.message);
+    return res.status(500).json({ ok: false, error: "db_error" });
+  }
+});
+
 // ================== ADMIN LIST ==================
 app.get("/api/admin/registrations", (req, res) => {
   const raw = readJson(REG_FILE, {});
@@ -15339,10 +15416,17 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation, p
     }
 
     // Fetch active clinics — include location fields
+    //
+    // CRITICAL: DB migration uses DEFAULT 'ACTIVE' (uppercase).  PostgREST
+    // string equality is case-sensitive — .eq('status','active') matches ZERO
+    // rows when the column holds 'ACTIVE', which made recommended clinics
+    // (and any UI depending on this) always empty.
+    //
+    // Accept: NULL (legacy), 'active' / 'ACTIVE' / any case via ilike
     let query = supabase
       .from('clinics')
-      .select('id, name, city, country, latitude, longitude')
-      .eq('status', 'active')
+      .select('id, name, city, country, latitude, longitude, status')
+      .or('status.is.null,status.ilike.active')
       .limit(20);
     if (excludeClinicId) query = query.neq('id', excludeClinicId);
 
@@ -15352,7 +15436,12 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation, p
       query = query.or(`country.ilike.${preferredCountry},country.ilike.%${preferredCountry}%`);
     }
 
-    const { data: clinics } = await query;
+    const { data: rawClinics } = await query;
+    // Exclude suspended/rejected even if legacy rows slipped through
+    const clinics = (rawClinics || []).filter((c) => {
+      const s = String(c.status ?? 'active').toLowerCase();
+      return !['suspended', 'reject', 'rejected', 'inactive', 'closed'].includes(s);
+    });
     if (!clinics?.length) return [];
 
     // Fetch avg ratings
