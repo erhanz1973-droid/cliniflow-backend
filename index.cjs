@@ -15973,9 +15973,12 @@ function keepLargestComponents(maskData, w, h, minSize = 80) {
     components.push(pixels);
   }
 
-  // Determine size threshold
+  // Determine size threshold: keep anything ≥ 15% of the largest component,
+  // or above the absolute minSize floor.  15% (was 20%) gives more tolerance
+  // for cases where upper and lower arches are detected separately and the
+  // lower arch is significantly smaller due to staining.
   const maxSize   = components.reduce((m, c) => Math.max(m, c.length), 0);
-  const threshold = Math.max(minSize, Math.round(maxSize * 0.20));
+  const threshold = Math.max(minSize, Math.round(maxSize * 0.15));
 
   // Build clean mask: only keep large components
   const result = Buffer.alloc(w * h);
@@ -16062,25 +16065,27 @@ async function buildTeethMask(origCropBuf, w, h) {
       if (r > g && saturation > 35 && (r / (b + 1)) > 1.45) continue;
 
       // ── Standard tooth: bright, low-saturation, neutral/slightly yellow ─
-      const isStdTooth = brightness > 130
-        && saturation <= 65
-        && g >= r * 0.72   // not too red-warm
-        && b >= r * 0.60;  // not too orange
+      // Floor = 115 (not 130): moderately-stained upper incisors sit at 115-130.
+      // Beard/skin at this brightness is already caught by the LAB A* guard above
+      // and the warm-tone ratio guard below — brightness alone is a bad discriminator.
+      const isStdTooth = brightness > 115
+        && saturation <= 70
+        && g >= r * 0.70    // not too red-warm
+        && b >= r * 0.58;   // not too orange
 
       // ── Stained / lower incisor (relaxed, lower half only) ─────────────
-      // Lower incisors are darker and more yellow than upper teeth, but
-      // NEVER as dark as beard/stubble.  Floor raised to 128 so that light
-      // facial stubble (brightness ~90-120) cannot sneak through.
+      // Tartar-covered lower incisors routinely fall at brightness 90-120.
+      // The spatial exclusion (Y_BOT_EXCL = 78%), LAB A* guard, and the
+      // warm-tone ratio guard below are sufficient to reject beard/stubble.
+      // Do NOT use brightness as the primary beard discriminator.
       const isLowerRegion = y / h > 0.44;
       const isLowerTooth  = isLowerRegion
-        && brightness > 128          // was 108 — stubble typically < 120
-        && saturation <= 80          // was 95 — tighter; stained enamel ~40-70
-        && g >= r * 0.60             // not too red-warm
-        && b >= r * 0.42             // not too orange
-        // Hard beard/stubble guard: saturated warm pixel → reject
-        && !(r > 170 && saturation > 45 && r > g * 1.18)
-        // Absolute sanity: pixel must not be darker than a mid-grey
-        && brightness > 128;
+        && brightness > 100          // stained lower incisors can be 90-120
+        && saturation <= 95          // tartar adds chroma but stays below 95
+        && g >= r * 0.56             // not too red-warm (beard: g/r ~ 0.70-0.85)
+        && b >= r * 0.38             // not too orange
+        // Saturated warm guard (stubble): reject if deeply warm AND saturated
+        && !(r > 165 && saturation > 42 && r > g * 1.16);
 
       if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
     }
@@ -16089,18 +16094,19 @@ async function buildTeethMask(origCropBuf, w, h) {
   // ── Connected-component cleanup ───────────────────────────────────────────
   // Remove small isolated blobs (pores, skin specular reflections, stray bright
   // pixels in beard).  Teeth form one or two large continuous arches; anything
-  // smaller than 20 % of the largest component is not a tooth.
-  const ccClean = keepLargestComponents(maskData, w, h, 80);
+  // smaller than 15 % of the largest component is noise.  Absolute min = 50 px.
+  const ccClean = keepLargestComponents(maskData, w, h, 50);
   const afterCC = ccClean.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
 
-  // ── Morphological erosion (3 px) ─────────────────────────────────────────
-  // Shrinks the binary mask inward so no boundary pixels (which sit on the
-  // lip/gum edge) survive into the blended output.  Raised from 2 → 3 px for
-  // extra safety on the beard/chin side.
-  const eroded = erodeMask(ccClean, w, h, 3);
+  // ── Morphological erosion (2 px) ─────────────────────────────────────────
+  // Shrinks the binary mask inward by 2 pixels so no boundary pixels (sitting
+  // on the lip/gum edge) survive into the blended output.
+  // NOTE: 3 px was too aggressive — it eliminated stained/thin teeth that barely
+  // passed the colour filter.  2 px + CC cleanup provides equivalent safety.
+  const eroded = erodeMask(ccClean, w, h, 2);
   const afterErosion = eroded.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
 
-  console.log(`[SIM MASK] ${white}/${w*h} raw → CC=${afterCC} → 3-px eroded=${afterErosion} (${((afterErosion/(w*h))*100).toFixed(1)}%)`);
+  console.log(`[SIM MASK] ${white}/${w*h} raw → CC=${afterCC} → 2-px eroded=${afterErosion} (${((afterErosion/(w*h))*100).toFixed(1)}%)`);
 
   // blur(2) adds gentle feathering at the eroded boundary.
   return sharp(eroded, { raw: { width: w, height: h, channels: 1 } }).blur(2).png().toBuffer();
@@ -17297,8 +17303,12 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     const dangerRatio = totalOn > 0 ? dangerOn / totalOn : 0;
     console.log(`[SIM SAFETY] mask in bottom-28%: ${dangerOn}/${totalOn} px (${(dangerRatio*100).toFixed(1)}%)`);
 
-    if (dangerRatio > 0.08 || totalOn < 200) {
-      console.warn('[SIM SAFETY] ABORT — mask extends into chin/beard region or too few teeth found');
+    // Abort conditions (tuned for stained/tartar teeth that legitimately have
+    // fewer mask pixels after CC cleanup + erosion):
+    //   totalOn < 80   : even badly stained arches produce ≥ 80 px after 2px erosion
+    //   dangerRatio > 0.15 : > 15% of mask in chin zone = clear beard leakage
+    if (dangerRatio > 0.15 || totalOn < 80) {
+      console.warn(`[SIM SAFETY] ABORT — dangerRatio=${(dangerRatio*100).toFixed(1)}% totalOn=${totalOn}`);
       return {
         url: null,
         confidence: 'low',
