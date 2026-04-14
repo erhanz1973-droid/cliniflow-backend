@@ -15899,6 +15899,62 @@ function resolveSimMode(mode) {
 const MICRO_ALIGN_ENABLED = false; // legacy global; per-mode cfg.alignment governs runtime
 
 // ── Teeth mask ───────────────────────────────────────────────────────────────
+// ── Connected-component filter (binary mask, pure JS BFS) ────────────────────
+// Teeth form one or two large contiguous blobs (upper arch / lower arch).
+// Any isolated pixel cluster smaller than `minSize` is noise — pores, specular
+// reflections on skin, lone bright pixels in beard — and must be removed.
+// The function keeps only components whose size is ≥ `minSize` OR ≥ 20 % of
+// the largest component found, whichever is bigger.
+function keepLargestComponents(maskData, w, h, minSize = 80) {
+  const visited = new Uint8Array(w * h);
+  const components = [];
+
+  for (let start = 0; start < w * h; start++) {
+    if (maskData[start] === 0 || visited[start]) continue;
+
+    // BFS
+    const queue = [start];
+    const pixels = [];
+    visited[start] = 1;
+    while (queue.length) {
+      const idx = queue.shift();
+      pixels.push(idx);
+      const y = Math.floor(idx / w), x = idx % w;
+      const neighbours = [
+        y > 0     ? idx - w : -1,
+        y < h - 1 ? idx + w : -1,
+        x > 0     ? idx - 1 : -1,
+        x < w - 1 ? idx + 1 : -1,
+      ];
+      for (const n of neighbours) {
+        if (n >= 0 && maskData[n] > 0 && !visited[n]) {
+          visited[n] = 1;
+          queue.push(n);
+        }
+      }
+    }
+    components.push(pixels);
+  }
+
+  // Determine size threshold
+  const maxSize   = components.reduce((m, c) => Math.max(m, c.length), 0);
+  const threshold = Math.max(minSize, Math.round(maxSize * 0.20));
+
+  // Build clean mask: only keep large components
+  const result = Buffer.alloc(w * h);
+  let kept = 0, removed = 0;
+  for (const comp of components) {
+    if (comp.length >= threshold) {
+      for (const idx of comp) result[idx] = 255;
+      kept++;
+    } else {
+      removed++;
+    }
+  }
+  console.log(`[SIM MASK CC] kept=${kept} comps, removed=${removed} small blobs (threshold=${threshold}px)`);
+  return result;
+}
+
 // ── Morphological erosion (binary mask, pure JS) ─────────────────────────────
 // Shrinks "on" (255) regions inward by `radius` pixels.  Any on-pixel that has
 // at least one off-pixel (or image border) within the square neighbourhood is
@@ -15932,16 +15988,18 @@ async function buildTeethMask(origCropBuf, w, h) {
   let white = 0;
 
   // ── Spatial exclusion zones ───────────────────────────────────────────────
-  // The mouth crop is centred on the teeth.  Regions guaranteed not to
-  // contain teeth (tighter than before to clamp mask to mouth area only):
-  //   • Top 18 %   : upper lip, philtrum, and any forehead bleed
-  //   • Bottom 15 %: lower lip, chin
-  //   • Left  4 %  : lip corner (dark, saturated)
-  //   • Right 4 %  : lip corner
-  const Y_TOP_EXCL = Math.floor(h * 0.18);
-  const Y_BOT_EXCL = Math.floor(h * 0.85);
-  const X_L_EXCL   = Math.floor(w * 0.04);
-  const X_R_EXCL   = Math.floor(w * 0.96);
+  // The crop now covers 56–82 % of image height, which tightly spans
+  // upper-lip → lower-teeth.  The mask must be even tighter:
+  //   • Top 20 %   : upper lip, philtrum
+  //   • Bottom 22 %: lower lip boundary, gum, early chin
+  //     (bottom 22% of 26%-height crop ≈ top-5.7% of original → ends ~76% of image)
+  //     Teeth never extend below this line even in fully open-mouth shots.
+  //   • Left  5 %  : lip corner
+  //   • Right 5 %  : lip corner
+  const Y_TOP_EXCL = Math.floor(h * 0.20);
+  const Y_BOT_EXCL = Math.floor(h * 0.78);  // was 0.85 — harder bottom clamp
+  const X_L_EXCL   = Math.floor(w * 0.05);
+  const X_R_EXCL   = Math.floor(w * 0.95);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -15973,32 +16031,41 @@ async function buildTeethMask(origCropBuf, w, h) {
         && b >= r * 0.60;  // not too orange
 
       // ── Stained / lower incisor (relaxed, lower half only) ─────────────
-      // Lower incisors are darker and more yellow than upper teeth.  Only
-      // allow relaxed thresholds in the lower half of the crop to prevent
-      // gums or chin from being included via the relaxed path.
+      // Lower incisors are darker and more yellow than upper teeth, but
+      // NEVER as dark as beard/stubble.  Floor raised to 128 so that light
+      // facial stubble (brightness ~90-120) cannot sneak through.
       const isLowerRegion = y / h > 0.44;
       const isLowerTooth  = isLowerRegion
-        && brightness > 108
-        && saturation <= 95
-        && g >= r * 0.58     // yellow-stained is ok; warm-red is not
-        && b >= r * 0.40     // slight orange allowed
-        // Reject saturated red (beard, lower lip, tongue)
-        && !(r > 185 && saturation > 55 && r > g * 1.22);
+        && brightness > 128          // was 108 — stubble typically < 120
+        && saturation <= 80          // was 95 — tighter; stained enamel ~40-70
+        && g >= r * 0.60             // not too red-warm
+        && b >= r * 0.42             // not too orange
+        // Hard beard/stubble guard: saturated warm pixel → reject
+        && !(r > 170 && saturation > 45 && r > g * 1.18)
+        // Absolute sanity: pixel must not be darker than a mid-grey
+        && brightness > 128;
 
       if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
     }
   }
 
-  // ── Morphological erosion (2 px) ─────────────────────────────────────────
+  // ── Connected-component cleanup ───────────────────────────────────────────
+  // Remove small isolated blobs (pores, skin specular reflections, stray bright
+  // pixels in beard).  Teeth form one or two large continuous arches; anything
+  // smaller than 20 % of the largest component is not a tooth.
+  const ccClean = keepLargestComponents(maskData, w, h, 80);
+  const afterCC = ccClean.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
+
+  // ── Morphological erosion (3 px) ─────────────────────────────────────────
   // Shrinks the binary mask inward so no boundary pixels (which sit on the
-  // lip/gum edge) survive into the blended output.
-  const eroded = erodeMask(maskData, w, h, 2);
+  // lip/gum edge) survive into the blended output.  Raised from 2 → 3 px for
+  // extra safety on the beard/chin side.
+  const eroded = erodeMask(ccClean, w, h, 3);
   const afterErosion = eroded.reduce((s, v) => s + (v > 0 ? 1 : 0), 0);
 
-  console.log(`[SIM MASK] ${white}/${w*h} raw px → ${afterErosion} after 2-px erosion (${((afterErosion/(w*h))*100).toFixed(1)}%)`);
+  console.log(`[SIM MASK] ${white}/${w*h} raw → CC=${afterCC} → 3-px eroded=${afterErosion} (${((afterErosion/(w*h))*100).toFixed(1)}%)`);
 
-  // blur(2) adds gentle feathering at the eroded boundary — radius intentionally
-  // smaller than before (was 3) because erosion already provides the safety margin.
+  // blur(2) adds gentle feathering at the eroded boundary.
   return sharp(eroded, { raw: { width: w, height: h, channels: 1 } }).blur(2).png().toBuffer();
 }
 
@@ -17148,9 +17215,18 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     console.log(`[SIM CROP] Original: ${origW}×${origH}`);
   } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
 
-  // 2. Crop lower face
-  const cropLeft = Math.round(origW * 0.15), cropTop = Math.round(origH * 0.55);
-  const cropWidth = Math.round(origW * 0.70), cropHeight = Math.round(origH * 0.35);
+  // 2. Crop lower face — DELIBERATELY TIGHT
+  // The crop must contain upper lip → upper teeth → lower teeth → lower lip ONLY.
+  // Wider crops include chin and beard, which JPEG re-encode can alter even if the
+  // teeth mask correctly excludes them.  Smaller crop = smaller risk surface.
+  //   top   = 56 % of image height  (below nose, just above upper lip)
+  //   height= 26 % of image height  (covers ~lip-to-chin, stops well above beard)
+  // In a standard portrait this box ends at ~82 % of image height — comfortably
+  // above where a beard or heavy chin would start.
+  const cropLeft   = Math.round(origW * 0.12);
+  const cropTop    = Math.round(origH * 0.56);
+  const cropWidth  = Math.round(origW * 0.76);
+  const cropHeight = Math.round(origH * 0.26);
   console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
   let origCropBuf;
@@ -17164,6 +17240,35 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   let maskBuf;
   try { maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight); }
   catch (e) { return { url: null, failReason: 'crop_mask: ' + e?.message }; }
+
+  // 3b. Mask safety check — abort if mask bleeds into chin/beard territory.
+  //
+  // The bottom 28 % of the crop (≈ the lowest 7 % of the full image) is below
+  // the lower-incisal edge in any realistic portrait.  If more than 8 % of the
+  // mask pixels fall in that region, the mask has grabbed chin or beard pixels.
+  // Return the original image unchanged with confidence = 'low'.
+  try {
+    const maskRawCheck = await sharp(maskBuf)
+      .resize(cropWidth, cropHeight).greyscale().raw().toBuffer();
+    const dangerRowStart = Math.floor(cropHeight * 0.72);  // bottom 28 %
+    let dangerOn = 0, totalOn = 0;
+    for (let i = 0; i < cropWidth * cropHeight; i++) {
+      if (maskRawCheck[i] <= 0) continue;
+      totalOn++;
+      if (Math.floor(i / cropWidth) >= dangerRowStart) dangerOn++;
+    }
+    const dangerRatio = totalOn > 0 ? dangerOn / totalOn : 0;
+    console.log(`[SIM SAFETY] mask in bottom-28%: ${dangerOn}/${totalOn} px (${(dangerRatio*100).toFixed(1)}%)`);
+
+    if (dangerRatio > 0.08 || totalOn < 200) {
+      console.warn('[SIM SAFETY] ABORT — mask extends into chin/beard region or too few teeth found');
+      return {
+        url: null,
+        confidence: 'low',
+        failReason: 'mask_safety: mask leaked into chin/beard or insufficient teeth detected',
+      };
+    }
+  } catch (e) { console.warn('[SIM SAFETY] non-fatal:', e?.message); }
 
   // 4+5. Enhance (tartar + LAB whitening) + bilateral blend
   let blendedCropBuf;
@@ -17354,48 +17459,60 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     }
   } catch (e) { console.warn('[SIM VALIDATE] non-fatal:', e?.message); }
 
-  // 6. Mask-accurate composite onto full original ─────────────────────────────
+  // 6. Raw-pixel surgery composite ────────────────────────────────────────────
   //
-  // DO NOT use a plain .composite(blendedCropBuf) — that overlays the entire
-  // crop, touching every pixel inside the crop bounding box (including lips,
-  // beard, and skin), even after enforceTeethMaskBoundary() has been applied.
-  // A JPEG re-encode of those pixels introduces compression artifacts that
-  // alter non-teeth areas.
+  // CRITICAL DESIGN:  sharp(origBuf).composite(...).jpeg() re-encodes the ENTIRE
+  // original image, which alters EVERY pixel (including beard and chin) by JPEG
+  // quantisation noise (±1–3 units).  That is the root cause of visible beard
+  // brightness changes.
   //
-  // Instead: attach the teeth mask as the alpha channel of the processed crop
-  // (RGBA PNG), then composite that over the original.  Sharp's compositing
-  // engine uses the alpha channel so that:
-  //   • mask = 255  → processed tooth pixel fully replaces original
-  //   • mask = 0–254 → proportional blend (feather zone only)
-  //   • mask = 0    → alpha = 0 → original pixel used entirely, untouched
+  // Fix: decode origBuf to raw RGB once, write only mask>0 pixels from the
+  // processed crop directly into that raw buffer, then JPEG-encode once.
   //
-  // Outcome: beard, skin, lips, background are taken 100% from origBuf —
-  // they never pass through the crop processing pipeline at all.
+  //   • mask = 0   → origRawFull pixel is untouched (byte-identical to decode)
+  //   • mask > 0   → proportional alpha blend:  orig*(1−α) + processed*α
+  //
+  // Non-teeth areas (beard, skin, lips, background) are NEVER written — they go
+  // straight from decode → JPEG encode with zero intermediate processing.
   //
   let compositedBuf;
   try {
-    const [cropRaw, maskRaw] = await Promise.all([
-      sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
-      sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
-    ]);
+    const [cropRaw, maskRaw, { data: origRawFull, info: { width: origWFull, height: origHFull } }] =
+      await Promise.all([
+        sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
+        sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
+        sharp(origBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+      ]);
 
-    // Build RGBA buffer: RGB = processed crop, A = teeth mask
-    const rgbaData = Buffer.alloc(cropWidth * cropHeight * 4);
-    for (let i = 0; i < cropWidth * cropHeight; i++) {
-      rgbaData[i*4]   = cropRaw[i*3];
-      rgbaData[i*4+1] = cropRaw[i*3+1];
-      rgbaData[i*4+2] = cropRaw[i*3+2];
-      rgbaData[i*4+3] = maskRaw[i];   // alpha = mask value (0 = transparent outside teeth)
+    // Direct pixel surgery: only masked pixels are written
+    let touchedPx = 0;
+    for (let cy = 0; cy < cropHeight; cy++) {
+      for (let cx = 0; cx < cropWidth; cx++) {
+        const mi = cy * cropWidth + cx;
+        const mv = maskRaw[mi];
+        if (mv === 0) continue;  // outside mask — leave original untouched
+
+        const fy = cropTop  + cy;
+        const fx = cropLeft + cx;
+        if (fy < 0 || fy >= origHFull || fx < 0 || fx >= origWFull) continue;
+
+        const di = fy * origWFull + fx;
+        const alpha = mv / 255;
+        for (let c = 0; c < 3; c++) {
+          origRawFull[di*3+c] = Math.round(
+            origRawFull[di*3+c] * (1 - alpha) + cropRaw[mi*3+c] * alpha
+          );
+        }
+        touchedPx++;
+      }
     }
+    console.log(`[SIM COMPOSITE] Raw surgery: ${touchedPx} teeth px written — zero non-teeth alteration`);
 
-    const maskedCropPng = await sharp(rgbaData, {
-      raw: { width: cropWidth, height: cropHeight, channels: 4 },
-    }).png().toBuffer();
-
-    compositedBuf = await sharp(origBuf)
-      .composite([{ input: maskedCropPng, left: cropLeft, top: cropTop, blend: 'over' }])
-      .jpeg({ quality: 90 }).toBuffer();
-    console.log(`[SIM CROP] Mask-composite done: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+    // Single JPEG encode — the only encode pass the full image undergoes
+    compositedBuf = await sharp(Buffer.from(origRawFull), {
+      raw: { width: origWFull, height: origHFull, channels: 3 },
+    }).jpeg({ quality: 92 }).toBuffer();
+    console.log(`[SIM COMPOSITE] Done: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
   } catch (e) { return { url: null, failReason: 'crop_composite: ' + e?.message }; }
 
   // 7. Upload to Supabase
