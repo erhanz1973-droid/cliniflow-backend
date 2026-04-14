@@ -15901,10 +15901,10 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 //
 // Canonical “prompt” line for logging / product parity (no external img2img here):
 const SIM_VISUAL_INTENT_PROMPT =
-  'natural healthy teeth, subtle whitening, preserved enamel texture, realistic shading';
+  'noticeably straighter teeth, whiter enamel, improved symmetry, realistic clinical preview';
 //
-// SIM_TRANSFORM_STRENGTH ≈ img2img prompt_strength / denoise (0.35 = timid … 0.95 = max).
-// Default 0.85 — clearly visible whitening; tunable via SIM_TRANSFORM_STRENGTH env.
+// SIM_TRANSFORM_STRENGTH ≈ img2img prompt_strength / denoise (0.35 = timid … 0.98 = strong).
+// Default 0.92 — clearly visible change; tunable via SIM_TRANSFORM_STRENGTH env.
 //
 // QUALITY RULES (canonical):
 //   ACCEPT:          stain removal, tartar cleaning, mild whitening,
@@ -15930,10 +15930,10 @@ const _SIM_STR_NUM =
   _SIM_STR_RAW !== undefined && String(_SIM_STR_RAW).trim() !== ''
     ? Number(_SIM_STR_RAW)
     : NaN;
-/** Effective edit aggressiveness (default 0.85 — visibly improved; max 0.95). */
+/** Effective edit aggressiveness (default 0.92 — clearly visible; max 0.98). */
 const SIM_TRANSFORM_STRENGTH = Number.isFinite(_SIM_STR_NUM)
-  ? Math.min(0.95, Math.max(0.35, _SIM_STR_NUM))
-  : 0.85;
+  ? Math.min(0.98, Math.max(0.35, _SIM_STR_NUM))
+  : 0.92;
 
 /** Max RGB in tooth pipeline — avoids chalk-white flat patches (was 245). */
 const ENAMEL_OUTPUT_CAP = 238;
@@ -15941,20 +15941,20 @@ const ENAMEL_OUTPUT_CAP = 238;
 /** Extra L* lift — kept subtle to preserve texture (used in computeEnhancedRaw). */
 function simLabStrengthMultiplier() {
   const s = SIM_TRANSFORM_STRENGTH;
-  return 1 + Math.max(0, s - 0.48) * 0.38;
+  return 1 + Math.max(0, s - 0.48) * 0.45;
 }
 
 function applySimTransformStrength(cfg) {
   const s = SIM_TRANSFORM_STRENGTH;
-  const kBlend = 0.82 + s * 0.34;
-  const uniBoost = 1 + (s - 0.35) * 0.32;
+  const kBlend = 0.88 + s * 0.28;
+  const uniBoost = 1 + (s - 0.35) * 0.38;
   return {
     ...cfg,
     blendAlpha: {
-      strong: Math.min(0.96, cfg.blendAlpha.strong * kBlend),
-      edge: Math.min(0.66, cfg.blendAlpha.edge * kBlend),
+      strong: Math.min(0.98, cfg.blendAlpha.strong * kBlend),
+      edge: Math.min(0.72, cfg.blendAlpha.edge * kBlend),
     },
-    uniformTargetFactor: Math.min(1.48, cfg.uniformTargetFactor * uniBoost),
+    uniformTargetFactor: Math.min(1.52, cfg.uniformTargetFactor * uniBoost),
   };
 }
 
@@ -16068,12 +16068,21 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
 }
 
 const SIM_REPLICATE_PROMPT_DEFAULT =
-  'natural aligned teeth, improved symmetry, slightly whiter teeth, realistic dental aesthetics, natural enamel texture, subtle shading';
+  'Realistic dental smile improvement. Straighten teeth, fix misalignment, close small gaps, ' +
+  'improve arch symmetry, noticeably whiter natural enamel, clinical bleaching look. ' +
+  'Keep the exact same person and face; change only teeth in the smile. ' +
+  'Photorealistic, natural translucency, not porcelain.';
+
+/** Shipped with Replicate SDXL-style img2img; override via REPLICATE_TEETH_NEGATIVE_PROMPT. */
+const SIM_REPLICATE_NEGATIVE_DEFAULT =
+  'different face, deformed, plastic skin, fake hollywood smile, chalk white, cartoon, ' +
+  'extra teeth, wrong count, gums only, distorted lips, nose, eyes, beard, mustache, ' +
+  'blurry, watermark, text';
 
 /**
  * STEP 4 (optional) — Replicate img2img on mouth crop only; result still merged via teeth mask later.
  * Requires REPLICATE_API_TOKEN + REPLICATE_IMG2IMG_VERSION (model version hash from replicate.com).
- * Strength 0.62–0.92: REPLICATE_PROMPT_STRENGTH or defaults to SIM_TRANSFORM_STRENGTH (~0.85).
+ * Strength 0.74–0.98: REPLICATE_PROMPT_STRENGTH or defaults to SIM_TRANSFORM_STRENGTH (~0.92).
  */
 async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -16081,13 +16090,19 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
   if (!token || !version) return null;
   const envStr = Number(process.env.REPLICATE_PROMPT_STRENGTH);
   const strength = Math.min(
-    0.92,
-    Math.max(0.62, Number.isFinite(envStr) ? envStr : SIM_TRANSFORM_STRENGTH)
+    0.98,
+    Math.max(0.74, Number.isFinite(envStr) ? envStr : SIM_TRANSFORM_STRENGTH)
   );
   const prompt =
     process.env.REPLICATE_TEETH_PROMPT || SIM_REPLICATE_PROMPT_DEFAULT;
   const image = `data:image/jpeg;base64,${cropJpegBuf.toString('base64')}`;
+  const negRaw = process.env.REPLICATE_TEETH_NEGATIVE_PROMPT;
   const input = { image, prompt, prompt_strength: strength };
+  if (negRaw === '0' || negRaw === 'false') {
+    // allow disabling for models that reject negative_prompt
+  } else {
+    input.negative_prompt = (negRaw && String(negRaw).trim()) || SIM_REPLICATE_NEGATIVE_DEFAULT;
+  }
   console.log(`[SIMSTEP 4] Replicate img2img strength=${strength.toFixed(2)}`);
   try {
     const create = await fetch('https://api.replicate.com/v1/predictions', {
@@ -16197,8 +16212,8 @@ const SIM_MODES = {
   full: {
     name:                'full',
     label:               'Tam Smile Design',
-    blendAlpha:          { strong: 0.76, edge: 0.38 },
-    uniformTargetFactor: 1.18,
+    blendAlpha:          { strong: 0.82, edge: 0.42 },
+    uniformTargetFactor: 1.24,
     alignment:           true,
     smileArc:            true,
     edgeSoftening:       true,
@@ -16766,8 +16781,9 @@ const PASS_REMOVAL_RATE  = 0.50;  // must remove ≥ 50 % of detected stains
 //   profiles inside the tooth mask.  Below this = tooth geometry has shifted.
 // GAP_KEEP_MIN:     fraction of inter-tooth gap segments that must survive.
 //   If we go from 5 gaps to 2, teeth have effectively been merged.
-const PROFILE_CORR_MIN = 0.82;  // correlation must stay ≥ 0.82
-const GAP_KEEP_MIN     = 0.55;  // at least 55 % of gaps must remain
+// Simulation may visibly narrow gaps / align — too-strict thresholds reverted output to “no change”.
+const PROFILE_CORR_MIN = 0.78;  // column-brightness profile still related to original
+const GAP_KEEP_MIN     = 0.38;  // allow moderate gap-closure in preview (not fully reliable clinically)
 
 function detectStains(rawBuf, maskRaw, w, h) {
   let stainCount = 0, maskCount = 0;
@@ -17648,11 +17664,11 @@ function computeTransformationScore({ cfg, stainRemovalRate, stainWarning, struc
   const maxScore = cfg.maxConfidence ?? 0.88;
   let score = maxScore;
 
-  // Stain removal contribution
+  // Stain removal contribution (loosened so visible whitening is not always "low confidence")
   if (stainRemovalRate >= 0.70)      score *= 1.00;   // full credit
-  else if (stainRemovalRate >= 0.50) score *= 0.96;
-  else if (stainRemovalRate >= 0.30) score *= 0.90;
-  else                               score *= 0.80;   // stains mostly remain
+  else if (stainRemovalRate >= 0.50) score *= 0.98;
+  else if (stainRemovalRate >= 0.30) score *= 0.94;
+  else                               score *= 0.88;   // stains mostly remain
 
   // Penalties
   if (stainWarning)     score = Math.min(score, 0.50); // residual stain after retry
@@ -17907,9 +17923,9 @@ function levelCfg(requestedCfg, level) {
 }
 
 // ── Visible-improvement helpers (multi-variation + minimum lift guarantee) ───
-const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 18;
-const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 15;
-const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL  = 12;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_STRICT   = 22;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_RELAXED  = 18;
+const MIN_VISIBLE_TOOTH_LIFT_PCT_MINIMAL  = 14;
 
 /** Scale blend strength & uniform whitening target for internal A/B/C candidates. */
 function scaleSimStrength(baseCfg, mult) {
@@ -18184,15 +18200,16 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
         .removeAlpha()
         .raw()
         .toBuffer();
+      // High α so Replicate changes survive the blend (was 0.48/0.2 → output looked identical).
       const mergeCfg = {
         ...cfg,
-        blendAlpha: { strong: 0.48, edge: 0.2 },
-        uniformTargetFactor: Math.min(1.12, cfg.uniformTargetFactor * 0.92),
+        blendAlpha: { strong: 0.88, edge: 0.38 },
+        uniformTargetFactor: Math.min(1.28, cfg.uniformTargetFactor * 1.02),
       };
       blendedCropBuf = await blendCropWithMask(
         origCropBuf, aiRaw, maskBuf, cropWidth, cropHeight, mergeCfg
       );
-      console.log('[SIMSTEP 4] External img2img merged (soft edges, teeth-only via mask)');
+      console.log('[SIMSTEP 4] External img2img merged (teeth-forward blend, mask-limited)');
     } catch (e) {
       console.warn('[SIMSTEP 4] AI merge failed — programmatic path:', e?.message);
       blendedCropBuf = null;
@@ -35778,7 +35795,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v18');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v19');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
