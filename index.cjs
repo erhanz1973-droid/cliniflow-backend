@@ -16125,6 +16125,8 @@ const SIM_REPLICATE_PROMPT_DEFAULT =
   'apply equal correction to both upper and lower teeth, ensure both rows are clearly visible and equally enhanced, ' +
   'match color tone and brightness between upper and lower teeth, ' +
   'add subtle shadow and depth to lower teeth to match realism of upper teeth, slight natural interdental shading for depth, ' +
+  'add subtle shadow between lower teeth and inner mouth for realistic depth and separation, natural soft shadow under upper teeth where they meet the gum, ' +
+  'depth between upper and lower tooth layers, avoid flat lighting on lower arch, ' +
   'slightly whiten teeth naturally without over-whitening, perform subtle alignment correction on all visible teeth, ' +
   'preserve natural tooth shapes and small imperfections, avoid artificial veneers or perfect uniform teeth, ' +
   'keep lips, skin, and face completely unchanged, high realism, medical-grade natural result';
@@ -19728,7 +19730,8 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
       stripOpts.strengthOverride = Math.min(0.98, Math.max(0.35, baseStrength + delta));
       stripOpts.promptSuffix =
         ' Prioritize subtle orthodontic alignment and leveling on these lower teeth — slightly stronger alignment correction than the upper arch. ' +
-        'Add subtle shadow and depth to lower teeth to match upper-teeth realism; slight interdental shadow and natural contrast; avoid flat lighting.';
+        'Add subtle shadow and depth to lower teeth to match upper-teeth realism; slight interdental shadow and natural contrast; avoid flat lighting. ' +
+        'Add subtle shadow between lower teeth and inner mouth for realistic depth and separation; natural shadow under upper teeth at gum line; depth between tooth layers.';
     }
 
     const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, stripOpts);
@@ -19760,16 +19763,16 @@ app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
 
 /**
  * Seamless mouth integration: blend hard composite with original using a blurred mouth mask (sharp center, soft edges only).
- * No full-image blur. SIM_MERGE_EDGE_FEATHER_SIGMA 6–14 (default 8). Optional lower-half alpha boost.
+ * No full-image blur. SIM_MERGE_EDGE_FEATHER_SIGMA 6–14 (default 12). Optional lower-half alpha boost.
  */
 async function featherBlendMouthComposite(origBuf, compositedBuf, ox, oy, mw, mh) {
   const edgeSigma = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_SIGMA ?? '8'), 10);
-    return Number.isFinite(v) ? Math.min(14, Math.max(4, v)) : 8;
+    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_SIGMA ?? '12'), 10);
+    return Number.isFinite(v) ? Math.min(14, Math.max(4, v)) : 12;
   })();
   const lowerAlphaBoost = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_ALPHA_BOOST ?? '1.06'), 10);
-    return Number.isFinite(v) ? Math.min(1.15, Math.max(1, v)) : 1.06;
+    const v = parseFloat(String(process.env.SIM_MERGE_LOWER_ALPHA_BOOST ?? '1'), 10);
+    return Number.isFinite(v) ? Math.min(1.15, Math.max(1, v)) : 1;
   })();
 
   const { data: o, info } = await sharp(origBuf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -19816,8 +19819,8 @@ async function applyMergeMicroPostProcess(jpegBuf) {
     return Number.isFinite(v) ? Math.min(1.05, Math.max(0.92, v)) : 0.98;
   })();
   const contrastMult = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_MICRO_CONTRAST ?? '1.05'), 10);
-    return Number.isFinite(v) ? Math.min(1.1, Math.max(0.98, v)) : 1.05;
+    const v = parseFloat(String(process.env.SIM_MERGE_MICRO_CONTRAST ?? '1.02'), 10);
+    return Number.isFinite(v) ? Math.min(1.1, Math.max(0.98, v)) : 1.02;
   })();
   const b = 128 * (1 - contrastMult);
   if (String(process.env.SIM_MERGE_MICRO_POST ?? '1').trim() === '0') {
@@ -19872,7 +19875,24 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     const lowerH = Math.max(1, mh - upperH);
 
     const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
-    const loResized = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
+    const loResizedRgb = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
+    const lowerTeethOpacity = (() => {
+      const v = parseFloat(String(process.env.SIM_MERGE_LOWER_TEETH_OPACITY ?? '0.92'), 10);
+      return Number.isFinite(v) ? Math.min(1, Math.max(0.65, v)) : 0.92;
+    })();
+    let loInput = loResizedRgb;
+    if (lowerTeethOpacity < 0.999) {
+      const { data, info } = await sharp(loResizedRgb).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const lw = info.width;
+      const lh = info.height;
+      const a = Math.round(lowerTeethOpacity * 255);
+      for (let i = 0; i < lw * lh; i++) {
+        data[i * 4 + 3] = a;
+      }
+      loInput = await sharp(data, { raw: { width: lw, height: lh, channels: 4 } })
+        .png()
+        .toBuffer();
+    }
 
     const lx = Math.round(ox);
     const ty = Math.round(oy);
@@ -19881,7 +19901,7 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     const hardComposite = await sharp(origBuf)
       .composite([
         { input: upResized, left: lx, top: ty, blend: 'over' },
-        { input: loResized, left: lx, top: ty2, blend: 'over' },
+        { input: loInput, left: lx, top: ty2, blend: 'over' },
       ])
       .jpeg({ quality: 92 })
       .toBuffer();
@@ -36582,7 +36602,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v35');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v36');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
