@@ -19678,6 +19678,142 @@ app.post('/api/chat/ai-upload', requireToken, chatUpload.single('file'), async (
   }
 });
 
+// POST /api/chat/replicate-teeth-strip
+// Single Replicate img2img on one image URL (upper or lower mouth strip from client split flow).
+// Body: { patientId, imageUrl } → { ok, url, output: [url] }
+app.post('/api/chat/replicate-teeth-strip', requireToken, async (req, res) => {
+  try {
+    if (!ENABLE_SMILE_SIMULATION) {
+      return res.status(503).json({ ok: false, error: 'simulation_disabled' });
+    }
+    const { patientId, imageUrl } = req.body || {};
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
+    if (!imageUrl) return res.status(400).json({ ok: false, error: 'imageUrl_required' });
+    if (!process.env.REPLICATE_API_TOKEN || !process.env.REPLICATE_IMG2IMG_VERSION) {
+      return res.status(503).json({ ok: false, error: 'replicate_not_configured' });
+    }
+    if (!isSupabaseEnabled()) {
+      return res.status(503).json({ ok: false, error: 'supabase_required' });
+    }
+
+    const publicUrl = String(imageUrl)
+      .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+      .split('?')[0];
+
+    const imgRes = await fetch(publicUrl, { signal: AbortSignal.timeout(25_000) });
+    if (!imgRes.ok) {
+      return res.status(502).json({ ok: false, error: 'image_fetch_failed', status: imgRes.status });
+    }
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    const meta = await sharp(buf).metadata();
+    const w = meta.width || 0;
+    const h = meta.height || 0;
+    if (!w || !h) {
+      return res.status(400).json({ ok: false, error: 'invalid_image' });
+    }
+    const jpegBuf = await sharp(buf).jpeg({ quality: 95 }).toBuffer();
+    const outBuf = await replicateTeethImg2ImgOptional(jpegBuf, w, h, {});
+    if (!outBuf) {
+      return res.status(502).json({ ok: false, error: 'replicate_failed' });
+    }
+
+    const fileName = `strip-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
+    const storagePath = `ai-photos/${patientId}/${fileName}`;
+    const { error: upErr } = await supabase.storage
+      .from('patient-files')
+      .upload(storagePath, outBuf, { contentType: 'image/jpeg', upsert: false });
+    if (upErr) {
+      return res.status(500).json({ ok: false, error: 'upload_failed', message: upErr.message });
+    }
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('patient-files')
+      .createSignedUrl(storagePath, 365 * 24 * 3600);
+    if (signErr || !signed?.signedUrl) {
+      return res.status(500).json({ ok: false, error: 'sign_failed' });
+    }
+    const url = signed.signedUrl;
+    return res.json({ ok: true, url, output: [url] });
+  } catch (e) {
+    console.error('[TEETH STRIP]', e?.message);
+    return res.status(500).json({ ok: false, error: 'strip_exception', message: e?.message });
+  }
+});
+
+// POST /api/chat/merge-teeth-strips
+// Composite AI upper/lower strips onto original full image. Body: { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth }
+app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
+  try {
+    const { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth } = req.body || {};
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
+    if (!originalImageUrl || !upperImageUrl || !lowerImageUrl || !mouth) {
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    }
+    const ox = Number(mouth.originX);
+    const oy = Number(mouth.originY);
+    const mw = Number(mouth.width);
+    const mh = Number(mouth.height);
+    if (![ox, oy, mw, mh].every((n) => Number.isFinite(n)) || mw < 1 || mh < 1) {
+      return res.status(400).json({ ok: false, error: 'invalid_mouth' });
+    }
+    if (!isSupabaseEnabled()) {
+      return res.status(503).json({ ok: false, error: 'supabase_required' });
+    }
+
+    const toPublic = (u) =>
+      String(u)
+        .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+        .split('?')[0];
+
+    const [r0, r1, r2] = await Promise.all([
+      fetch(toPublic(originalImageUrl), { signal: AbortSignal.timeout(25_000) }),
+      fetch(toPublic(upperImageUrl), { signal: AbortSignal.timeout(25_000) }),
+      fetch(toPublic(lowerImageUrl), { signal: AbortSignal.timeout(25_000) }),
+    ]);
+    if (!r0.ok || !r1.ok || !r2.ok) {
+      return res.status(502).json({ ok: false, error: 'image_fetch_failed' });
+    }
+    const origBuf = Buffer.from(await r0.arrayBuffer());
+    const upBuf = Buffer.from(await r1.arrayBuffer());
+    const loBuf = Buffer.from(await r2.arrayBuffer());
+
+    const upperH = Math.max(1, Math.floor(mh / 2));
+    const lowerH = Math.max(1, mh - upperH);
+
+    const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
+    const loResized = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
+
+    const composited = await sharp(origBuf)
+      .composite([
+        { input: upResized, left: Math.round(ox), top: Math.round(oy) },
+        { input: loResized, left: Math.round(ox), top: Math.round(oy) + upperH },
+      ])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    const fileName = `merge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
+    const storagePath = `ai-photos/${patientId}/${fileName}`;
+    const { error: upErr } = await supabase.storage
+      .from('patient-files')
+      .upload(storagePath, composited, { contentType: 'image/jpeg', upsert: false });
+    if (upErr) {
+      return res.status(500).json({ ok: false, error: 'upload_failed', message: upErr.message });
+    }
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('patient-files')
+      .createSignedUrl(storagePath, 365 * 24 * 3600);
+    if (signErr || !signed?.signedUrl) {
+      return res.status(500).json({ ok: false, error: 'sign_failed' });
+    }
+    const url = signed.signedUrl;
+    return res.json({ ok: true, url, output: [url] });
+  } catch (e) {
+    console.error('[MERGE TEETH]', e?.message);
+    return res.status(500).json({ ok: false, error: 'merge_exception', message: e?.message });
+  }
+});
+
 // POST /api/chat/ai-analyze
 // Accepts: { patientId, imageUrl, photoType? }
 // Feature flags: ENABLE_AI_ANALYSIS, ENABLE_SMILE_SIMULATION
@@ -36338,7 +36474,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v30');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v31');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
