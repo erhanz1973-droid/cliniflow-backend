@@ -15942,7 +15942,18 @@ const SIMULATION_UI_COPY = {
   confidenceLabelTr: 'AI tahmini sonuç',
   photoGuidanceTr:
     'Fotoğrafı önden, iyi ışıkta ve dişleriniz net görünecek şekilde çekin.',
+  photoGuidanceBothRowsTr:
+    'Fotoğrafta hem üst hem alt dişleriniz görünmelidir. Aksi halde simülasyon çalışmaz.',
 };
+
+const INVALID_PHOTO_BOTH_ARCHES_EN =
+  'Please take a photo where both upper and lower teeth are clearly visible.';
+const INVALID_PHOTO_BOTH_ARCHES_TR =
+  'Lütfen üst ve alt dişlerinizin net göründüğü bir fotoğraf çekin.';
+const INVALID_PHOTO_LOWER_UNCHANGED_EN =
+  'Simulation could not improve lower teeth on this photo. Retake with both rows visible.';
+const INVALID_PHOTO_LOWER_UNCHANGED_TR =
+  'Alt dişler bu fotoğrafta yeterince iyileştirilemedi; üst ve alt dişlerinizin net göründüğü bir kare deneyin.';
 
 /** Extra L* lift — kept subtle to preserve texture (used in computeEnhancedRaw). */
 function simLabStrengthMultiplier() {
@@ -16093,9 +16104,8 @@ async function normalizeTeethPreEnhance(cropBuf, maskBuf, w, h) {
 
 // Teeth-aware img2img — set REPLICATE_IMG2IMG_VERSION to stability-ai/stable-diffusion-img2img (version hash on replicate.com).
 const SIM_REPLICATE_PROMPT_DEFAULT =
-  'realistic dental smile improvement, slightly whiter teeth, natural alignment correction, fix minor crowding, ' +
-  'apply changes to both upper and lower teeth, preserve natural tooth shape, avoid artificial veneers, ' +
-  'keep imperfections realistic, keep lips and face unchanged, high realism';
+  'realistic dental smile improvement, ensure both upper and lower teeth are clearly visible and corrected, ' +
+  'apply equal alignment and whitening to both rows, do not ignore lower teeth, natural result, preserve face';
 
 const SIM_REPLICATE_NEGATIVE_DEFAULT =
   'fake teeth, plastic, overly white, perfect symmetry, cartoon, distorted face, ' +
@@ -16130,23 +16140,25 @@ function replicateNumInferenceStepsFromEnv() {
 
 /**
  * STEP 4 (optional) — Replicate img2img on mouth crop only; result still merged via teeth mask later.
- * Requires REPLICATE_API_TOKEN + REPLICATE_IMG2IMG_VERSION (model version hash from replicate.com).
- * prompt_strength: REPLICATE_PROMPT_STRENGTH env or default 0.5 (clamped ~0.45–0.55).
+ * opts.promptSuffix / opts.strengthOverride — lower-arch retry path.
  */
-async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
+async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h, opts = {}) {
   const token = process.env.REPLICATE_API_TOKEN;
   const version = process.env.REPLICATE_IMG2IMG_VERSION;
   if (!token || !version) return null;
   const envStr = Number(process.env.REPLICATE_PROMPT_STRENGTH);
-  const strength = Math.min(
+  let strength = Math.min(
     0.98,
     Math.max(
       0.35,
       Number.isFinite(envStr) ? envStr : REPLICATE_PROMPT_STRENGTH_DEFAULT
     )
   );
-  const prompt =
-    process.env.REPLICATE_TEETH_PROMPT || SIM_REPLICATE_PROMPT_DEFAULT;
+  if (typeof opts.strengthOverride === 'number' && Number.isFinite(opts.strengthOverride)) {
+    strength = Math.min(0.98, Math.max(0.35, opts.strengthOverride));
+  }
+  const basePrompt = process.env.REPLICATE_TEETH_PROMPT || SIM_REPLICATE_PROMPT_DEFAULT;
+  const prompt = basePrompt + (opts.promptSuffix ? String(opts.promptSuffix) : '');
   const image = `data:image/jpeg;base64,${cropJpegBuf.toString('base64')}`;
   const negRaw = process.env.REPLICATE_TEETH_NEGATIVE_PROMPT;
   const input = { image, prompt, prompt_strength: strength };
@@ -16208,6 +16220,83 @@ async function replicateTeethImg2ImgOptional(cropJpegBuf, w, h) {
     console.warn('[SIMSTEP 4] Replicate error:', e?.message);
     return null;
   }
+}
+
+/** Reject input when mask shows almost no lower-arch enamel vs upper (half-smile photos). */
+async function validateBothArchesVisible(maskBuf, w, h) {
+  const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
+  const yMid = Math.floor(h * 0.5);
+  let upper = 0;
+  let lower = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (maskRaw[i] <= 64) continue;
+      if (y < yMid) upper++;
+      else lower++;
+    }
+  }
+  const minPx = Math.max(48, Math.floor(w * h * 0.00075));
+  if (upper < minPx || lower < minPx) {
+    console.warn(`[SIM ARCH] reject sparse: upper=${upper} lower=${lower} min=${minPx}`);
+    return { ok: false, upper, lower, reason: 'sparse_arch' };
+  }
+  const ratio = upper > 0 ? lower / upper : 0;
+  if (ratio < 0.09) {
+    console.warn(`[SIM ARCH] reject imbalance: upper=${upper} lower=${lower} ratio=${ratio.toFixed(3)}`);
+    return { ok: false, upper, lower, reason: 'lower_arch_weak', ratio };
+  }
+  return { ok: true, upper, lower };
+}
+
+/** Mean abs RGB change on lower half of crop (y ≥ 48%) inside teeth mask. */
+async function measureLowerArchChange(origCropBuf, resCropBuf, maskBuf, w, h) {
+  const [o, r, m] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const y0 = Math.floor(h * 0.48);
+  let sum = 0;
+  let n = 0;
+  for (let y = y0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (m[i] <= 64) continue;
+      n++;
+      for (let c = 0; c < 3; c++) sum += Math.abs(o[i * 3 + c] - r[i * 3 + c]);
+    }
+  }
+  const meanAbs = n > 0 ? sum / (n * 3) : 0;
+  return { meanAbs, maskPx: n };
+}
+
+/** Stronger whitening blend on lower band only (Replicate off or retry path). */
+async function boostLowerArchMerge(origCropBuf, blendedCropBuf, maskBuf, w, h, cfg) {
+  const enc = await computeEnhancedRaw(origCropBuf, w, h, true);
+  const strongCfg = scaleSimStrength(cfg, 1.45);
+  const boosted = await blendCropWithMask(origCropBuf, enc, maskBuf, w, h, strongCfg);
+  const [r, b, m] = await Promise.all([
+    sharp(blendedCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(boosted).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const yCut = Math.floor(h * 0.47);
+  const out = Buffer.from(r);
+  for (let y = yCut; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (m[i] <= 64) continue;
+      const a = m[i] / 255;
+      for (let c = 0; c < 3; c++) {
+        out[i * 3 + c] = Math.min(
+          ENAMEL_OUTPUT_CAP,
+          Math.round(r[i * 3 + c] * (1 - a * 0.72) + b[i * 3 + c] * (a * 0.72))
+        );
+      }
+    }
+  }
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
 }
 
 // ─── Simulation mode configs ─────────────────────────────────────────────────
@@ -18251,6 +18340,23 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     console.warn('[SIMSTEP 2] mask feather non-fatal:', e?.message);
   }
 
+  if (String(process.env.SIM_SKIP_BOTH_ARCH_CHECK || "").trim() !== "1") {
+    try {
+      const archOk = await validateBothArchesVisible(maskBuf, cropWidth, cropHeight);
+      if (!archOk.ok) {
+        return {
+          url: null,
+          failReason: 'invalid_photo',
+          errorCode: 'invalid_photo',
+          message: INVALID_PHOTO_BOTH_ARCHES_EN,
+          messageTr: INVALID_PHOTO_BOTH_ARCHES_TR,
+        };
+      }
+    } catch (e) {
+      console.warn('[SIM ARCH] validation non-fatal:', e?.message);
+    }
+  }
+
   let workingCropBuf = origCropBuf;
   try {
     workingCropBuf = await normalizeTeethPreEnhance(origCropBuf, maskBuf, cropWidth, cropHeight);
@@ -18678,6 +18784,62 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     }
   } catch (e) { console.warn('[SIM VALIDATE] non-fatal:', e?.message); }
 
+  // ── Lower-arch output gate: reject if lower teeth barely changed after full pipeline ──
+  const lowerMinAbs = (() => {
+    const v = parseFloat(String(process.env.SIM_LOWER_ARCH_MIN_ABS || '2.5'), 10);
+    return Number.isFinite(v) ? Math.max(1.2, Math.min(8, v)) : 2.5;
+  })();
+  try {
+    let lowM = await measureLowerArchChange(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    if (lowM.maskPx >= 45 && lowM.meanAbs < lowerMinAbs) {
+      console.warn(
+        `[SIM LOWER ARCH] Low change meanAbs=${lowM.meanAbs.toFixed(2)} — retry (Replicate or programmatic boost)`
+      );
+      const aiRetry = await replicateTeethImg2ImgOptional(workingCropBuf, cropWidth, cropHeight, {
+        promptSuffix:
+          ' must modify both upper and lower teeth equally. Do not leave lower teeth unchanged.',
+        strengthOverride: 0.55,
+      });
+      if (aiRetry) {
+        const aiRaw = await sharp(aiRetry)
+          .resize(cropWidth, cropHeight)
+          .removeAlpha()
+          .raw()
+          .toBuffer();
+        const mergeCfgRetry = {
+          ...cfg,
+          blendAlpha: { strong: 0.75, edge: 0.34 },
+          uniformTargetFactor: Math.min(1.2, cfg.uniformTargetFactor * 0.99),
+        };
+        blendedCropBuf = await blendCropWithMask(
+          origCropBuf, aiRaw, maskBuf, cropWidth, cropHeight, mergeCfgRetry
+        );
+        blendedCropBuf = await enforceTeethMaskBoundary(
+          blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+        );
+      } else {
+        blendedCropBuf = await boostLowerArchMerge(
+          origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight, cfg
+        );
+        blendedCropBuf = await enforceTeethMaskBoundary(
+          blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+        );
+      }
+      lowM = await measureLowerArchChange(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+      if (lowM.maskPx >= 45 && lowM.meanAbs < 2.0) {
+        return {
+          url: null,
+          failReason: 'invalid_photo',
+          errorCode: 'invalid_photo',
+          message: INVALID_PHOTO_LOWER_UNCHANGED_EN,
+          messageTr: INVALID_PHOTO_LOWER_UNCHANGED_TR,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[SIM LOWER ARCH] gate non-fatal:', e?.message);
+  }
+
   // 6. Raw-pixel surgery composite ────────────────────────────────────────────
   //
   // CRITICAL DESIGN:  sharp(origBuf).composite(...).jpeg() re-encodes the ENTIRE
@@ -18988,18 +19150,23 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   if (!r.url) {
     console.log('❌ Simulation failed | reason:', r.failReason);
     logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
+    const isInvalidPhoto = r.errorCode === 'invalid_photo' || r.failReason === 'invalid_photo';
     return {
       success: false,
       variations: [],
       url: null,
       simulatedImageUrl: null,
       provider: null,
-      error: 'simulation_failed',
+      error: isInvalidPhoto ? 'invalid_photo' : 'simulation_failed',
+      errorCode: r.errorCode || (isInvalidPhoto ? 'invalid_photo' : 'simulation_failed'),
+      message: r.message || null,
+      messageTr: r.messageTr || null,
       failReason: r.failReason,
       fallback: false,
       level: 'fail',
       status: 'failed',
       debugInfo: [r.failReason],
+      photoGuidanceBothRowsTr: SIMULATION_UI_COPY.photoGuidanceBothRowsTr,
     };
   }
 
@@ -19025,6 +19192,7 @@ async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
     status:         simStatus,
     debugInfo:      [],
     ...SIMULATION_UI_COPY,
+    photoGuidanceBothRowsTr: SIMULATION_UI_COPY.photoGuidanceBothRowsTr,
   };
 }
 
@@ -19072,11 +19240,15 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
       structureWarning: result.structureWarning ?? false,
       failReason:       result.failReason ?? result.error ?? null,
       error:            okUrl ? null : (result.error || 'simulation_failed'),
+      errorCode:        result.errorCode ?? null,
+      message:          result.message ?? null,
+      messageTr:        result.messageTr ?? null,
       level:            result.level    ?? (okUrl ? 'strict' : 'fail'),
       simStatus:        result.status   ?? (okUrl ? 'success' : 'failed'),
       fallback:         result.fallback ?? false,
       confidenceLabelTr: result.confidenceLabelTr ?? SIMULATION_UI_COPY.confidenceLabelTr,
       photoGuidanceTr:   result.photoGuidanceTr ?? SIMULATION_UI_COPY.photoGuidanceTr,
+      photoGuidanceBothRowsTr: result.photoGuidanceBothRowsTr ?? SIMULATION_UI_COPY.photoGuidanceBothRowsTr,
     });
     console.log(`[SIM JOB ${jobId.slice(0,8)}] ${okUrl ? 'succeeded ✅' : 'failed ❌'} level=${result.level ?? '-'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
@@ -19127,6 +19299,7 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       simStatus:         job.simStatus   ?? 'success',
       confidenceLabelTr: job.confidenceLabelTr ?? SIMULATION_UI_COPY.confidenceLabelTr,
       photoGuidanceTr:   job.photoGuidanceTr ?? SIMULATION_UI_COPY.photoGuidanceTr,
+      photoGuidanceBothRowsTr: job.photoGuidanceBothRowsTr ?? SIMULATION_UI_COPY.photoGuidanceBothRowsTr,
       scenarios:         job.scenarios  ?? null,
       analysis:          job.analysis   ?? null,
     });
@@ -19135,11 +19308,14 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
     ok: false,
     success: false,
     status: 'failed',
-    error: 'simulation_failed',
+    error: job.error || job.errorCode || 'simulation_failed',
+    errorCode: job.errorCode || job.error || 'simulation_failed',
     simulatedImageUrl: null,
-    message: job.failReason || job.error || 'simulation_failed',
+    message: job.message || job.failReason || job.error || 'simulation_failed',
+    messageTr: job.messageTr ?? null,
     failReason: job.failReason ?? null,
     ...SIMULATION_UI_COPY,
+    photoGuidanceBothRowsTr: job.photoGuidanceBothRowsTr ?? SIMULATION_UI_COPY.photoGuidanceBothRowsTr,
   });
 });
 
@@ -35903,7 +36079,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v22');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v23');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
