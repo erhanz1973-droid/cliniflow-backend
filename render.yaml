@@ -4,6 +4,8 @@ services:
     runtime: node
     region: oregon
     plan: starter
+    # Manual deploys only — push to Git will not trigger a build (toggle also in Render dashboard).
+    autoDeploy: false
     # rootDir intentionally omitted — build and run from repo root.
     # The authoritative entry point is root/index.cjs (cliniflow-server@1.0.0).
     # cliniflow-backend/index.cjs is deprecated and must NOT be used.
@@ -24,6 +26,7 @@ services:
     env: node
     region: oregon
     plan: starter
+    autoDeploy: false
     buildCommand: npm install
     startCommand: npm start
     envVars:
