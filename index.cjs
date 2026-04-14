@@ -15926,7 +15926,7 @@ const _SIM_STR_NUM =
 /** Effective edit aggressiveness ~ img2img strength (0.35 = timid … 0.7 = strong). */
 const SIM_TRANSFORM_STRENGTH = Number.isFinite(_SIM_STR_NUM)
   ? Math.min(0.7, Math.max(0.35, _SIM_STR_NUM))
-  : 0.68;
+  : 0.72;
 
 function applySimTransformStrength(cfg) {
   const s = SIM_TRANSFORM_STRENGTH;
@@ -15991,6 +15991,12 @@ const SIM_MODES = {
     sharpenM1:           0.55,
     sharpenM2:           10,
     maxConfidence:       0.90,
+    microShiftMax:       3,
+    alignSymmetryMix:    0.68,
+    alignArchCurveMix:   0.66,
+    alignOrganicJitter:  0.2,
+    smileArcDepthPx:     4,
+    alignWarpBlend:      0.72,
   },
   // ── Mode 3: Full smile design (default) ────────────────────────────────────
   full: {
@@ -16006,8 +16012,10 @@ const SIM_MODES = {
     sharpenM1:           0.6,
     sharpenM2:           11,
     maxConfidence:       0.96,
-    microShiftMax:     3,
-    alignSymmetryMix:    0.82,
+    microShiftMax:       3,
+    alignSymmetryMix:    0.74,
+    alignArchCurveMix:   0.6,
+    alignOrganicJitter:  0.18,
     smileArcDepthPx:     4,
     alignWarpBlend:      0.76,
   },
@@ -16027,10 +16035,12 @@ const SIM_MODES = {
     sharpenM1:           0.58,
     sharpenM2:           11,
     maxConfidence:       0.94,
-    microShiftMax:       4,
-    alignSymmetryMix:    0.78,
+    microShiftMax:       3,
+    alignSymmetryMix:    0.7,
+    alignArchCurveMix:   0.64,
+    alignOrganicJitter:  0.2,
     smileArcDepthPx:     4,
-    alignWarpBlend:      0.70,
+    alignWarpBlend:      0.7,
   },
 };
 
@@ -16070,7 +16080,9 @@ SIM_MODES.perfect = {
   sharpenM2:           12,
   maxConfidence:       0.97,
   microShiftMax:       4,
-  alignSymmetryMix:    0.90,
+  alignSymmetryMix:    0.84,
+  alignArchCurveMix:   0.48,
+  alignOrganicJitter:  0.12,
   smileArcDepthPx:     5,
   alignWarpBlend:      0.78,
 };
@@ -16173,6 +16185,64 @@ function erodeMask(maskData, w, h, radius = 2) {
   return result;
 }
 
+/** Remove warm brown / stubble-like pixels from lower crop (beard overlaps “tooth” heuristics). */
+function stripBeardAndChinFromMask(maskData, data, w, h) {
+  const y0 = Math.floor(h * 0.50);
+  let stripped = 0;
+  for (let y = y0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (maskData[i] === 0) continue;
+      const r = data[i * 3], g = data[i * 3 + 1], b = data[i * 3 + 2];
+      const sat = Math.max(r, g, b) - Math.min(r, g, b);
+      const br = (r + g + b) / 3;
+      const warmBeard =
+        r > g && g > b && sat > 16 && r / (b + 1) > 1.15 && br < 200;
+      const stubbleTex = sat > 28 && br < 150 && r > g;
+      const chinBand = y > h * 0.66 && br < 95;
+      if (warmBeard || stubbleTex || chinBand) {
+        maskData[i] = 0;
+        stripped++;
+      }
+    }
+  }
+  if (stripped > 0)
+    console.log(`[SIM MASK] beard/chin exclusion: stripped ${stripped} px from lower face`);
+}
+
+/**
+ * Soft elliptical ROI when colour-based mask is empty — still only mid-crop “enamel band”,
+ * not chin/beard (vertical span ~middle 38% of crop).
+ */
+async function buildFallbackTeethMask(origCropBuf, w, h) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const maskData = Buffer.alloc(w * h);
+  const cx = w / 2;
+  const cy = h * 0.40;
+  const rx = w * 0.33;
+  const ry = h * 0.11;
+  const yTop = Math.floor(h * 0.22);
+  const yBot = Math.floor(h * 0.72);
+  for (let y = yTop; y < yBot; y++) {
+    for (let x = 0; x < w; x++) {
+      const nx = (x - cx) / rx;
+      const ny = (y - cy) / ry;
+      const d = nx * nx + ny * ny;
+      if (d <= 1.0) {
+        const i = y * w + x;
+        const alpha = Math.max(0, 1 - d * 0.35);
+        maskData[i] = Math.floor(255 * alpha);
+      }
+    }
+  }
+  stripBeardAndChinFromMask(maskData, data, w, h);
+  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
+    .blur(2.5)
+    .png()
+    .toBuffer();
+}
+
 async function buildTeethMask(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -16189,7 +16259,7 @@ async function buildTeethMask(origCropBuf, w, h) {
   //   • Left  5 %  : lip corner
   //   • Right 5 %  : lip corner
   const Y_TOP_EXCL = Math.floor(h * 0.20);
-  const Y_BOT_EXCL = Math.floor(h * 0.78);  // was 0.85 — harder bottom clamp
+  const Y_BOT_EXCL = Math.floor(h * 0.70);  // keep chin / beard stubble out of gate
   const X_L_EXCL   = Math.floor(w * 0.05);
   const X_R_EXCL   = Math.floor(w * 0.95);
 
@@ -16242,6 +16312,8 @@ async function buildTeethMask(origCropBuf, w, h) {
       if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
     }
   }
+
+  stripBeardAndChinFromMask(maskData, data, w, h);
 
   // ── Connected-component cleanup ───────────────────────────────────────────
   // Remove small isolated blobs (pores, skin specular reflections, stray bright
@@ -16837,30 +16909,76 @@ function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
   return out;
 }
 
-// ── Micro-alignment — subtle horizontal shift per tooth, max ±3 px ───────────
+// ── Micro-alignment — subtle horizontal shift along a natural arch (not a ruler line)
 //
-// Approach:
-//  1. Column-sum of the mask → profile shows how many tooth pixels per column
-//  2. Valleys in profile (< 15% of peak) = inter-tooth gaps → segment boundaries
-//  3. Centroid x of each segment  vs  ideal evenly-spaced positions
-//  4. Per-column shift map built from segment shifts with FEATHER_PX feathering
-//  5. Gaps between segments interpolated linearly (no jarring jump)
-//  6. Inverse-map warp with bilinear interpolation, blended by mask alpha
-//  7. Validation: avgDiff > 6 → revert to original
+//  1. Column-sum mask → segments = visible teeth (roughly)
+//  2. Per segment: mask centroid (cx, cy) + principal-axis angle (identity only, no rotation warp)
+//  3. Target cx: blend (a) linear spacing along span  (b) circular-arch fit  sin(θ) model
+//     — avoids “perfect straight line” equal spacing; mimics frontal dental arch
+//  4. Small deterministic jitter breaks mirror symmetry (same person, small imperfections kept)
+//  5. Shift clamped ±MAX_SHIFT, scaled by alignSymmetryMix; horizontal warp only (no resize/clone)
 //
-// cfg (optional): microShiftMax, alignSymmetryMix (0–1 toward “ideal” spacing),
-// alignWarpBlend (per-pixel warp vs original inside mask). Lower symmetry mix
-// → less rail-straight / less artificial (premium vs perfect).
+// cfg: microShiftMax, alignSymmetryMix, alignWarpBlend, alignArchCurveMix (0=linear … 1=arc),
+//      alignOrganicJitter (0…~0.25 fraction of MAX_SHIFT for per-tooth wobble)
 async function microAlignment(cropBuf, maskBuf, w, h, cfg = {}) {
   const MAX_SHIFT =
     typeof cfg.microShiftMax === 'number' ? cfg.microShiftMax : 3;
   const SYM_MIX =
-    typeof cfg.alignSymmetryMix === 'number' ? cfg.alignSymmetryMix : 0.82;
+    typeof cfg.alignSymmetryMix === 'number' ? cfg.alignSymmetryMix : 0.74;
   const WARP_BLEND =
     typeof cfg.alignWarpBlend === 'number' ? cfg.alignWarpBlend : 0.76;
+  const ARCH_MIX =
+    typeof cfg.alignArchCurveMix === 'number' ? cfg.alignArchCurveMix : 0.6;
+  const ORG_JIT =
+    typeof cfg.alignOrganicJitter === 'number' ? cfg.alignOrganicJitter : 0.18;
   const FEATHER_PX   = 8;   // px — transition width at segment edges
   const MIN_SEG_W    = 8;   // px — ignore blobs narrower than this
   const MIN_SEGMENTS = 2;   // need ≥ 2 teeth to do anything meaningful
+
+  /** Mask-weighted centroid + principal-axis angle (deg) — no geometric rotation applied. */
+  function segmentCentroidAngle(seg) {
+    let sx = 0, sy = 0, cnt = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = seg.start; x <= seg.end; x++) {
+        const idx = y * w + x;
+        if (maskRaw[idx] > 64) {
+          sx += x;
+          sy += y;
+          cnt++;
+        }
+      }
+    }
+    if (cnt < 8) {
+      return {
+        cx: (seg.start + seg.end) / 2,
+        cy: h * 0.35,
+        angleDeg: 0,
+      };
+    }
+    const mx = sx / cnt;
+    const my = sy / cnt;
+    let cxx = 0, cxy = 0, cyy = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = seg.start; x <= seg.end; x++) {
+        const idx = y * w + x;
+        if (maskRaw[idx] <= 64) continue;
+        const dx = x - mx;
+        const dy = y - my;
+        cxx += dx * dx;
+        cxy += dx * dy;
+        cyy += dy * dy;
+      }
+    }
+    cxx /= cnt;
+    cxy /= cnt;
+    cyy /= cnt;
+    const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+    return {
+      cx: mx,
+      cy: my,
+      angleDeg: (angleRad * 180) / Math.PI,
+    };
+  }
 
   const [imgRaw, maskRaw] = await Promise.all([
     sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
@@ -16896,21 +17014,56 @@ async function microAlignment(cropBuf, maskBuf, w, h, cfg = {}) {
     return cropBuf;
   }
 
-  // Centroid x of each segment
-  const centroids = segments.map(s => (s.start + s.end) / 2);
+  const perSeg = segments.map((seg) => segmentCentroidAngle(seg));
+  const centroids = perSeg.map((p) => p.cx);
   const n = segments.length;
 
-  // Ideal: evenly spaced between first and last centroid
-  const span        = centroids[n-1] - centroids[0];
-  const idealStep   = span / (n - 1);
-  const idealPos = centroids.map((_, i) => centroids[0] + i * idealStep);
+  // (A) Linear “ruler” targets — only used as partial blend (avoid pure straight-line look)
+  const span = centroids[n - 1] - centroids[0];
+  const idealLinear = centroids.map((_, i) =>
+    n <= 1 ? centroids[0] : centroids[0] + (span * i) / (n - 1)
+  );
+
+  // (B) Arch-shaped targets: fit x ≈ cx + R·sin(θ) with θ from left→right along a segment of arc
+  let idealArc = idealLinear.slice();
+  if (n >= 3) {
+    const theta = centroids.map((_, i) => (Math.PI * i) / (n - 1) - Math.PI / 2);
+    const s = theta.map(Math.sin);
+    const meanC = centroids.reduce((a, b) => a + b, 0) / n;
+    const meanS = s.reduce((a, b) => a + b, 0) / n;
+    let varS = 0, covCS = 0;
+    for (let i = 0; i < n; i++) {
+      const ds = s[i] - meanS;
+      covCS += (centroids[i] - meanC) * ds;
+      varS += ds * ds;
+    }
+    const Rfit = varS > 1e-6 ? covCS / varS : 0;
+    const cxFit = meanC - Rfit * meanS;
+    idealArc = centroids.map((_, i) => cxFit + Rfit * s[i]);
+  }
+
+  // Blend linear vs arch; then tiny per-tooth organic offset (not mirror-perfect)
+  const idealPos = centroids.map((_, i) => {
+    const base =
+      idealLinear[i] * (1 - ARCH_MIX) + idealArc[i] * ARCH_MIX;
+    const jitter =
+      Math.sin(i * 2.91 + n * 0.37 + 1.1) * ORG_JIT * MAX_SHIFT;
+    return base + jitter;
+  });
+
   const segShift = centroids.map((c, i) => {
     const raw = idealPos[i] - c;
     const lim = Math.max(-MAX_SHIFT, Math.min(MAX_SHIFT, raw));
     return lim * SYM_MIX;
   });
+
+  const angSample = perSeg
+    .slice(0, Math.min(8, n))
+    .map((p, i) => `(${i}:°${p.angleDeg.toFixed(0)})`)
+    .join(' ');
   console.log(
-    `[SIM ALIGN] ${n} teeth maxShift=${MAX_SHIFT} symMix=${SYM_MIX.toFixed(2)} ` +
+    `[SIM ALIGN] ${n} teeth archMix=${ARCH_MIX.toFixed(2)} maxShift=${MAX_SHIFT} ` +
+    `symMix=${SYM_MIX.toFixed(2)} | angles ${angSample}${n > 8 ? ' …' : ''} | ` +
     `shifts=[${segShift.map((s) => s.toFixed(1)).join(',')}]px`
   );
 
@@ -17434,8 +17587,8 @@ async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = 
 //
 //  strict  → full simulation (alignment + whitening)     dangerRatio ≤ 5%, totalOn ≥ 300
 //  relaxed → whitening only, no shape changes            dangerRatio ≤ 12%, totalOn ≥ 120
-//  minimal → subtle colour correction only               dangerRatio ≤ 25%, totalOn ≥ 40
-//  fail    → return original image                       below all thresholds
+//  minimal → best-effort strong whitening (sparse / beard-heavy mask)
+//  fail    → almost empty mask only — caller uses synthetic ROI (never skip enhancement)
 //
 async function assessMaskQuality(maskBuf, w, h) {
   const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
@@ -17447,18 +17600,20 @@ async function assessMaskQuality(maskBuf, w, h) {
     if (Math.floor(i / w) >= dangerRowStart) dangerOn++;
   }
   const dangerRatio = totalOn > 0 ? dangerOn / totalOn : 0;
+  const beardHeavy =
+    dangerRatio > 0.09 || (dangerOn > 35 && dangerRatio > 0.055);
 
   let level;
-  if      (totalOn < 40  || dangerRatio > 0.25) level = 'fail';
-  else if (totalOn < 120 || dangerRatio > 0.12) level = 'minimal';
+  if      (totalOn < 6) level = 'fail';
+  else if (totalOn < 50 || dangerRatio > 0.24 || beardHeavy) level = 'minimal';
   else if (totalOn < 300 || dangerRatio > 0.05) level = 'relaxed';
   else                                           level = 'strict';
 
   console.log(
     `[SIM LEVEL] ${level.toUpperCase()} | totalOn=${totalOn} dangerOn=${dangerOn} ` +
-    `dangerRatio=${(dangerRatio * 100).toFixed(1)}%`
+    `dangerRatio=${(dangerRatio * 100).toFixed(1)}% beardHeavy=${beardHeavy}`
   );
-  return { level, totalOn, dangerRatio };
+  return { level, totalOn, dangerRatio, beardHeavy };
 }
 
 // ── Safe-region mask clamp ────────────────────────────────────────────────────
@@ -17505,18 +17660,21 @@ function levelCfg(requestedCfg, level) {
       };
 
     case 'minimal':
-      // Still visible vs original — reduced geometry risk only.
+      // Best-effort: strong whitening, no geometry — mask was sparse / beard-heavy.
       return {
-        ...SIM_MODES.basic,
+        ...SIM_MODES.whitening,
         name:                `${requestedCfg.name}→minimal`,
         label:               requestedCfg.label,
-        blendAlpha:          { strong: 0.42, edge: 0.18 },
-        uniformTargetFactor: 1.10,
+        blendAlpha:          { strong: 0.74, edge: 0.36 },
+        uniformTargetFactor: Math.min(1.28, requestedCfg.uniformTargetFactor),
         alignment:    false,
         smileArc:     false,
         edgeSoftening:false,
         highlights:   false,
-        maxConfidence:0.55,
+        sharpenSigma: 1.12,
+        sharpenM1:    0.52,
+        sharpenM2:    9,
+        maxConfidence:0.62,
       };
 
     default:
@@ -17679,35 +17837,27 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
 
   // 3b. Assess mask quality → determine fallback level ─────────────────────
   //
-  // Instead of hard-failing, we cascade through four levels:
-  //   strict  → run full requested mode (alignment + whitening)
-  //   relaxed → whitening only, no geometry (mask slightly dirty / sparse)
-  //   minimal → subtle colour correction only (barely detectable teeth)
-  //   fail    → return original image (truly no teeth found)
-  //
-  // For relaxed/minimal: also clamp mask to top 72% of crop so that any
-  // chin/beard pixels that survived the colour filter are surgically removed
-  // before the blending pass.
+  // Cascade: strict → full mode | relaxed → whitening+ | minimal → best-effort |
+  // fail (almost empty) → synthetic mid-crop enamel ROI — never skip processing.
+  // Beard-heavy: tighter vertical clamp so only enamel band is blended.
   let simLevel = 'strict';
+  let beardHeavy = false;
   try {
     const qa = await assessMaskQuality(maskBuf, cropWidth, cropHeight);
-    simLevel  = qa.level;
+    simLevel   = qa.level;
+    beardHeavy = !!qa.beardHeavy;
 
     if (simLevel === 'fail') {
-      console.warn('[SIM LEVEL] FAIL — no usable teeth detected; returning original unchanged');
-      return {
-        url: null, confidence: 0.0, level: 'fail',
-        status: 'failed',
-        failReason: 'mask_safety: no teeth detected',
-      };
+      console.warn('[SIM LEVEL] Mask nearly empty — synthetic enamel ROI + best-effort whitening');
+      maskBuf = await buildFallbackTeethMask(origCropBuf, cropWidth, cropHeight);
+      simLevel = 'minimal';
     }
 
-    // Downgrade cfg if mask quality is sub-optimal
     if (simLevel !== 'strict') {
       cfg = levelCfg(cfg, simLevel);
       console.log(`[SIM LEVEL] Downgraded to ${simLevel} — mode overridden to ${cfg.name}`);
-      // Clamp mask to remove borderline chin/beard pixels
-      maskBuf = await clampMaskToSafeRegion(maskBuf, cropWidth, cropHeight, 0.72);
+      const safeFrac = beardHeavy ? 0.62 : 0.70;
+      maskBuf = await clampMaskToSafeRegion(maskBuf, cropWidth, cropHeight, safeFrac);
     }
   } catch (e) { console.warn('[SIM LEVEL] non-fatal:', e?.message); }
 
@@ -17746,7 +17896,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
 
     if (bestLift < minLift && simLevel !== 'minimal') {
       console.warn(`[SIM VIS] best lift ${bestLift.toFixed(1)}% < ${minLift}% — forced high-strength pass`);
-      const forced    = scaleSimStrength(cfg, 1.78);
+      const forced    = scaleSimStrength(cfg, 2.05);
       const encForced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
       bestBuf = await blendCropWithMask(origCropBuf, encForced, maskBuf, cropWidth, cropHeight, forced);
       bestLift = await measureTeethBrightnessLiftPct(origCropBuf, bestBuf, maskBuf, cropWidth, cropHeight);
@@ -17874,11 +18024,11 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       console.warn('[SIM STRUCTURE] ⚠️ Structure changed:', integ.issues.join(', '), '— reverting to safe fallback');
       structureWarning = true;
 
-      // Safe fallback: minimal blend, no uniform-whitening overshoot, no extra passes
+      // Safe fallback: still visibly brighter teeth (never near-identical to input)
       const safeCfg = {
         ...cfg,
-        blendAlpha:          { strong: 0.55, edge: 0.26 },
-        uniformTargetFactor: 1.14,
+        blendAlpha:          { strong: 0.76, edge: 0.34 },
+        uniformTargetFactor: 1.26,
         edgeSoftening:       false,
         highlights:          false,
         alignment:           false,
@@ -17930,7 +18080,7 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   // ── Post-generation gate: pixel + histogram vs original ────────────────────
   // If the fenced crop still looks almost identical to the input, run one or
   // two stronger enhance+blend passes (then re-sharpen + re-fence).
-  const POST_GEN_MAX = simLevel === 'minimal' ? 2 : 3;
+  const POST_GEN_MAX = simLevel === 'minimal' ? 3 : 4;
   for (let pg = 0; pg < POST_GEN_MAX; pg++) {
     try {
       const pm = await assessPostGenerationChange(
@@ -17961,6 +18111,30 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
       console.warn('[SIM POST-GEN] non-fatal:', e?.message);
       break;
     }
+  }
+
+  // Mandatory last resort: never ship an identical-looking crop
+  try {
+    const pmEnd = await assessPostGenerationChange(
+      origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight
+    );
+    if (shouldPostGenRegenerate(pmEnd, simLevel)) {
+      console.warn('[SIM POST-GEN] Mandatory ultra pass — forced visible delta');
+      const ultraCfg = scaleSimStrength(cfg, 2.55);
+      const encU = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
+      blendedCropBuf = await blendCropWithMask(
+        origCropBuf, encU, maskBuf, cropWidth, cropHeight, ultraCfg
+      );
+      blendedCropBuf = await sharp(blendedCropBuf)
+        .sharpen({ sigma: cfg.sharpenSigma * 1.1, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+      blendedCropBuf = await enforceTeethMaskBoundary(
+        blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+      );
+    }
+  } catch (e) {
+    console.warn('[SIM POST-GEN] mandatory pass non-fatal:', e?.message);
   }
 
   try {
@@ -35175,7 +35349,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v13');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v14');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
