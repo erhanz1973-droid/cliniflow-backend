@@ -28,6 +28,8 @@ const AI_COST_LIMIT_PER_USER = parseFloat(process.env.AI_COST_LIMIT_PER_USER || 
 // Fixed cost estimate per analysis call (GPT-4o vision ~$0.01 per request).
 // Replace with real token-based calculation when needed.
 const AI_ESTIMATED_COST_PER_CALL = parseFloat(process.env.AI_ESTIMATED_COST_PER_CALL || "0.01");
+// Developer bypass (temporary): AI_DEV_BYPASS_LIMIT=1 skips limit + cost recording for this process.
+// Optional: client sends developerMode:true only if AI_ALLOW_DEV_CLIENT_BYPASS=1 (e.g. staging; never in prod).
 
 // ─── AI Rate Limiter ─────────────────────────────────────────────────────────
 // Per-patient: max 10 AI requests / 60 s window (configurable via env)
@@ -102,6 +104,19 @@ async function aiCostCheck(userId) {
     console.warn('[AI COST] Exception during check (allowing request):', e?.message);
     return { totalCost: 0, limited: false };
   }
+}
+
+/** When true, skip ai_cost limit check and aiCostRecord (dev / staging only). */
+function shouldBypassAiCostLimit(req) {
+  if (String(process.env.AI_DEV_BYPASS_LIMIT || "").trim() === "1") return true;
+  const body = req.body || {};
+  if (
+    body.developerMode === true &&
+    String(process.env.AI_ALLOW_DEV_CLIENT_BYPASS || "").trim() === "1"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Increments the user's accumulated cost by AI_ESTIMATED_COST_PER_CALL.
@@ -19477,17 +19492,27 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(501).json({ ok: false, error: 'ai_not_configured', message: 'OPENAI_API_KEY not set' });
     }
 
-    // ── Cost limit check ────────────────────────────────────────────────
-    const { limited, totalCost } = await aiCostCheck(patientId);
-    if (limited) {
-      logAI('warn', 'ai_cost_limit_reached', { patientId, totalCost, limit: AI_COST_LIMIT_PER_USER });
-      return res.status(403).json({
-        ok: false,
-        error: 'ai_limit_reached',
-        message: 'AI kullanım limitine ulaştınız',
-        totalCost,
-        limit: AI_COST_LIMIT_PER_USER,
+    const bypassAiLimit = shouldBypassAiCostLimit(req);
+    if (bypassAiLimit) {
+      logAI('info', 'ai_cost_limit_bypassed', {
+        patientId,
+        reason: String(process.env.AI_DEV_BYPASS_LIMIT || "").trim() === "1" ? "AI_DEV_BYPASS_LIMIT" : "developerMode",
       });
+    }
+
+    // ── Cost limit check ────────────────────────────────────────────────
+    if (!bypassAiLimit) {
+      const { limited, totalCost } = await aiCostCheck(patientId);
+      if (limited) {
+        logAI('warn', 'ai_cost_limit_reached', { patientId, totalCost, limit: AI_COST_LIMIT_PER_USER });
+        return res.status(403).json({
+          ok: false,
+          error: 'ai_limit_reached',
+          message: 'AI kullanım limitine ulaştınız',
+          totalCost,
+          limit: AI_COST_LIMIT_PER_USER,
+        });
+      }
     }
 
     logAI('info', 'analyze_start', { patientId, imageUrl });
@@ -19685,8 +19710,10 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       totalElapsedMs: Date.now() - _t0,
     });
 
-    // ── Record cost only after a successful AI response ─────────────────
-    await aiCostRecord(patientId);
+    // ── Record cost only after a successful AI response (skip when dev bypass) ──
+    if (!bypassAiLimit) {
+      await aiCostRecord(patientId);
+    }
 
     return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, simulationProvider, disclaimer, clinics: recommendedClinics });
 
@@ -36100,7 +36127,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v24');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v25');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
