@@ -4,13 +4,12 @@
 require("dotenv").config();
 
 const express = require("express");
+const sharp = require("sharp");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
-const zlib = require("zlib");
-const sharp = require("sharp");
 
 // ─── AI config (read once at startup) ────────────────────────────────────────
 const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS     || "30000", 10));
@@ -2602,6 +2601,16 @@ app.get("/admin.html", (req, res) => {
 });
 
 app.get("/", (req, res) => res.redirect("/admin-login.html"));
+
+// Public version endpoint — hit this in a browser to confirm which build is live.
+// e.g. https://cliniflow-backend.onrender.com/api/version
+app.get("/api/version", (req, res) => res.json({
+  version: "v8",
+  commit:  "cb175eef",
+  sim:     "programmatic-whitening",
+  ai:      false,
+  built:   "2026-04-13",
+}));
 app.get("/admin", (req, res) => res.redirect("/admin-login.html"));
 // /dashboard should serve normal admin dashboard, NOT redirect to Super Admin
 app.get("/dashboard", (req, res) => {
@@ -15790,705 +15799,1379 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── Smile Simulation — 3 variations via Replicate stable-diffusion-img2img ──
-// Model : stability-ai/stable-diffusion-img2img (ddd4eb44, confirmed working)
-// Root cause guard: Supabase signed URLs expire and require auth headers that
-// Replicate's servers cannot supply.  We always fetch the image server-side
-// first and pass it to Replicate as a base64 data URI so the URL is never
-// exposed externally.
-
-// img2img model — used ONLY as last-resort fallback when inpainting is unavailable
-const SIM_VERSION = 'ddd4eb440853a42c055203289a3da0c8886b0b9492fe619b1c1dbd34be160ce7';
-
-// stability-ai/stable-diffusion-inpainting — primary path (edits ONLY the masked teeth region)
-// This is a VERSIONED model (not a deployment) so it MUST be called via
-// POST /v1/predictions with { version: SIM_INPAINT_VERSION, input: {...} }.
-// Using the /v1/models/.../predictions (deployment) endpoint returns 404.
-const SIM_INPAINT_VERSION = '95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3';
-
-// Shared negative prompt — explicitly blocks any face/beard/skin changes
-const SIM_NEGATIVE = [
-  // face structure must not change
-  'beard removed', 'beard changed', 'beard altered', 'no beard',
-  'lips changed', 'lips altered', 'lip shape changed',
-  'skin changed', 'skin colour changed',
-  'face modified', 'face structure changed', 'nose changed', 'eyes changed',
-  // dental artifacts
-  'fake teeth', 'extra teeth', 'duplicated teeth', 'mismatched teeth',
-  'upper teeth on lower jaw', 'wrong dental anatomy',
-  // general quality
-  'blurry', 'cartoon', 'distorted', 'deformed', 'artifacts', 'overexposed',
-].join(', ');
-
-const SIM_VARIATIONS = [
-  {
-    id:              'natural',
-    label:           'Doğal',
-    prompt_strength: 0.3,   // img2img fallback strength (very low — minimal whole-image change)
-    prompt: [
-      'Keep the original face EXACTLY the same.',
-      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
-      'ONLY the teeth: natural white color, slight alignment improvement.',
-      'Beard must remain identical. Lips must remain identical.',
-      'Photorealistic dental photo.',
-    ].join(' '),
-  },
-  {
-    id:              'balanced',
-    label:           'Önerilen',
-    prompt_strength: 0.35,
-    prompt: [
-      'Keep the original face EXACTLY the same.',
-      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
-      'ONLY improve the teeth: natural white color, better alignment,',
-      'upper teeth naturally larger than lower teeth.',
-      'Beard must remain identical. Lips must remain identical.',
-      'Photorealistic dental photo.',
-    ].join(' '),
-  },
-  {
-    id:              'hollywood',
-    label:           'Hollywood',
-    prompt_strength: 0.4,
-    prompt: [
-      'Keep the original face EXACTLY the same.',
-      'Do NOT modify beard, lips, skin, nose, eyes or facial structure.',
-      'ONLY the teeth: ultra white perfect veneers, hollywood smile,',
-      'upper teeth prominently larger than lower teeth, anatomically correct.',
-      'Beard must remain identical. Lips must remain identical.',
-      'Photorealistic dental photo.',
-    ].join(' '),
-  },
-];
-
-// ── Shared Replicate prediction-create helper (with 429 retry) ─────────────
-/**
- * POST to Replicate to create a prediction, retrying once after a short wait
- * when a 429 rate-limit is returned.
- *
- * Replicate's 429 response on low-credit accounts says "resets in ~10s", so
- * we wait 14 s before the retry to be safe.
- *
- * Returns { id: string } on success or throws with a failReason string.
- */
-const RATE_LIMIT_RETRY_WAIT_MS = 14_000;
-
-async function replicateCreate(url, body, token) {
-  const doCreate = () =>
-    fetch(url, {
-      method:  'POST',
-      headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-      signal:  AbortSignal.timeout(15_000),
-    });
-
-  let res  = await doCreate();
-  let text = await res.text();
-
-  if (res.status === 429) {
-    console.warn(`[SIM] 429 rate-limited — waiting ${RATE_LIMIT_RETRY_WAIT_MS / 1000}s then retrying…`);
-    await new Promise(r => setTimeout(r, RATE_LIMIT_RETRY_WAIT_MS));
-    res  = await doCreate();
-    text = await res.text();
-  }
-
-  let data;
-  try { data = JSON.parse(text); } catch { data = {}; }
-
-  console.log(`[SIM] Create HTTP ${res.status} | id: ${data?.id ?? 'none'} | err: ${data?.detail ?? data?.error ?? '-'}`);
-
-  if (!res.ok) {
-    const reason = `create_http_${res.status}: ${(data?.detail ?? data?.error ?? text).slice(0, 200)}`;
-    const err    = new Error(reason);
-    err.status   = res.status;
-    err.isRateLimit = res.status === 429;
-    throw err;
-  }
-  if (!data?.id) {
-    const err = new Error('create_no_id: ' + text.slice(0, 100));
-    throw err;
-  }
-  return data; // { id, status, ... }
-}
-
-// ── Teeth-mask PNG generation (no external dependencies) ───────────────────
-// Builds a valid greyscale PNG using only Node.js built-in `zlib`.
-// White pixel  = region to MODIFY (mouth/teeth area)
-// Black pixel  = region to KEEP  (rest of face, eyes, skin, nose …)
+// ─── Dental Enhancement Engine (NO AI / NO Replicate) ────────────────────────
 //
-// Mouth heuristic for a portrait photo:
-//   Y: 55 % – 80 % from top
-//   X: 20 % – 80 % from left
-
-const _pngCrcTable = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-    t[n] = c;
-  }
-  return t;
-})();
-
-function _pngCrc32(buf) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ _pngCrcTable[(c ^ buf[i]) & 0xFF];
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-
-function _pngChunk(type, data) {
-  const t  = Buffer.from(type, 'ascii');
-  const d  = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  const l  = Buffer.alloc(4); l.writeUInt32BE(d.length);
-  const cc = Buffer.alloc(4); cc.writeUInt32BE(_pngCrc32(Buffer.concat([t, d])));
-  return Buffer.concat([l, t, d, cc]);
-}
-
-function generateMouthMaskPng(W = 512, H = 512) {
-  // Teeth-only region (excludes the outer lip border):
-  //   Y: 63 % – 78 % from top  (inner mouth / visible tooth area)
-  //   X: 30 % – 70 % from left (centred, narrower than the full mouth width)
-  // Making this region tight is critical — if it overlaps the lips or beard
-  // the inpainting model will modify those areas too.
-  const y1 = Math.round(H * 0.63);
-  const y2 = Math.round(H * 0.78);
-  const x1 = Math.round(W * 0.30);
-  const x2 = Math.round(W * 0.70);
-
-  // Each row: 1 filter byte (0 = None) followed by W grey pixels
-  const raw = Buffer.alloc(H * (1 + W), 0);
-  for (let y = 0; y < H; y++) {
-    const base = y * (1 + W);
-    raw[base] = 0; // filter = None
-    for (let x = 0; x < W; x++) {
-      raw[base + 1 + x] = (x >= x1 && x < x2 && y >= y1 && y < y2) ? 255 : 0;
-    }
-  }
-
-  const idat = zlib.deflateSync(raw, { level: 6 });
-
-  const ihdr = Buffer.alloc(13, 0);
-  ihdr.writeUInt32BE(W, 0);
-  ihdr.writeUInt32BE(H, 4);
-  ihdr[8] = 8; // bit depth = 8
-  ihdr[9] = 0; // colour type = grayscale (bytes 10–12 already 0)
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), // PNG sig
-    _pngChunk('IHDR', ihdr),
-    _pngChunk('IDAT', idat),
-    _pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
-// Upload the mask once per server lifetime and cache the Replicate URL.
-// Reset to null on each deploy so the tighter mask is always re-uploaded.
-let _cachedMaskUrl = null;
-
-async function getOrUploadMask(token) {
-  if (_cachedMaskUrl) return _cachedMaskUrl;
-
-  const maskBuf = generateMouthMaskPng(512, 512);
-  console.log(`[SIM] Uploading mouth mask (${Math.round(maskBuf.byteLength / 1024)} KB) to Replicate…`);
-
-  const form = new FormData();
-  form.append('content', new Blob([maskBuf], { type: 'image/png' }), 'teeth-mask.png');
-
-  const res  = await fetch('https://api.replicate.com/v1/files', {
-    method:  'POST',
-    headers: { 'Authorization': `Token ${token}` },
-    body:    form,
-    signal:  AbortSignal.timeout(20_000),
-  });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    console.warn(`[SIM] Mask upload HTTP ${res.status} — will use img2img fallback`);
-    return null;
-  }
-
-  _cachedMaskUrl = data?.urls?.get ?? data?.url ?? null;
-  console.log('[SIM] Mask URL cached:', _cachedMaskUrl?.slice(0, 80));
-  return _cachedMaskUrl;
-}
-
-// ── Source-image upload to Replicate ───────────────────────────────────────
-/**
- * Fetch the Supabase image server-side and upload it to Replicate's file API.
- *
- * WHY: stability-ai/stable-diffusion-img2img (ddd4eb44) uses Cog's URI-type
- * input — it requires a real https:// URL and silently ignores base64 data
- * URIs.  Supabase signed URLs expire / require auth headers that Replicate's
- * workers cannot supply.
- *
- * Replicate's /v1/files endpoint hosts the image on their own CDN and returns
- * an https://api.replicate.com/v1/files/... URL that the model can always read.
- *
- * @returns {string} Replicate-hosted image URL
- */
-async function uploadImageToReplicate(imageUrl, token) {
-  console.log('[SIM] Fetching source image:', imageUrl.slice(0, 120));
-  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) });
-  if (!imgRes.ok) {
-    throw new Error(`image_fetch_failed: HTTP ${imgRes.status}`);
-  }
-  const contentType = imgRes.headers.get('content-type') ?? 'image/jpeg';
-  const buffer      = Buffer.from(await imgRes.arrayBuffer());
-  const sizeKB      = Math.round(buffer.byteLength / 1024);
-  console.log(`[SIM] Fetched ${sizeKB} KB | ${contentType} — uploading to Replicate files…`);
-
-  // Upload to Replicate /v1/files — returns a hosted URL the model can read
-  const form = new FormData();
-  form.append('content', new Blob([buffer], { type: contentType }), 'input.jpg');
-
-  const uploadRes  = await fetch('https://api.replicate.com/v1/files', {
-    method:  'POST',
-    headers: { 'Authorization': `Token ${token}` },
-    body:    form,
-    signal:  AbortSignal.timeout(30_000),
-  });
-  const uploadText = await uploadRes.text();
-  let uploadData;
-  try { uploadData = JSON.parse(uploadText); } catch { uploadData = {}; }
-
-  if (!uploadRes.ok) {
-    // /v1/files not available (older Replicate accounts) — fall back to signed URL
-    console.warn(`[SIM] File upload HTTP ${uploadRes.status}:`, uploadText.slice(0, 200));
-    console.warn('[SIM] Falling back to direct signed URL (may fail if Replicate cannot access it)');
-    return imageUrl;
-  }
-
-  const hostedUrl = uploadData?.urls?.get ?? uploadData?.url ?? null;
-  if (!hostedUrl) {
-    console.warn('[SIM] File upload returned no URL, body:', uploadText.slice(0, 200));
-    return imageUrl;
-  }
-
-  console.log('[SIM] Replicate file URL:', hostedUrl.slice(0, 80));
-  return hostedUrl;
-}
-
-// Returns { url: string|null, failReason: string|null }
-async function replicatePrediction(rawImageUrl, { prompt, negative_prompt, prompt_strength }, token) {
-  // negative_prompt defaults to SIM_NEGATIVE when not explicitly provided
-  const negPrompt = negative_prompt ?? SIM_NEGATIVE;
-
-  // ── Convert to public URL (no expiry / no auth) ─────────────────────
-  const imageUrl = rawImageUrl
-    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
-    .split('?')[0];
-
-  console.log('[SIM] USING PUBLIC URL:', imageUrl);
-
-  if (imageUrl.includes('/sign/')) {
-    const msg = 'signed_url_guard: conversion had no effect';
-    console.error('[SIM]', msg, '| raw:', rawImageUrl);
-    return { url: null, failReason: msg };
-  }
-
-  // ── Create prediction (with 429 retry) ─────────────────────────────
-  let predId;
-  try {
-    const created = await replicateCreate(
-      'https://api.replicate.com/v1/predictions',
-      { version: SIM_VERSION, input: { image: imageUrl, prompt, negative_prompt: negPrompt, prompt_strength, num_inference_steps: 30, disable_safety_checker: true } },
-      token,
-    );
-    predId = created.id;
-  } catch (e) {
-    const reason = e?.message ?? 'create_exception';
-    console.error('[SIM img2img] Create failed:', reason);
-    return { url: null, failReason: reason, isRateLimit: e?.isRateLimit ?? false };
-  }
-
-  // ── Poll: 60 attempts × 1.5 s = 90 s max ──────────────────────────
-  const MAX_POLLS     = 60;
-  const POLL_INTERVAL = 1500;
-  let   polls         = 0;
-  let   prediction    = { status: 'starting' };
-
-  while (
-    prediction.status !== 'succeeded' &&
-    prediction.status !== 'failed'    &&
-    polls < MAX_POLLS
-  ) {
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-    try {
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-        headers: { 'Authorization': `Token ${token}` },
-        signal:  AbortSignal.timeout(8_000),
-      });
-      prediction = await pollRes.json();
-    } catch (e) {
-      console.warn(`[SIM] Poll ${polls} exception:`, e?.message);
-    }
-    console.log(`[SIM POLL] ${polls}/${MAX_POLLS}: ${prediction.status}`);
-    polls++;
-  }
-
-  if (prediction.status === 'succeeded' && prediction.output) {
-    const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-    console.log('REPLICATE OUTPUT:', output);
-    return { url: output, failReason: null };
-  }
-
-  console.log('❌ NO OUTPUT FROM REPLICATE | status:', prediction.status, '| polls:', polls);
-  if (prediction.status === 'failed') {
-    console.error('[SIM] Prediction failed | error:', prediction.error, '\n  logs:', String(prediction.logs ?? '').slice(-400));
-    return { url: null, failReason: `prediction_failed: ${prediction.error ?? '(no message)'}` };
-  }
-  return { url: null, failReason: polls >= MAX_POLLS ? `timeout_${MAX_POLLS}_polls` : 'no_output' };
-}
-
-/**
- * Inpainting prediction using stability-ai/stable-diffusion-inpainting.
- * Uses the model endpoint (no version hash) so it always runs the latest
- * deployment without version-hash maintenance.
- *
- * The mask defines where the model edits:
- *   white (255) → teeth region – model improves this area
- *   black (0)   → rest of face – model copies original exactly
- *
- * Returns { url: string|null, failReason: string|null }
- */
-async function replicateInpaintPrediction(imageUrl, maskUrl, { prompt }, token) {
-  let predId;
-  try {
-    const created = await replicateCreate(
-      'https://api.replicate.com/v1/predictions',
-      {
-        // Use the versioned endpoint — stability-ai/stable-diffusion-inpainting is a
-        // versioned model (not a deployment), so the /v1/models/.../predictions path
-        // returns 404. We must supply an explicit version hash here.
-        version: SIM_INPAINT_VERSION,
-        input: {
-          image:               imageUrl,
-          mask:                maskUrl,
-          prompt,
-          negative_prompt:     SIM_NEGATIVE,
-          num_inference_steps: 30,
-          guidance_scale:      8.0,
-          disable_safety_checker: true, // dental photos trigger false-positive NSFW
-          // NOTE: no 'strength' param — img2img-only; not valid for inpainting models.
-        },
-      },
-      token,
-    );
-    predId = created.id;
-  } catch (e) {
-    const reason = e?.message ?? 'inpaint_exception';
-    console.error('[SIM INPAINT] Create failed:', reason);
-    return { url: null, failReason: reason, isRateLimit: e?.isRateLimit ?? false };
-  }
-
-  // Poll up to 90 s (same budget as img2img)
-  const MAX_POLLS     = 60;
-  const POLL_INTERVAL = 1500;
-  let   polls         = 0;
-  let   prediction    = { status: 'starting' };
-
-  while (
-    prediction.status !== 'succeeded' &&
-    prediction.status !== 'failed'    &&
-    polls < MAX_POLLS
-  ) {
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-    try {
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-        headers: { 'Authorization': `Token ${token}` },
-        signal:  AbortSignal.timeout(8_000),
-      });
-      prediction = await pollRes.json();
-    } catch (e) {
-      console.warn(`[SIM INPAINT] Poll ${polls} exception:`, e?.message);
-    }
-    console.log(`[SIM INPAINT POLL] ${polls}/${MAX_POLLS}: ${prediction.status}`);
-    polls++;
-  }
-
-  if (prediction.status === 'succeeded' && prediction.output) {
-    const output = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-    console.log('[SIM INPAINT] Output:', output?.slice(0, 80));
-    return { url: output, failReason: null };
-  }
-  if (prediction.status === 'failed') {
-    console.error('[SIM INPAINT] Failed | error:', prediction.error, '\n  logs:', String(prediction.logs ?? '').slice(-400));
-    return { url: null, failReason: `inpaint_failed: ${prediction.error ?? '(no message)'}` };
-  }
-  return { url: null, failReason: polls >= MAX_POLLS ? `inpaint_timeout_${MAX_POLLS}` : 'inpaint_no_output' };
-}
-
-/**
- * Convert a Supabase signed URL to its public equivalent.
- * /storage/v1/object/sign/bucket/path?token=xxx
- * → /storage/v1/object/public/bucket/path
- *
- * The `patient-files` bucket must have public access enabled in Supabase.
- * A public URL is a plain https:// link with no auth/expiry — Replicate can
- * always fetch it.
- */
-function toPublicUrl(signedUrl) {
-  return signedUrl
-    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
-    .split('?')[0];
-}
-
-/**
-// ── Buffer upload helper (used by crop-composite path) ─────────────────────
-/**
- * Upload an in-memory image buffer to Replicate's /v1/files CDN so the
- * model workers can fetch it by URL.
- */
-async function uploadBufferToReplicate(buffer, contentType, filename, token) {
-  const form = new FormData();
-  form.append('content', new Blob([buffer], { type: contentType }), filename);
-
-  const res  = await fetch('https://api.replicate.com/v1/files', {
-    method:  'POST',
-    headers: { 'Authorization': `Token ${token}` },
-    body:    form,
-    signal:  AbortSignal.timeout(30_000),
-  });
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) throw new Error(`buf_upload_http_${res.status}: ${JSON.stringify(data).slice(0, 120)}`);
-  const url = data?.urls?.get ?? data?.url ?? null;
-  if (!url) throw new Error('buf_upload_no_url');
-  return url;
-}
-
-// ── Programmatic teeth whitening (PRIMARY simulation path) ────────────────────
-//
-// NO AI / NO Replicate API needed.
+// QUALITY RULES (canonical):
+//   ACCEPT:          stain removal, tartar cleaning, mild whitening,
+//                    preserve tooth shape and spacing exactly
+//   PARTIAL ACCEPT:  subtle alignment (max ±3 px) — disabled by default
+//   REJECT:          full smile reconstruction, paper-white artificial look,
+//                    shape-changing restorations, any geometry invention
+//   KEY PRINCIPLE:   "Improve quality, not geometry"
 //
 // Pipeline:
-//  1. Fetch original image bytes
-//  2. Crop lower-face region (Y 55–90 %, X 15–85 %)
-//  3. Build a per-pixel teeth mask from the crop:
-//       bright + low-saturation pixels  →  white (teeth)
-//       pink / dark / saturated pixels  →  black (lips, gums, skin, beard)
-//  4. Apply whitening transform to all crop pixels
-//  5. Pixel-blend:  result[p] = orig[p] × (1−α) + whitened[p] × α
-//       → only tooth-coloured pixels are brightened/whitened
-//       → lips / gums / skin / beard inside the box stay 100 % original
-//  6. Composite the blended crop onto the full original image
-//  7. Upload to Supabase, return public URL
+//  1. Fetch original → crop lower-face (Y 55–90%, X 15–85%)
+//  2. Build teeth mask (brightness+saturation+hue filter, σ=3 blur)
+//  3. computeLocalStats  → per-pixel 7×7 mean + std (adaptive tartar detection)
+//  4. computeEnhancedRaw → tartar removal + LAB whitening (mild, L×1.06)
+//  5. bilateralFilter    → edge-preserving smooth (r=3, σ_color=25, σ_space=3)
+//  6. blendCropWithMask  → alpha blend + dark-floor + line-reduce + micro-tex
+//                          + uniform whitening (avg×1.12 max)
+//  7. [optional] microAlignment — disabled; enable via MICRO_ALIGN_ENABLED
+//  8. sharpen + composite onto full original + upload Supabase
+
+// ─── Simulation mode configs ─────────────────────────────────────────────────
 //
-// Guarantees: pixels outside the crop box → never touched (step 6).
-//             non-tooth pixels inside box → mask α=0 → 100 % original (step 5).
+// Three treatment modes (+ backward-compat aliases):
+//
+//  whitening  — Cleaning + LAB colour normalisation only.
+//               No geometry changes. Safe, fast, conservative.
+//               Max confidence cap: 0.82 (whitening alone is not a full result).
+//
+//  alignment  — Cleaning + horizontal alignment + smile-arc curve.
+//               Soft whitening to maintain realism.
+//               Max confidence: 0.90.
+//
+//  full       — Full smile design: all of the above + shape refinement +
+//               highlights. Closest to a real clinical outcome.
+//               Max confidence: 0.96.
+//
+// Legacy aliases: 'natural' → whitening, 'design' → full.
+//
+const SIM_MODES = {
+  // ── Mode 1: Whitening only ─────────────────────────────────────────────────
+  whitening: {
+    name:                'whitening',
+    label:               'Beyazlatma',
+    blendAlpha:          { strong: 0.55, edge: 0.25 },
+    uniformTargetFactor: 1.10,
+    alignment:           false,
+    smileArc:            false,
+    edgeSoftening:       false,
+    highlights:          false,
+    sharpenSigma:        1.0,
+    sharpenM1:           0.5,
+    sharpenM2:           8,
+    maxConfidence:       0.82,   // HIGH confidence not allowed for whitening alone
+  },
+  // ── Mode 2: Alignment only ─────────────────────────────────────────────────
+  alignment: {
+    name:                'alignment',
+    label:               'Düzeltme & Dizilim',
+    blendAlpha:          { strong: 0.45, edge: 0.20 },   // softer blend — geometry speaks
+    uniformTargetFactor: 1.07,   // minimal whitening (keep focus on shape)
+    alignment:           true,
+    smileArc:            true,
+    edgeSoftening:       true,
+    highlights:          false,
+    sharpenSigma:        1.1,
+    sharpenM1:           0.5,
+    sharpenM2:           9,
+    maxConfidence:       0.90,
+  },
+  // ── Mode 3: Full smile design (default) ────────────────────────────────────
+  full: {
+    name:                'full',
+    label:               'Tam Smile Design',
+    blendAlpha:          { strong: 0.65, edge: 0.35 },
+    uniformTargetFactor: 1.15,
+    alignment:           true,
+    smileArc:            true,
+    edgeSoftening:       true,
+    highlights:          true,
+    sharpenSigma:        1.2,
+    sharpenM1:           0.5,
+    sharpenM2:           10,
+    maxConfidence:       0.96,
+  },
+};
 
-/**
- * Build a greyscale teeth mask from a crop buffer at (w × h).
- *
- * Teeth heuristic:
- *   brightness  = (R+G+B)/3   > 118   — bright enough to be a tooth
- *   saturation  = max−min      <  80   — not pink/red (lips) or vivid
- *   G            ≥ R × 0.70          — not strongly reddish (gum tissue)
- *
- * The raw binary mask is Gaussian-blurred (σ=5 px) for feathered edges.
- * Returns a greyscale PNG buffer.
- */
-async function buildTeethMask(origCropBuf, w, h) {
-  const { data } = await sharp(origCropBuf)
-    .resize(w, h)
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+// Backward-compat aliases
+SIM_MODES.natural = { ...SIM_MODES.whitening, name: 'natural', label: 'Doğal Beyazlatma' };
+SIM_MODES.design  = { ...SIM_MODES.full,      name: 'design',  label: 'Smile Design'      };
 
-  const maskData = Buffer.alloc(w * h);
-  let white = 0;
-  for (let i = 0; i < w * h; i++) {
-    const r = data[i * 3];
-    const g = data[i * 3 + 1];
-    const b = data[i * 3 + 2];
-    const brightness = (r + g + b) / 3;
-    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-    // sat ≤ 90: catches moderately-stained/yellow teeth (sat 60-90)
-    // g ≥ r*0.70: excludes pink/red (lips, gums) where G << R
-    const isTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
-    maskData[i] = isTooth ? 255 : 0;
-    if (isTooth) white++;
-  }
-
-  const pct = ((white / maskData.length) * 100).toFixed(1);
-  console.log(`[SIM MASK] Teeth pixels: ${white} / ${maskData.length}  (${pct} %)`);
-
-  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } })
-    .blur(3)
-    .png()
-    .toBuffer();
+// Resolve incoming mode string → canonical config
+function resolveSimMode(mode) {
+  return SIM_MODES[mode] ?? SIM_MODES.full;  // default: full
 }
 
-/**
- * Apply a teeth-whitening colour transform to every pixel in origCropBuf.
- * The result is then selectively blended via the mask — so only tooth pixels
- * actually receive any change.
- *
- * Transform:
- *   R → R + (255−R) × 0.38   (modest brightening)
- *   G → G + (255−G) × 0.38
- *   B → B + (255−B) × 0.55   (extra boost to counter yellow tint)
- *
- * Returns a raw RGB Buffer at (w × h).
- */
-async function computeWhitenedRaw(origCropBuf, w, h) {
-  const TARTAR_THRESH = 145; // pixels darker than this (inside teeth zone) = stain
-  const TARTAR_LIFT   = 0.40;
-  const WHITE_R       = 0.13; // ~15% max whitening
-  const WHITE_G       = 0.13;
-  const WHITE_B       = 0.20; // extra blue neutralises yellow
+// Feature flags
+const MICRO_ALIGN_ENABLED = false; // legacy global; per-mode cfg.alignment governs runtime
 
+// ── Teeth mask ───────────────────────────────────────────────────────────────
+async function buildTeethMask(origCropBuf, w, h) {
   const { data } = await sharp(origCropBuf)
     .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const maskData = Buffer.alloc(w * h);
+  let white = 0;
 
-  // Compute per-pixel brightness
-  const brightness = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++)
-    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
+  // Spatial exclusion zones — areas guaranteed to not contain teeth.
+  // The mouth crop centres on the lip/teeth region:
+  //   • Top 12 %   : upper lip / philtrum tissue
+  //   • Bottom 8 % : lower lip / chin tissue
+  //   • Left 3 %   : lip corner (too dark / saturated to be tooth)
+  //   • Right 3 %  : lip corner
+  // These are conservative; actual teeth rarely extend to these margins.
+  const Y_TOP_EXCL = Math.floor(h * 0.12);
+  const Y_BOT_EXCL = Math.floor(h * 0.92);
+  const X_L_EXCL   = Math.floor(w * 0.03);
+  const X_R_EXCL   = Math.floor(w * 0.97);
 
-  // Box-blur average brightness (radius 8) for local context
-  const avgBright = new Float32Array(w * h);
-  const BOX = 8;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let sum = 0, count = 0;
-      for (let dy = -BOX; dy <= BOX; dy++) {
-        for (let dx = -BOX; dx <= BOX; dx++) {
-          const ny = y + dy, nx = x + dx;
+      // Hard spatial gate — outside these bounds can never be a tooth
+      if (y < Y_TOP_EXCL || y > Y_BOT_EXCL) continue;
+      if (x < X_L_EXCL   || x > X_R_EXCL)   continue;
+
+      const i = y*w + x;
+      const r = data[i*3], g = data[i*3+1], b = data[i*3+2];
+      const brightness = (r + g + b) / 3;
+      const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+
+      // Standard: clean / upper teeth — white/neutral pixels
+      const isStdTooth = brightness > 118 && saturation <= 90 && g >= r * 0.70;
+
+      // Lower-region relaxation (bottom ~58% of crop, above bottom exclusion):
+      // Lower incisors are often in shadow AND stained (warm yellow → R > G).
+      // The strict g >= r * 0.70 ratio rejects them; widen to g >= r * 0.52,
+      // allow higher saturation (stain-inclusive) but keep brightness floor.
+      const isLowerRegion = y / h > 0.42;
+      const isLowerTooth  = isLowerRegion
+        && brightness > 98 && saturation <= 135 && g >= r * 0.52
+        // Extra guard: exclude very saturated warm tones (beard/skin reddish)
+        && !(r > 180 && saturation > 50 && r > g * 1.20);
+
+      if (isStdTooth || isLowerTooth) { maskData[i] = 255; white++; }
+    }
+  }
+  console.log(`[SIM MASK] ${white}/${w*h} tooth px (${((white/(w*h))*100).toFixed(1)}%)`);
+  // Blur=3 feathers the boundary; the hard fence in enforceTeethMaskBoundary
+  // guarantees no processed content leaks through the feathered zone.
+  return sharp(maskData, { raw: { width: w, height: h, channels: 1 } }).blur(3).png().toBuffer();
+}
+
+// ── Local stats (7×7 window): mean + std per pixel ───────────────────────────
+function computeLocalStats(brightness, w, h, radius = 3) {
+  const R = radius; // default 7×7; pass 2 for 5×5
+  const mean = new Float32Array(w * h);
+  const std  = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, sum2 = 0, n = 0;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const ny = y+dy, nx = x+dx;
           if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
-            sum += brightness[ny * w + nx]; count++;
+            const v = brightness[ny*w+nx]; sum += v; sum2 += v*v; n++;
           }
         }
       }
-      avgBright[y * w + x] = sum / count;
+      mean[y*w+x] = sum / n;
+      std[y*w+x]  = Math.sqrt(Math.max(0, sum2/n - (sum/n)**2));
     }
   }
+  return { mean, std };
+}
+
+// ── Real RGB↔LAB conversion ───────────────────────────────────────────────────
+function rgbToLab(r, g, b) {
+  let rn = r/255, gn = g/255, bn = b/255;
+  const lin = c => c > 0.04045 ? Math.pow((c+0.055)/1.055, 2.4) : c/12.92;
+  rn = lin(rn); gn = lin(gn); bn = lin(bn);
+  const x = rn*0.4124564 + gn*0.3575761 + bn*0.1804375;
+  const y = rn*0.2126729 + gn*0.7151522 + bn*0.0721750;
+  const z = rn*0.0193339 + gn*0.1191920 + bn*0.9503041;
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787*t + 16/116;
+  return [116*f(y/1.00000)-16, 500*(f(x/0.95047)-f(y/1.00000)), 200*(f(y/1.00000)-f(z/1.08883))];
+}
+function labToRgb(L, A, B) {
+  const fy = (L+16)/116, fx = A/500+fy, fz = fy-B/200;
+  const fi = t => t > 0.206897 ? t**3 : (t-16/116)/7.787;
+  const x = 0.95047*fi(fx), y = 1.00000*fi(fy), z = 1.08883*fi(fz);
+  let r =  x*3.2404542 - y*1.5371385 - z*0.4985314;
+  let gn = -x*0.9692660 + y*1.8760108 + z*0.0415560;
+  let bn =  x*0.0556434 - y*0.2040259 + z*1.0572252;
+  r = Math.max(0,Math.min(1,r)); gn = Math.max(0,Math.min(1,gn)); bn = Math.max(0,Math.min(1,bn));
+  const gam = c => c > 0.0031308 ? 1.055*c**(1/2.4)-0.055 : 12.92*c;
+  return [Math.min(245,Math.round(gam(r)*255)), Math.min(245,Math.round(gam(gn)*255)), Math.min(245,Math.round(gam(bn)*255))];
+}
+
+// ── Sobel gradient magnitude (brightness array → Float32Array) ────────────────
+function computeGradient(brightness, w, h) {
+  const grad = new Float32Array(w * h);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const gx =
+        -brightness[(y-1)*w+(x-1)] + brightness[(y-1)*w+(x+1)]
+        -2*brightness[y*w+(x-1)]   + 2*brightness[y*w+(x+1)]
+        -brightness[(y+1)*w+(x-1)] + brightness[(y+1)*w+(x+1)];
+      const gy =
+        -brightness[(y-1)*w+(x-1)] - 2*brightness[(y-1)*w+x] - brightness[(y-1)*w+(x+1)]
+        +brightness[(y+1)*w+(x-1)] + 2*brightness[(y+1)*w+x] + brightness[(y+1)*w+(x+1)];
+      grad[y*w+x] = Math.sqrt(gx*gx + gy*gy) / 4; // normalise Sobel scale
+    }
+  }
+  return grad;
+}
+
+// ── Main enhancement: tartar removal + LAB color neutralization + whitening ───
+//
+//  Tartar:     adaptive removal in two tiers (contrast 0.15–0.35 / ≥ 0.35)
+//  Color:      LAB neutralization targets yellow (B>8) and brown/red (A>5)
+//              new_A = mix(A, 0, 0.60)   new_B = mix(B, 0, 0.70)
+//              L unchanged — brightness is not affected
+//  Whitening:  L × 1.08 (≈ +8% lightness) applied on top
+//  Safety:     result ≥ original pixel for every channel
+//
+// boosted = true → wider detection thresholds + stronger lift for the auto-retry pass.
+async function computeEnhancedRaw(origCropBuf, w, h, boosted = false) {
+  const { data } = await sharp(origCropBuf)
+    .resize(w, h).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+
+  const brightness = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    brightness[i] = (data[i*3] + data[i*3+1] + data[i*3+2]) / 3;
+
+  const { mean, std } = computeLocalStats(brightness, w, h);
+  const gradient      = computeGradient(brightness, w, h);
+
+  const GRAD_EDGE_THRESH = 25; // gradient magnitude above which we treat pixel as on a tooth edge
 
   const out = Buffer.alloc(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
-    let r = data[i*3], g = data[i*3+1], b = data[i*3+2];
-    const br = brightness[i], avg = avgBright[i];
+  for (let i = 0; i < w*h; i++) {
+    const origR = data[i*3], origG = data[i*3+1], origB = data[i*3+2];
+    let r = origR, g = origG, b = origB;
+    const br = brightness[i], lm = mean[i], ls = std[i];
 
-    // Stage 1 — tartar stain removal: lift dark spots toward local average
-    if (br < TARTAR_THRESH && avg > TARTAR_THRESH) {
-      const lift = TARTAR_LIFT * (1 - br / TARTAR_THRESH);
-      const target = Math.min(255, avg * 1.05);
-      r = Math.round(r + (target - r) * lift);
-      g = Math.round(g + (target - g) * lift);
-      b = Math.round(b + (target - b) * lift);
+    // Lower-region flag (bottom 58% of the crop = lower incisors area).
+    // Lower teeth are naturally darker (shadow) AND accumulate more tartar/stain.
+    // Thresholds for them must be wider on every axis.
+    const isLower = Math.floor(i / w) > h * 0.42;
+
+    // ── Stain classification ──────────────────────────────────────────────────
+    const delta     = Math.max(origR, origG, origB) - Math.min(origR, origG, origB);
+    const isWarmHue = origR > origG && origG > origB;
+
+    // Boosted mode widens each threshold to attack stains the first pass left behind.
+    // Lower-region base thresholds are already wider to account for natural shadow.
+    const colorStainBr   = boosted ? 165 : (isLower ? 158 : 145);
+    const yellowStainBr  = boosted ? 185 : (isLower ? 178 : 170);
+    const yellowDelta    = boosted ? 18  : (isLower ? 20  : 25);
+    const contextBr      = boosted ? 200 : 185;
+    const contextDelta   = boosted ? 8   : (isLower ? 9   : 12);
+
+    const isColorStain   = br < colorStainBr;
+    const isYellowStain  = br < yellowStainBr && delta > yellowDelta && isWarmHue;
+    const isContextStain = br < contextBr && (lm - br) > contextDelta;
+    const isStain        = isColorStain || isYellowStain || isContextStain;
+
+    // ── Tooth structure protection ─────────────────────────────────────────────
+    // Gate 1 — Natural texture guard.
+    // Lower incisors can be UNIFORMLY discoloured (the whole tooth is stained,
+    // not just a patch). Their local mean is therefore also dark, so |br - lm|
+    // stays small even for genuine tartar. Tighten the guard for the lower region
+    // (12 instead of 25) so uniformly stained incisors still enter Stage 1.
+    const naturalTextureThresh = isLower ? 12 : 25;
+    const isNaturalTexture     = Math.abs(br - lm) < naturalTextureThresh;
+
+    // Gate 2 — Structural edge: high gradient = tooth boundary / inter-tooth gap.
+    // In boosted mode, raise the bar slightly so deep stains at edges are still treated.
+    const edgeThresh = boosted ? GRAD_EDGE_THRESH * 1.4 : GRAD_EDGE_THRESH;
+    const isStructuralEdge = gradient[i] > edgeThresh;
+
+    // Stage 1 only runs if: detected as stain  AND  not natural texture  AND  not an edge
+    if (isStain && !isNaturalTexture && !isStructuralEdge) {
+      const contrast  = (lm - br) / (lm + 1e-5);
+      const baseBoost = boosted ? 1.20 : 1.0;  // global lift multiplier in retry pass
+      const boostMult = (br < 120 ? 1.4 : br < 160 ? 1.2 : 1.0) * baseBoost;
+
+      const heavyThresh = boosted ? 0.25 : 0.35;  // catch more as heavy tartar when retrying
+      if (contrast >= heavyThresh) {
+        // ── HEAVY TARTAR: partial replacement ──────────────────────────────
+        // (isStructuralEdge already excluded above — inner edge check retained
+        //  as a safety reference for the mix-reduction logic)
+        const baseMix = 0.75;
+        const mix     = Math.min(0.90, baseMix * boostMult);
+        const target  = Math.min(245, lm + 0.25 * ls);
+        r = Math.round(r + (target - r) * mix);
+        g = Math.round(g + (target - g) * mix);
+        b = Math.round(b + (target - b) * mix);
+      } else if (contrast >= 0.05) {
+        // ── NORMAL TARTAR / COLOURED STAIN: lift toward local mean ─────────
+        const lift   = Math.min(0.85, contrast * 0.8 * boostMult);
+        const target = Math.min(245, lm + 0.2 * ls);
+        r = Math.round(r + (target - r) * lift);
+        g = Math.round(g + (target - g) * lift);
+        b = Math.round(b + (target - b) * lift);
+      }
+      // contrast < 0.05 → Stage 2 LAB handles colour correction
     }
+    // Stage 2 (LAB) always runs — colour-only stains (isYellowStain with low luma delta)
+    // are still corrected even when Stage 1 is skipped by isNaturalTexture.
 
-    // Stage 2 — LAB-style whitening (15-20 % max, no overexposure)
-    out[i*3]   = Math.min(255, Math.round(r + (255 - r) * WHITE_R));
-    out[i*3+1] = Math.min(255, Math.round(g + (255 - g) * WHITE_G));
-    out[i*3+2] = Math.min(255, Math.round(b + (255 - b) * WHITE_B));
+    // Clamp: result can never be darker than the original pixel
+    r = Math.max(origR, r);
+    g = Math.max(origG, g);
+    b = Math.max(origB, b);
+
+    // Stage 2 — LAB colour neutralization + lightness boost
+    const [L, Alab, Blab] = rgbToLab(r, g, b);
+
+    // Mild lightening only (+6%) — rule: "improve quality, not geometry"
+    const Lw = Math.min(100, L * 1.06);
+
+    // A axis (green-red): brown/red stains
+    const Aw = Alab > 5  ? Alab + (0 - Alab) * 0.60 : Alab * 0.95;
+
+    // B axis (blue-yellow):
+    //   isYellowStain pixel → 80% push toward neutral (strongest correction)
+    //   B > 8 (lab signal)  → 70% push
+    //   mild yellow (B 0-8) → 15% gentle push
+    //   cool / neutral      → unchanged
+    // In boosted mode, push yellow axis harder (up to 92% toward neutral)
+    const Bw = isYellowStain ? Blab + (0 - Blab) * (boosted ? 0.92 : 0.80)
+             : Blab > 8      ? Blab + (0 - Blab) * (boosted ? 0.80 : 0.70)
+             : Blab > 0      ? Blab * (boosted ? 0.75 : 0.85)
+                             : Blab;
+
+    const [ro, go, bo] = labToRgb(Lw, Aw, Bw);
+
+    // Safety: result must be ≥ original on every channel (never darken)
+    out[i*3]   = Math.min(245, Math.max(origR, ro));
+    out[i*3+1] = Math.min(245, Math.max(origG, go));
+    out[i*3+2] = Math.min(245, Math.max(origB, bo));
   }
   return out;
 }
 
-/**
- * Pixel-level blend using a soft mask.
- * result[p] = orig[p] × (1−α) + whitened[p] × α   where α = mask[p]/255.
- * Returns a JPEG buffer at (w × h).
- */
-async function blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, w, h) {
-  const [origRaw, maskRaw] = await Promise.all([
-    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+// ── Stain detector — mirrors the classification logic in computeEnhancedRaw ───
+//
+// Returns { count, ratio } where ratio = stain pixels / masked pixels.
+// Used to validate that cleaning actually removed deposits before accepting output.
+//
+// MIN_STAIN_RATIO: skip validation when < 3% of tooth pixels are stained
+//                 (teeth are clean enough to begin with).
+// PASS_REMOVAL_RATE: require at least 50% of pre-existing stains to be gone.
+//
+const MIN_STAIN_RATIO    = 0.03;  // 3 % of tooth mask
+const PASS_REMOVAL_RATE  = 0.50;  // must remove ≥ 50 % of detected stains
+
+// ── Structural integrity constants ────────────────────────────────────────────
+// PROFILE_CORR_MIN: minimum Pearson r between before/after column brightness
+//   profiles inside the tooth mask.  Below this = tooth geometry has shifted.
+// GAP_KEEP_MIN:     fraction of inter-tooth gap segments that must survive.
+//   If we go from 5 gaps to 2, teeth have effectively been merged.
+const PROFILE_CORR_MIN = 0.82;  // correlation must stay ≥ 0.82
+const GAP_KEEP_MIN     = 0.55;  // at least 55 % of gaps must remain
+
+function detectStains(rawBuf, maskRaw, w, h) {
+  let stainCount = 0, maskCount = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    maskCount++;
+    const r = rawBuf[i*3], g = rawBuf[i*3+1], b = rawBuf[i*3+2];
+    const br    = (r + g + b) / 3;
+    const delta = Math.max(r, g, b) - Math.min(r, g, b);
+
+    // Mirror the isColorStain / isYellowStain conditions.
+    // Lower region (y > 42% of crop) uses slightly wider thresholds to match
+    // the looser stain detection applied there in computeEnhancedRaw.
+    const isLower      = Math.floor(i / w) / h > 0.42;
+    const darkThresh   = isLower ? 165 : 155;
+    const yellowBr     = isLower ? 182 : 175;
+    const yellowDelta  = isLower ? 20  : 22;
+
+    if (br < darkThresh) { stainCount++; continue; }
+    if (br < yellowBr && delta > yellowDelta && r > g && g > b) stainCount++;
+  }
+  return { count: stainCount, ratio: maskCount > 0 ? stainCount / maskCount : 0 };
+}
+
+// ── Structural integrity helpers ──────────────────────────────────────────────
+//
+// analyzeToothProfile: column-average brightness inside the tooth mask.
+// Each entry is the mean brightness for that x-column, or -1 when no mask pixels
+// fall in that column.
+//
+function analyzeToothProfile(rawBuf, maskRaw, w, h) {
+  const sum   = new Float32Array(w);
+  const count = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y*w + x;
+      if (maskRaw[i] <= 64) continue;
+      sum[x]   += (rawBuf[i*3] + rawBuf[i*3+1] + rawBuf[i*3+2]) / 3;
+      count[x] += 1;
+    }
+  }
+  const profile = new Float32Array(w);
+  for (let x = 0; x < w; x++)
+    profile[x] = count[x] > 0 ? sum[x] / count[x] : -1;
+  return profile;
+}
+
+// countInterToothGaps: number of contiguous dark-column valleys in the profile.
+// A column is a "gap" if its brightness < gap_threshold (average × 0.68).
+// Each contiguous run of gap-columns counts as one inter-tooth gap.
+//
+function countInterToothGaps(profile, w) {
+  const valid = profile.filter(v => v >= 0);
+  if (valid.length === 0) return 0;
+  const avg   = valid.reduce((s, v) => s + v, 0) / valid.length;
+  const thr   = avg * 0.68;
+  let gaps = 0, inGap = false;
+  for (let x = 0; x < w; x++) {
+    if (profile[x] < 0) continue; // column outside mask — ignore
+    if (profile[x] < thr) {
+      if (!inGap) { gaps++; inGap = true; }
+    } else {
+      inGap = false;
+    }
+  }
+  return gaps;
+}
+
+// profileCorrelation: Pearson r between two column brightness profiles.
+// Columns where either profile returns -1 (no mask) are excluded.
+//
+function profileCorrelation(a, b, w) {
+  let sumA = 0, sumB = 0, n = 0;
+  for (let x = 0; x < w; x++) {
+    if (a[x] < 0 || b[x] < 0) continue;
+    sumA += a[x]; sumB += b[x]; n++;
+  }
+  if (n < 4) return 1; // too few valid columns — assume fine
+  const mA = sumA/n, mB = sumB/n;
+  let cov = 0, vA = 0, vB = 0;
+  for (let x = 0; x < w; x++) {
+    if (a[x] < 0 || b[x] < 0) continue;
+    cov += (a[x]-mA) * (b[x]-mB);
+    vA  += (a[x]-mA) ** 2;
+    vB  += (b[x]-mB) ** 2;
+  }
+  const denom = Math.sqrt(vA) * Math.sqrt(vB);
+  return denom > 0 ? Math.max(-1, Math.min(1, cov/denom)) : 1;
+}
+
+// checkStructuralIntegrity: decode both JPEG buffers, compare profiles.
+// Returns { valid, correlation, origGaps, resultGaps, gapRatio, issues[] }.
+//
+async function checkStructuralIntegrity(origBuf, resultBuf, maskBuf, w, h) {
+  const [origRaw, resRaw, maskRaw] = await Promise.all([
+    sharp(origBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultBuf).resize(w, h).removeAlpha().raw().toBuffer(),
     sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
   ]);
 
-  const result = Buffer.alloc(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
-    const alpha = maskRaw[i] / 255;
-    for (let c = 0; c < 3; c++) {
-      const blended = Math.round(origRaw[i * 3 + c] * (1 - alpha) + whitenedRaw[i * 3 + c] * alpha);
-      // Brightness floor: result can NEVER be darker than original.
-      result[i * 3 + c] = Math.max(origRaw[i * 3 + c], blended);
+  const origProfile = analyzeToothProfile(origRaw, maskRaw, w, h);
+  const resProfile  = analyzeToothProfile(resRaw,  maskRaw, w, h);
+  const corr        = profileCorrelation(origProfile, resProfile, w);
+  const origGaps    = countInterToothGaps(origProfile, w);
+  const resultGaps  = countInterToothGaps(resProfile,  w);
+  const gapRatio    = origGaps > 0 ? resultGaps / origGaps : 1;
+
+  const issues = [];
+  if (corr     < PROFILE_CORR_MIN) issues.push(`low_corr:${corr.toFixed(3)}`);
+  if (gapRatio < GAP_KEEP_MIN)     issues.push(`gaps_lost:${origGaps}→${resultGaps}`);
+
+  return { valid: issues.length === 0, correlation: corr, origGaps, resultGaps, gapRatio, issues };
+}
+
+// ── Edge-preserving bilateral filter (r=3, σ_c=25, σ_s=3) ───────────────────
+function bilateralFilter(data, w, h, radius = 3, sigmaColor = 25, sigmaSpace = 3) {
+  const SC2 = 2*sigmaColor*sigmaColor, SS2 = 2*sigmaSpace*sigmaSpace, R = radius;
+  const out = new Uint8Array(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ci = (y*w+x)*3;
+      const r0=data[ci], g0=data[ci+1], b0=data[ci+2];
+      let rs=0, gs=0, bs=0, ws=0;
+      for (let dy=-R; dy<=R; dy++) {
+        for (let dx=-R; dx<=R; dx++) {
+          const ny=y+dy, nx=x+dx;
+          if (ny<0||ny>=h||nx<0||nx>=w) continue;
+          const ni=(ny*w+nx)*3;
+          const r1=data[ni], g1=data[ni+1], b1=data[ni+2];
+          const wt = Math.exp(-(dx*dx+dy*dy)/SS2) *
+                     Math.exp(-((r0-r1)**2+(g0-g1)**2+(b0-b1)**2)/SC2);
+          rs+=r1*wt; gs+=g1*wt; bs+=b1*wt; ws+=wt;
+        }
+      }
+      out[ci]  =Math.min(245,Math.round(rs/ws));
+      out[ci+1]=Math.min(245,Math.round(gs/ws));
+      out[ci+2]=Math.min(245,Math.round(bs/ws));
+    }
+  }
+  return out;
+}
+
+// ── Inter-tooth dark line reduction ──────────────────────────────────────────
+//
+// Thin dark lines between teeth survive standard tartar removal because they
+// are high-contrast edges, not just globally dark pixels.  This pass:
+//   1. Detects them via brightness < 75% local_mean AND |Gx| > 20
+//   2. Dilates the detected region by 1 px to cover full line width
+//   3. Blends toward local_mean:  mix=0.85 normally, 0.50 near very strong edges
+//   4. Applies a radius-1 box blur on the treated region to soften transitions
+//
+function reduceDarkLines(result, maskRaw, w, h) {
+  const HORIZ_THRESH  = 20;  // |Gx| threshold for "this is an edge pixel"
+  const EDGE_STRONG   = 50;  // |Gx| above which we protect tooth borders (mix 0.50)
+  const DARK_FACTOR   = 0.75; // pixel must be < 75% of local mean to qualify
+
+  // Brightness of current result buffer
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+
+  // 5×5 local mean
+  const { mean: lm5 } = computeLocalStats(br, w, h, 2);
+
+  // Horizontal Sobel (Gx) — large value = vertical edge = inter-tooth line
+  const gx = new Float32Array(w * h);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const v =
+        -br[(y-1)*w+(x-1)] + br[(y-1)*w+(x+1)]
+        -2*br[y*w+(x-1)]   + 2*br[y*w+(x+1)]
+        -br[(y+1)*w+(x-1)] + br[(y+1)*w+(x+1)];
+      gx[y*w+x] = Math.abs(v) / 4;
     }
   }
 
-  const blendedBuf = await sharp(result, { raw: { width: w, height: h, channels: 3 } })
-    .jpeg({ quality: 92 })
-    .toBuffer();
+  // Step 1 — detect
+  const darkLine = new Uint8Array(w * h);
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] > 64 && br[i] < lm5[i] * DARK_FACTOR && gx[i] > HORIZ_THRESH)
+      darkLine[i] = 1;
+  }
 
-  // Post-blend validation: if teeth region is significantly darker, revert to original.
-  let origBright = 0, resultBright = 0, count = 0;
-  for (let i = 0; i < w * h; i++) {
-    if (maskRaw[i] > 64) {
-      origBright   += (origRaw[i*3] + origRaw[i*3+1] + origRaw[i*3+2]) / 3;
-      resultBright += (result[i*3]  + result[i*3+1]  + result[i*3+2])  / 3;
+  // Step 2 — dilate 1 px (expand to cover full line width)
+  const dilated = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRaw[y*w+x] <= 64) continue;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y+dy, nx = x+dx;
+          if (ny >= 0 && ny < h && nx >= 0 && nx < w && darkLine[ny*w+nx]) {
+            dilated[y*w+x] = 1; break;
+          }
+        }
+        if (dilated[y*w+x]) break;
+      }
+    }
+  }
+
+  // Step 3 — blend toward local mean
+  const blended = Buffer.from(result);
+  let lineCount = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (!dilated[i]) continue;
+    const mix    = gx[i] > EDGE_STRONG ? 0.50 : 0.85;
+    const target = Math.min(245, lm5[i]);
+    for (let c = 0; c < 3; c++)
+      blended[i*3+c] = Math.min(245, Math.round(result[i*3+c] + (target - result[i*3+c]) * mix));
+    lineCount++;
+  }
+
+  // Step 4 — radius-1 box blur on treated pixels only (softens transitions).
+  // Only sample neighbour pixels that are also inside the teeth mask to
+  // avoid pulling lip/skin colour into the tooth boundary.
+  const out = Buffer.from(blended);
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      if (!dilated[y*w+x]) continue;
+      for (let c = 0; c < 3; c++) {
+        let sum = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const ny = y+dy, nx = x+dx;
+            if (maskRaw[ny*w+nx] <= 64) continue;  // skip non-mask neighbours
+            sum += blended[ny*w*3+nx*3+c]; n++;
+          }
+        }
+        if (n > 0)
+          out[(y*w+x)*3+c] = Math.min(245, Math.round(sum / n));
+      }
+    }
+  }
+
+  if (lineCount > 0)
+    console.log(`[SIM DARK-LINE] softened ${lineCount} inter-tooth line pixels`);
+  return out;
+}
+
+// ── Micro-texture cleaning: removes rough/speckled tartar surface noise ───────
+//
+// Tartar leaves behind a noisy, high-variance texture on enamel even after
+// pixel-level lifting.  This pass:
+//   1. Computes local std-dev (5×5 window) from current result brightness
+//   2. Marks pixels with std > STD_THRESH as NOISY_AREA
+//   3. Skips edge pixels (gradient > EDGE_THRESH) — preserves tooth boundaries
+//   4. Applies a tight bilateral filter (r=2, σ_c=20, σ_s=2) to a copy
+//   5. Blends: result = orig×0.4 + smoothed×0.6 only where NOISY_AREA
+//
+function microTextureClean(result, maskRaw, w, h) {
+  const STD_THRESH  = 12;  // std > 12 = rough texture / speckled surface
+  const EDGE_THRESH = 20;  // gradient > 20 = tooth boundary — do not touch
+  const MIX         = 0.60;
+
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+
+  const { std }  = computeLocalStats(br, w, h, 2); // 5×5 variance map
+  const grad     = computeGradient(br, w, h);       // Sobel magnitude
+
+  // Tight bilateral: small radius + moderate color sigma → smooths speckle,
+  // still preserves sharp tooth edges via the colour-distance weighting.
+  const smoothed = bilateralFilter(result, w, h, 2, 20, 2);
+
+  const out = Buffer.from(result);
+  let count = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64)         continue; // outside tooth mask
+    if (std[i]  <= STD_THRESH)    continue; // already smooth — leave it
+    if (grad[i] > EDGE_THRESH)    continue; // tooth border — preserve
+    for (let c = 0; c < 3; c++)
+      out[i*3+c] = Math.min(245, Math.round(result[i*3+c]*(1-MIX) + smoothed[i*3+c]*MIX));
+    count++;
+  }
+  if (count > 0)
+    console.log(`[SIM MICRO-TEX] smoothed ${count} noisy surface pixels`);
+  return out;
+}
+
+// ── Smart uniform whitening — independent upper/lower region targets ───────────
+//
+// KEY CHANGE: upper and lower teeth are whitened toward their OWN brightness
+// targets (computed separately), so brighter upper teeth no longer pull the
+// shared average up and leave lower incisors under-lifted.
+//
+// Each region independently computes: avg, p95 → target = min(p95×0.96, avg×factor)
+// Yellow tint kill and highlight guard apply to all regions.
+//
+function uniformWhitening(result, maskRaw, w, h, targetFactor = 1.12) {
+  const snap = Buffer.from(result);
+
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++)
+    br[i] = (snap[i*3] + snap[i*3+1] + snap[i*3+2]) / 3;
+
+  // Collect brightnesses split by vertical region
+  // Upper = top 45% of crop;  Lower = bottom 55% (lower incisors)
+  const upperVals = [], lowerVals = [];
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    const y = Math.floor(i / w);
+    (y < h * 0.45 ? upperVals : lowerVals).push(br[i]);
+  }
+  if (upperVals.length === 0 && lowerVals.length === 0) return result;
+
+  function regionTarget(vals) {
+    if (vals.length === 0) return null;
+    vals.sort((a, b) => a - b);
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const p95 = vals[Math.floor(vals.length * 0.95)];
+    return { target: Math.min(p95 * 0.96, avg * targetFactor), avg, p95 };
+  }
+  const upper = regionTarget(upperVals);
+  const lower = regionTarget(lowerVals);
+  console.log(`[SIM UNIFORM] upper px=${upperVals.length} avg=${upper?.avg.toFixed(1)} target=${upper?.target.toFixed(1)} | lower px=${lowerVals.length} avg=${lower?.avg.toFixed(1)} target=${lower?.target.toFixed(1)}`);
+
+  const out = Buffer.from(snap);
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    if (br[i] > 210)      continue; // highlight guard
+
+    const y    = Math.floor(i / w);
+    const reg  = y < h * 0.45 ? upper : lower;
+    if (!reg) continue;
+    const { target } = reg;
+
+    const pixBr = br[i];
+    const delta  = target - pixBr;
+    const lift   = Math.min(0.60, Math.max(0.10, delta / 255));
+
+    let r = snap[i*3], g = snap[i*3+1], b = snap[i*3+2];
+    const rn = r + delta * lift, gn = g + delta * lift, bn = b + delta * lift;
+    let ro = r * 0.35 + rn * 0.65;
+    let go = g * 0.35 + gn * 0.65;
+    let bo = b * 0.35 + bn * 0.65;
+
+    // Yellow tint kill
+    if (r > g && g > b) bo += (r - b) * 0.25;
+
+    out[i*3]   = Math.min(245, Math.max(0, Math.round(ro)));
+    out[i*3+1] = Math.min(245, Math.max(0, Math.round(go)));
+    out[i*3+2] = Math.min(245, Math.max(0, Math.round(bo)));
+  }
+  return out;
+}
+
+// ── Micro-alignment — subtle horizontal shift per tooth, max ±3 px ───────────
+//
+// Approach:
+//  1. Column-sum of the mask → profile shows how many tooth pixels per column
+//  2. Valleys in profile (< 15% of peak) = inter-tooth gaps → segment boundaries
+//  3. Centroid x of each segment  vs  ideal evenly-spaced positions
+//  4. Per-column shift map built from segment shifts with FEATHER_PX feathering
+//  5. Gaps between segments interpolated linearly (no jarring jump)
+//  6. Inverse-map warp with bilinear interpolation, blended by mask alpha
+//  7. Validation: avgDiff > 6 → revert to original
+//
+async function microAlignment(cropBuf, maskBuf, w, h) {
+  const MAX_SHIFT    = 3;   // px — teeth can shift at most ±3 px horizontally
+  const FEATHER_PX   = 8;   // px — transition width at segment edges
+  const MIN_SEG_W    = 8;   // px — ignore blobs narrower than this
+  const MIN_SEGMENTS = 2;   // need ≥ 2 teeth to do anything meaningful
+
+  const [imgRaw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  // Column-sum of mask (> 64 = in teeth zone)
+  const colSum = new Float32Array(w);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (maskRaw[y*w+x] > 64) colSum[x]++;
+
+  const maxCol = Math.max(...Array.from(colSum));
+  if (maxCol < h * 0.05) {
+    console.log('[SIM ALIGN] no meaningful mask — skipping');
+    return cropBuf;
+  }
+
+  // Detect tooth segments as runs of columns above valley threshold
+  const VALLEY_THRESH = maxCol * 0.15;
+  const segments = [];
+  let inSeg = false, segStart = 0;
+  for (let x = 0; x <= w; x++) {
+    const above = x < w && colSum[x] > VALLEY_THRESH;
+    if (!inSeg && above) { inSeg = true; segStart = x; }
+    else if (inSeg && !above) {
+      inSeg = false;
+      if (x - segStart >= MIN_SEG_W) segments.push({ start: segStart, end: x - 1 });
+    }
+  }
+  if (segments.length < MIN_SEGMENTS) {
+    console.log(`[SIM ALIGN] ${segments.length} segment(s) — need ${MIN_SEGMENTS}+, skipping`);
+    return cropBuf;
+  }
+
+  // Centroid x of each segment
+  const centroids = segments.map(s => (s.start + s.end) / 2);
+  const n = segments.length;
+
+  // Ideal: evenly spaced between first and last centroid
+  const span        = centroids[n-1] - centroids[0];
+  const idealStep   = span / (n - 1);
+  const idealPos    = centroids.map((_, i) => centroids[0] + i * idealStep);
+  const segShift    = centroids.map((c, i) =>
+    Math.max(-MAX_SHIFT, Math.min(MAX_SHIFT, idealPos[i] - c))
+  );
+  console.log(`[SIM ALIGN] ${n} teeth  shifts=[${segShift.map(s=>s.toFixed(1)).join(',')}]px`);
+
+  // Per-column shift map: feathered within segments, interpolated in gaps
+  const colShift = new Float32Array(w);
+  for (let si = 0; si < n; si++) {
+    const { start, end } = segments[si];
+    for (let x = start; x <= end; x++) {
+      const feather = Math.min(1, Math.min(x - start, end - x) / FEATHER_PX);
+      colShift[x] = segShift[si] * feather;
+    }
+  }
+  for (let si = 0; si < n - 1; si++) {
+    const gapStart = segments[si].end + 1, gapEnd = segments[si+1].start - 1;
+    for (let x = gapStart; x <= gapEnd; x++) {
+      const t = (x - gapStart) / Math.max(1, gapEnd - gapStart + 1);
+      colShift[x] = segShift[si] * (1 - t) + segShift[si+1] * t;
+    }
+  }
+
+  // Inverse-map warp: for each output pixel, sample from shifted source
+  const output = Buffer.from(imgRaw);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const m = maskRaw[y*w+x];
+      if (m <= 64) continue;                 // outside mask — untouched
+      const blend = (m / 255) * 0.80;        // mask-weighted blend strength
+      const srcX  = Math.max(0, Math.min(w - 1.001, x - colShift[x]));
+      const x0    = Math.floor(srcX), fx = srcX - x0;
+      const x1    = Math.min(w - 1, x0 + 1);
+      for (let c = 0; c < 3; c++) {
+        const warped = imgRaw[(y*w+x0)*3+c] * (1-fx) + imgRaw[(y*w+x1)*3+c] * fx;
+        output[(y*w+x)*3+c] = Math.min(245, Math.round(
+          imgRaw[(y*w+x)*3+c] * (1 - blend) + warped * blend
+        ));
+      }
+    }
+  }
+
+  // Validation: large average diff means something went wrong — revert
+  let diffSum = 0;
+  for (let i = 0; i < w*h*3; i++) diffSum += Math.abs(output[i] - imgRaw[i]);
+  const avgDiff = diffSum / (w*h*3);
+  if (avgDiff > 6) {
+    console.warn(`[SIM ALIGN] avgDiff=${avgDiff.toFixed(2)} > 6 — reverting`);
+    return cropBuf;
+  }
+  console.log(`[SIM ALIGN] applied — avgDiff=${avgDiff.toFixed(2)}`);
+  return sharp(output, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Step 6: Shape refinement — gentle edge softening ─────────────────────────
+// Only for design mode.  Applies a 40%-weighted box-blur ONLY to pixels with a
+// moderate Sobel gradient (15–32): these are minor incisal-edge irregularities.
+// Hard boundaries (gradient > 32) and smooth surfaces (< 15) are untouched.
+//
+async function edgeSoftening(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++) br[i] = (raw[i*3]+raw[i*3+1]+raw[i*3+2])/3;
+  const grad = computeGradient(br, w, h);
+
+  const out = Buffer.from(raw);
+  let count = 0;
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const i = y*w+x;
+      if (maskRaw[i] <= 64) continue;
+      if (grad[i] < 15 || grad[i] > 32) continue; // moderate edges only
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++)
+            sum += raw[(y+dy)*w*3+(x+dx)*3+c];
+        out[i*3+c] = Math.min(245, Math.round(raw[i*3+c]*0.60 + (sum/9)*0.40));
+      }
       count++;
     }
   }
-  if (count > 0) {
-    const ratio = resultBright / origBright;
-    console.log(`[SIM BLEND] Brightness ratio (result/orig): ${ratio.toFixed(3)}  (${count} tooth px)`);
-    if (ratio < 0.95) {
-      console.warn('[SIM BLEND] ⚠️  Result darker than original — reverting to original crop');
+  console.log(`[SIM EDGE-SOFT] smoothed ${count} moderate-edge pixels`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Step 7: Light & reflection — subtle enamel highlights ─────────────────────
+// Only for design mode.  Existing bright smooth areas (enamel specular zone) get
+// a proportional boost of up to ~+10%.  Preserves natural light gradients.
+//
+async function addReflectionHighlights(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const br = new Float32Array(w * h);
+  for (let i = 0; i < w*h; i++) br[i] = (raw[i*3]+raw[i*3+1]+raw[i*3+2])/3;
+  const grad = computeGradient(br, w, h);
+
+  const out = Buffer.from(raw);
+  let count = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 128) continue; // only core teeth
+    if (br[i]    <= 185)   continue; // only existing bright areas
+    if (grad[i]  >  12)    continue; // only smooth flat surface (not edges)
+    const boost = 1 + (br[i] - 185) / 600; // max ~+10% at br=245
+    for (let c = 0; c < 3; c++)
+      out[i*3+c] = Math.min(245, Math.round(raw[i*3+c] * boost));
+    count++;
+  }
+  console.log(`[SIM HIGHLIGHT] boosted ${count} highlight pixels`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── CRITICAL: Teeth mask boundary enforcer ───────────────────────────────────
+//
+// This is the absolute last step applied to blendedCropBuf before the final
+// composite.  It guarantees that every pixel whose mask value is 0 is copied
+// back from the original image verbatim, eliminating any leak from any
+// upstream pass (smile arc warp, alignment, edge softening, highlights, etc).
+//
+// Pixels inside the mask are untouched — blending that already happened in
+// blendCropWithMask() remains intact.
+//
+async function enforceTeethMaskBoundary(processedBuf, origBuf, maskBuf, w, h) {
+  const [proc, orig, mask] = await Promise.all([
+    sharp(processedBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(origBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  const out = Buffer.from(proc);
+  let restored = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (mask[i] > 0) continue;  // inside mask — keep processed result
+    for (let c = 0; c < 3; c++) {
+      if (out[i*3+c] !== orig[i*3+c]) {
+        out[i*3+c] = orig[i*3+c];
+        restored++;
+      }
+    }
+  }
+  if (restored > 0)
+    console.log(`[SIM FENCE] Restored ${Math.ceil(restored/3)} px outside teeth mask to original`);
+  else
+    console.log('[SIM FENCE] No leakage detected — all modifications within mask boundaries');
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Step: Smile Arc — align incisal edges to a natural parabolic arch curve ──
+//
+// The natural smile arc means upper central incisors are the longest teeth,
+// lateral incisors slightly shorter, canines at intermediate height — the
+// bottom edge of upper teeth follows a gentle concave-upward parabola.
+//
+// Algorithm:
+//  1. Per column, detect the bottommost masked pixel of the upper arch
+//     (incisal edge) and the topmost (gingival margin).
+//  2. Fit an ideal parabola:
+//       y_ideal(x) = median_edge + ARC_DEPTH × (1 − ((x−cx)/(span/2))²)
+//     → center columns sit ARC_DEPTH px lower = teeth appear longer.
+//  3. For columns where actual edge < ideal (tooth too short): apply a
+//     gradual downward warp in the bottom 35 % of the tooth with bilinear
+//     interpolation.  Max correction: ±4 px.
+//  4. For columns already longer than ideal (too long): apply a gentle
+//     upward compression (max −3 px).
+//
+async function applySmileArc(cropBuf, maskBuf, w, h) {
+  const [raw, maskRaw] = await Promise.all([
+    sharp(cropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+
+  const upperLimit = Math.floor(h * 0.52); // upper arch only
+
+  // Per-column: topmost and bottommost masked pixel in the upper half
+  const colTop = new Int32Array(w).fill(-1);
+  const colBot = new Int32Array(w).fill(-1);
+  for (let y = 0; y < upperLimit; y++) {
+    for (let x = 0; x < w; x++) {
+      if (maskRaw[y*w+x] > 128) {
+        if (colTop[x] === -1) colTop[x] = y;
+        colBot[x] = y;
+      }
+    }
+  }
+
+  const validCols = [];
+  for (let x = 0; x < w; x++) {
+    if (colBot[x] !== -1 && colTop[x] !== -1 && colBot[x] - colTop[x] > 5)
+      validCols.push(x);
+  }
+  if (validCols.length < 10) {
+    console.log('[SIM ARC] Not enough upper tooth data — skipping');
+    return cropBuf;
+  }
+
+  // Arch centre (x-axis) and span
+  const cx   = validCols.reduce((s, x) => s + x, 0) / validCols.length;
+  const minX = validCols[0];
+  const maxX = validCols[validCols.length - 1];
+  const span = Math.max(maxX - minX, 1);
+
+  // Median incisal edge (baseline)
+  const botArr = validCols.map(x => colBot[x]).sort((a, b) => a - b);
+  const medianBot = botArr[Math.floor(botArr.length / 2)];
+
+  // Ideal parabola — positive ARC_DEPTH means centre teeth extend further down
+  const ARC_DEPTH = 4; // pixels
+
+  function idealBot(x) {
+    const t = Math.min(1, Math.abs(x - cx) / (span / 2 + 1));
+    return medianBot + Math.round(ARC_DEPTH * (1 - t * t));
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  const out = Buffer.from(raw);
+  let corrected = 0;
+
+  for (const x of validCols) {
+    const tTop = colTop[x];
+    const tBot = colBot[x];
+    const tH   = tBot - tTop;
+    if (tH < 6) continue;
+
+    const target     = idealBot(x);
+    const correction = Math.max(-3, Math.min(4, Math.round(target - tBot)));
+    if (correction === 0) continue;
+
+    const warpStart = tTop + Math.floor(tH * 0.65); // bottom 35% of tooth
+    const warpEnd   = Math.min(tBot + Math.abs(correction) + 2, upperLimit - 1);
+    const zoneH     = warpEnd - warpStart;
+    if (zoneH < 2) continue;
+
+    if (correction > 0) {
+      // Elongate: shift pixels DOWN (process bottom-to-top)
+      for (let y = warpEnd; y >= warpStart; y--) {
+        // CRITICAL: only warp pixels inside the teeth mask — never touch lip/skin
+        if (maskRaw[y * w + x] <= 0) continue;
+
+        const t    = (y - warpStart) / zoneH;
+        const srcY = y - correction * t;
+        const yf   = Math.max(0, Math.floor(srcY));
+        const yc   = Math.min(yf + 1, upperLimit - 1);
+        const frac = srcY - yf;
+
+        const di = y * w * 3 + x * 3;
+        if (di + 2 >= out.length) continue;
+        for (let c = 0; c < 3; c++) {
+          const v1 = raw[yf * w * 3 + x * 3 + c] ?? raw[di + c];
+          const v2 = raw[yc * w * 3 + x * 3 + c] ?? v1;
+          out[di + c] = Math.round(lerp(v1, v2, frac));
+        }
+      }
+    } else {
+      // Shorten: compress pixels UP (process top-to-bottom)
+      const compAmt = -correction;
+      for (let y = warpStart; y <= warpEnd; y++) {
+        // CRITICAL: only warp pixels inside the teeth mask — never touch lip/skin
+        if (maskRaw[y * w + x] <= 0) continue;
+
+        const t    = (y - warpStart) / zoneH;
+        const srcY = Math.min(y + compAmt * t, upperLimit - 1);
+        const yf   = Math.floor(srcY);
+        const yc   = Math.min(yf + 1, upperLimit - 1);
+        const frac = srcY - yf;
+
+        const di = y * w * 3 + x * 3;
+        if (di + 2 >= out.length) continue;
+        for (let c = 0; c < 3; c++) {
+          const v1 = raw[yf * w * 3 + x * 3 + c] ?? raw[di + c];
+          const v2 = raw[yc * w * 3 + x * 3 + c] ?? v1;
+          out[di + c] = Math.round(lerp(v1, v2, frac));
+        }
+      }
+    }
+    corrected++;
+  }
+
+  console.log(`[SIM ARC] Smile arc applied: ${corrected}/${validCols.length} columns adjusted  ARC_DEPTH=${ARC_DEPTH}px`);
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+}
+
+// ── Confidence — how much did the tooth area change? ─────────────────────────
+// Low modification → high confidence (result is safe/believable).
+// avgPixelChange 0–10: high, 10–30: medium, >30: aggressive/risky.
+//
+async function computeConfidence(origCropBuf, resultCropBuf, maskBuf, w, h) {
+  const [origRaw, resRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(resultCropBuf).resize(w, h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer(),
+  ]);
+  let totalDiff = 0, maskPx = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] <= 64) continue;
+    maskPx++;
+    for (let c = 0; c < 3; c++) totalDiff += Math.abs(origRaw[i*3+c] - resRaw[i*3+c]);
+  }
+  const avgChange = maskPx > 0 ? totalDiff / (maskPx * 3) : 0;
+  const score     = Math.max(0.45, Math.min(1.00, 1 - avgChange / 60));
+  console.log(`[SIM CONFIDENCE] avgChange=${avgChange.toFixed(1)}  score=${score.toFixed(2)}`);
+  return { confidence: Math.round(score * 100) / 100, avgPixelChange: Math.round(avgChange * 10) / 10 };
+}
+
+// ── Transformation-aware confidence score ────────────────────────────────────
+//
+// Unlike the raw pixel-delta score, this considers WHAT was applied:
+//
+//   whitening mode  → max 0.82 (colour change alone ≠ clinical result)
+//   alignment mode  → max 0.90 (geometry improved)
+//   full mode       → max 0.96 (full smile design)
+//
+// Stain / structure warnings degrade the score.
+// stainRemovalRate: fraction of original stains that were removed (0–1).
+//
+function computeTransformationScore({ cfg, stainRemovalRate, stainWarning, structureWarning }) {
+  const maxScore = cfg.maxConfidence ?? 0.88;
+  let score = maxScore;
+
+  // Stain removal contribution
+  if (stainRemovalRate >= 0.70)      score *= 1.00;   // full credit
+  else if (stainRemovalRate >= 0.50) score *= 0.96;
+  else if (stainRemovalRate >= 0.30) score *= 0.90;
+  else                               score *= 0.80;   // stains mostly remain
+
+  // Penalties
+  if (stainWarning)     score = Math.min(score, 0.50); // residual stain after retry
+  if (structureWarning) score = Math.min(score, 0.40); // structure was compromised
+
+  score = Math.max(0.40, Math.min(maxScore, score));
+  return Math.round(score * 100) / 100;
+}
+
+// ── Blend: alpha 0.6 (core teeth) / 0.3 (feathered edges) / 0.0 (outside) ───
+async function blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, w, h, cfg = SIM_MODES.natural) {
+  const [origRaw, maskRaw] = await Promise.all([
+    sharp(origCropBuf).resize(w,h).removeAlpha().raw().toBuffer(),
+    sharp(maskBuf).resize(w,h).greyscale().raw().toBuffer(),
+  ]);
+
+  // Apply bilateral filter to enhanced result for edge preservation
+  const filtered = bilateralFilter(enhancedRaw, w, h);
+
+  const result = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w*h; i++) {
+    // Adaptive alpha: strong inside mask, gentler at edges
+    const m = maskRaw[i];
+    const alpha = m > 192 ? cfg.blendAlpha.strong : m > 64 ? cfg.blendAlpha.edge : 0.0;
+    for (let c = 0; c < 3; c++)
+      result[i*3+c] = Math.min(245, Math.round(origRaw[i*3+c]*(1-alpha) + filtered[i*3+c]*alpha));
+  }
+
+  // ── Dark-pixel guarantee (inside tooth mask only) ─────────────────────────
+  // Any remaining pixel darker than 85% of its 5×5 neighbourhood is force-lifted.
+  // This catches residual tartar halo pixels that survived the blending step.
+  {
+    const resBr = new Float32Array(w * h);
+    for (let i = 0; i < w*h; i++)
+      resBr[i] = (result[i*3] + result[i*3+1] + result[i*3+2]) / 3;
+    const { mean: lm5 } = computeLocalStats(resBr, w, h, 2); // 5×5 window
+
+    let lifted = 0;
+    for (let i = 0; i < w*h; i++) {
+      if (maskRaw[i] <= 64) continue;          // only inside teeth mask
+      const pixBr = resBr[i];
+      const lm    = lm5[i];
+      // Lower-region floor is tighter (0.88) because tartar leaves more residual
+      // dark halos on lower incisors that survive the standard 0.85 floor.
+      const isLower = Math.floor(i / w) > h * 0.42;
+      const floor   = lm * (isLower ? 0.88 : 0.85);
+      if (pixBr < floor) {
+        const liftDelta = (lm - pixBr) * 0.6; // additive lift toward local mean
+        for (let c = 0; c < 3; c++) {
+          result[i*3+c] = Math.min(245, Math.max(
+            origRaw[i*3+c],                           // never darker than original
+            Math.round(floor),                        // hard floor
+            Math.round(result[i*3+c] + liftDelta),   // lift
+          ));
+        }
+        lifted++;
+      }
+    }
+    if (lifted > 0)
+      console.log(`[SIM DARK-FLOOR] forced lift on ${lifted} dark tooth pixels`);
+  }
+
+  // ── Inter-tooth dark line reduction ───────────────────────────────────────
+  // Runs after the dark-floor pass so it operates on already-lifted pixels.
+  // Returns a new Buffer; reassign result so validation sees the final state.
+  result = reduceDarkLines(result, maskRaw, w, h);
+
+  // ── Micro-texture cleaning (noisy/speckled tartar surface) ────────────────
+  result = microTextureClean(result, maskRaw, w, h);
+
+  // ── Uniform whitening — even tone, shading preserved ─────────────────────
+  result = uniformWhitening(result, maskRaw, w, h, cfg.uniformTargetFactor);
+
+  // Validation: result must be at least as bright as original in teeth zone
+  let origSum = 0, resSum = 0, cnt = 0;
+  for (let i = 0; i < w*h; i++) {
+    if (maskRaw[i] > 64) {
+      origSum += (origRaw[i*3]+origRaw[i*3+1]+origRaw[i*3+2])/3;
+      resSum  += (result[i*3]+result[i*3+1]+result[i*3+2])/3;
+      cnt++;
+    }
+  }
+  if (cnt > 0) {
+    const ratio = resSum / origSum;
+    console.log(`[SIM BLEND] brightness ratio: ${ratio.toFixed(3)} (${cnt} px)`);
+    if (ratio < 0.93) {
+      console.warn('[SIM BLEND] result too dark — reverting to original crop');
       return origCropBuf;
     }
   }
 
-  return blendedBuf;
+  // Unsharp mask: restore fine texture (gaps, enamel ridges) after bilateral smooth
+  return sharp(result, { raw: { width: w, height: h, channels: 3 } })
+    .sharpen({ sigma: 1.0, m1: 0.5, m2: 8 })
+    .jpeg({ quality: 92 }).toBuffer();
 }
 
-async function cropCompositeSimulation(publicImageUrl, _opts, _token, patientId) {
-  // ── 1. Fetch original ────────────────────────────────────────────────────
+async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
+  const cfg = resolveSimMode(mode);
+  console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label})`);
+  // 1. Fetch original
   let origBuf, origW, origH;
   try {
     const res = await fetch(publicImageUrl, { signal: AbortSignal.timeout(25_000) });
-    if (!res.ok) throw new Error(`fetch_orig_http_${res.status}`);
+    if (!res.ok) throw new Error(`fetch_http_${res.status}`);
     origBuf = Buffer.from(await res.arrayBuffer());
     const meta = await sharp(origBuf).metadata();
-    origW = meta.width;
-    origH = meta.height;
+    origW = meta.width; origH = meta.height;
     console.log(`[SIM CROP] Original: ${origW}×${origH}`);
-  } catch (e) {
-    return { url: null, failReason: 'crop_fetch_orig: ' + e?.message };
-  }
+  } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
 
-  // ── 2. Crop rectangle: lower face (Y 55–90 %, X 15–85 %) ───────────────
-  const cropLeft   = Math.round(origW * 0.15);
-  const cropTop    = Math.round(origH * 0.55);
-  const cropWidth  = Math.round(origW * 0.70);
-  const cropHeight = Math.round(origH * 0.35);
+  // 2. Crop lower face
+  const cropLeft = Math.round(origW * 0.15), cropTop = Math.round(origH * 0.55);
+  const cropWidth = Math.round(origW * 0.70), cropHeight = Math.round(origH * 0.35);
   console.log(`[SIM CROP] Box: left=${cropLeft} top=${cropTop} w=${cropWidth} h=${cropHeight}`);
 
-  // ── 3. Extract the mouth crop at native resolution ───────────────────────
   let origCropBuf;
   try {
     origCropBuf = await sharp(origBuf)
       .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
-      .jpeg({ quality: 95 })
-      .toBuffer();
-  } catch (e) {
-    return { url: null, failReason: 'crop_extract: ' + e?.message };
-  }
+      .jpeg({ quality: 95 }).toBuffer();
+  } catch (e) { return { url: null, failReason: 'crop_extract: ' + e?.message }; }
 
-  // ── 4. Build teeth mask ──────────────────────────────────────────────────
+  // 3. Build teeth mask
   let maskBuf;
-  try {
-    maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight);
-  } catch (e) {
-    return { url: null, failReason: 'crop_mask: ' + e?.message };
-  }
+  try { maskBuf = await buildTeethMask(origCropBuf, cropWidth, cropHeight); }
+  catch (e) { return { url: null, failReason: 'crop_mask: ' + e?.message }; }
 
-  // ── 5. Compute whitened pixels + blend via mask ──────────────────────────
+  // 4+5. Enhance (tartar + LAB whitening) + bilateral blend
   let blendedCropBuf;
   try {
-    const whitenedRaw = await computeWhitenedRaw(origCropBuf, cropWidth, cropHeight);
-    blendedCropBuf = await blendCropWithMask(origCropBuf, whitenedRaw, maskBuf, cropWidth, cropHeight);
-    console.log(`[SIM CROP] Blended crop: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
-  } catch (e) {
-    return { url: null, failReason: 'crop_blend: ' + e?.message };
+    const enhancedRaw = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight);
+    blendedCropBuf = await blendCropWithMask(origCropBuf, enhancedRaw, maskBuf, cropWidth, cropHeight, cfg);
+    console.log(`[SIM CROP] Blended: ${Math.round(blendedCropBuf.byteLength / 1024)} KB`);
+  } catch (e) { return { url: null, failReason: 'crop_blend: ' + e?.message }; }
+
+  // Step 5a: Horizontal micro-alignment (alignment + full modes)
+  if (cfg.alignment) {
+    try {
+      blendedCropBuf = await microAlignment(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM ALIGN] non-fatal error:', e?.message); }
   }
 
-  // ── 5b. Sharpen — keep inter-tooth gaps and enamel texture crisp ─────────
-  // Unsharp mask (sigma=1.2, m1=0.5 flat, m2=10 edge) makes tooth boundaries
-  // and gap lines more visible without over-sharpening the enamel surface.
+  // Step 5b: Smile arc — parabolic incisal-edge correction (alignment + full modes)
+  if (cfg.smileArc) {
+    try {
+      blendedCropBuf = await applySmileArc(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM ARC] non-fatal:', e?.message); }
+  }
+
+  // Step 6: Shape refinement — soft incisal edges (alignment + full modes)
+  if (cfg.edgeSoftening) {
+    try {
+      blendedCropBuf = await edgeSoftening(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM EDGE-SOFT] non-fatal:', e?.message); }
+  }
+
+  // Step 7: Light & reflection highlights (full mode only)
+  if (cfg.highlights) {
+    try {
+      blendedCropBuf = await addReflectionHighlights(blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    } catch (e) { console.warn('[SIM HIGHLIGHT] non-fatal:', e?.message); }
+  }
+
+  // ── Stain validation ─────────────────────────────────────────────────────────
+  // Decode both the original crop and the current result, then measure how many
+  // stain pixels survived. If > 50% remain AND teeth were significantly stained to
+  // begin with, retry the entire enhance+blend pass with boosted parameters.
+  //
+  let stainWarning = false;
+  let stainRemovalRate = 1.0; // assume clean unless we detect otherwise
+  try {
+    const [origDecoded, maskDecoded] = await Promise.all([
+      sharp(origCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
+      sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
+    ]);
+    const beforeStains = detectStains(origDecoded, maskDecoded, cropWidth, cropHeight);
+    console.log(`[SIM VALIDATE] before: count=${beforeStains.count} ratio=${(beforeStains.ratio*100).toFixed(1)}%`);
+
+    if (beforeStains.ratio >= MIN_STAIN_RATIO) {
+      const resDecoded   = await sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer();
+      const afterStains  = detectStains(resDecoded, maskDecoded, cropWidth, cropHeight);
+      const removalRate  = beforeStains.count > 0 ? (beforeStains.count - afterStains.count) / beforeStains.count : 1;
+      stainRemovalRate   = Math.max(0, Math.min(1, removalRate));
+      console.log(`[SIM VALIDATE] after: count=${afterStains.count} ratio=${(afterStains.ratio*100).toFixed(1)}%  removed=${(removalRate*100).toFixed(1)}%`);
+
+      if (removalRate < PASS_REMOVAL_RATE) {
+        console.log('[SIM VALIDATE] ⚠️ < 50% stains removed — retrying with boosted params');
+
+        const boostCfg = {
+          ...cfg,
+          blendAlpha:          { strong: Math.min(0.82, cfg.blendAlpha.strong * 1.20), edge: Math.min(0.52, cfg.blendAlpha.edge * 1.20) },
+          uniformTargetFactor: Math.min(1.24, cfg.uniformTargetFactor * 1.10),
+        };
+
+        try {
+          const enhancedBoosted = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, true);
+          let retryBuf = await blendCropWithMask(origCropBuf, enhancedBoosted, maskBuf, cropWidth, cropHeight, boostCfg);
+          if (boostCfg.edgeSoftening)
+            retryBuf = await edgeSoftening(retryBuf, maskBuf, cropWidth, cropHeight).catch(e => { console.warn('[SIM RETRY ES]', e?.message); return retryBuf; });
+          if (boostCfg.highlights)
+            retryBuf = await addReflectionHighlights(retryBuf, maskBuf, cropWidth, cropHeight).catch(e => { console.warn('[SIM RETRY HL]', e?.message); return retryBuf; });
+
+          const retryDecoded  = await sharp(retryBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer();
+          const retryStains   = detectStains(retryDecoded, maskDecoded, cropWidth, cropHeight);
+          const retryRemoval  = (beforeStains.count - retryStains.count) / beforeStains.count;
+          console.log(`[SIM VALIDATE] retry: count=${retryStains.count} removed=${(retryRemoval*100).toFixed(1)}%`);
+
+          if (retryRemoval >= PASS_REMOVAL_RATE) {
+            console.log('[SIM VALIDATE] ✅ Retry passed — using boosted result');
+            blendedCropBuf = retryBuf;
+          } else {
+            console.warn('[SIM VALIDATE] ⚠️ Stains persist after retry — using boosted result anyway, flagging stainWarning');
+            blendedCropBuf = retryBuf;  // still better than first pass
+            stainWarning   = true;
+          }
+        } catch (retryErr) {
+          console.warn('[SIM VALIDATE] retry exception (keeping first-pass result):', retryErr?.message);
+          stainWarning = true;
+        }
+      } else {
+        console.log(`[SIM VALIDATE] ✅ ${(removalRate*100).toFixed(1)}% stains removed — no retry needed`);
+      }
+    } else {
+      console.log('[SIM VALIDATE] Teeth are clean — validation skipped');
+    }
+  } catch (validErr) {
+    console.warn('[SIM VALIDATE] non-fatal validation error:', validErr?.message);
+  }
+
+  // ── Structural integrity check ────────────────────────────────────────────────
+  // Compare the column brightness profile of the original crop vs the current result.
+  // If the Pearson correlation drops below 0.82 OR inter-tooth gaps are reduced by
+  // more than 45%, the output has effectively changed tooth geometry.
+  //
+  // On failure: revert to a "safe fallback" — a gentle re-blend (α 0.25/0.12) of
+  // the original non-boosted enhanced raw, which is purely a colour correction
+  // with almost no luminance shift.
+  //
+  let structureWarning = false;
+  try {
+    const integ = await checkStructuralIntegrity(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    console.log(`[SIM STRUCTURE] corr=${integ.correlation.toFixed(3)}  gaps=${integ.origGaps}→${integ.resultGaps}(ratio=${integ.gapRatio.toFixed(2)})  valid=${integ.valid}`);
+
+    if (!integ.valid) {
+      console.warn('[SIM STRUCTURE] ⚠️ Structure changed:', integ.issues.join(', '), '— reverting to safe fallback');
+      structureWarning = true;
+
+      // Safe fallback: minimal blend, no uniform-whitening overshoot, no extra passes
+      const safeCfg = {
+        ...cfg,
+        blendAlpha:          { strong: 0.25, edge: 0.12 },
+        uniformTargetFactor: 1.06,   // barely +6% above average
+        edgeSoftening:       false,
+        highlights:          false,
+        alignment:           false,
+      };
+      try {
+        const safeEnhanced = await computeEnhancedRaw(origCropBuf, cropWidth, cropHeight, false);
+        blendedCropBuf     = await blendCropWithMask(origCropBuf, safeEnhanced, maskBuf, cropWidth, cropHeight, safeCfg);
+        console.log('[SIM STRUCTURE] ✅ Safe fallback applied');
+      } catch (fbErr) {
+        console.warn('[SIM STRUCTURE] Fallback failed — keeping original result:', fbErr?.message);
+      }
+    } else {
+      console.log('[SIM STRUCTURE] ✅ Tooth structure preserved');
+    }
+  } catch (structErr) {
+    console.warn('[SIM STRUCTURE] non-fatal:', structErr?.message);
+  }
+
+  // Final sharpening — mode-specific sigma keeps gaps crisp
   try {
     blendedCropBuf = await sharp(blendedCropBuf)
-      .sharpen({ sigma: 1.2, m1: 0.5, m2: 10 })
+      .sharpen({ sigma: cfg.sharpenSigma, m1: cfg.sharpenM1, m2: cfg.sharpenM2 })
       .jpeg({ quality: 92 })
       .toBuffer();
     console.log('[SIM CROP] Sharpened');
@@ -16496,142 +17179,120 @@ async function cropCompositeSimulation(publicImageUrl, _opts, _token, patientId)
     console.warn('[SIM CROP] Sharpen failed (non-fatal):', e?.message);
   }
 
-  // ── 6. Composite blended crop onto the full original ────────────────────
+  // Confidence score — transformation-aware (mode + stain removal + warnings)
+  let confidence = 0.75, avgPixelChange = 0;
+  try {
+    const conf = await computeConfidence(origCropBuf, blendedCropBuf, maskBuf, cropWidth, cropHeight);
+    avgPixelChange = conf.avgPixelChange;
+    // Transformation-aware score (replaces raw pixel-delta score)
+    confidence = computeTransformationScore({ cfg, stainRemovalRate, stainWarning, structureWarning });
+    console.log(`[SIM CONFIDENCE] mode=${cfg.name} stainRemoval=${(stainRemovalRate*100).toFixed(0)}% score=${confidence}`);
+  } catch (e) { console.warn('[SIM CONFIDENCE] non-fatal:', e?.message); }
+
+  // CRITICAL: Hard mask fence — restore original for every non-mask pixel.
+  // This is the last line of defence against any upstream leakage (warp,
+  // blur, alignment) that touched skin, lip, beard, or background pixels.
+  try {
+    blendedCropBuf = await enforceTeethMaskBoundary(
+      blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+    );
+  } catch (e) { console.warn('[SIM FENCE] non-fatal:', e?.message); }
+
+  // 6. Mask-accurate composite onto full original ─────────────────────────────
+  //
+  // DO NOT use a plain .composite(blendedCropBuf) — that overlays the entire
+  // crop, touching every pixel inside the crop bounding box (including lips,
+  // beard, and skin), even after enforceTeethMaskBoundary() has been applied.
+  // A JPEG re-encode of those pixels introduces compression artifacts that
+  // alter non-teeth areas.
+  //
+  // Instead: attach the teeth mask as the alpha channel of the processed crop
+  // (RGBA PNG), then composite that over the original.  Sharp's compositing
+  // engine uses the alpha channel so that:
+  //   • mask = 255  → processed tooth pixel fully replaces original
+  //   • mask = 0–254 → proportional blend (feather zone only)
+  //   • mask = 0    → alpha = 0 → original pixel used entirely, untouched
+  //
+  // Outcome: beard, skin, lips, background are taken 100% from origBuf —
+  // they never pass through the crop processing pipeline at all.
+  //
   let compositedBuf;
   try {
+    const [cropRaw, maskRaw] = await Promise.all([
+      sharp(blendedCropBuf).resize(cropWidth, cropHeight).removeAlpha().raw().toBuffer(),
+      sharp(maskBuf).resize(cropWidth, cropHeight).greyscale().raw().toBuffer(),
+    ]);
+
+    // Build RGBA buffer: RGB = processed crop, A = teeth mask
+    const rgbaData = Buffer.alloc(cropWidth * cropHeight * 4);
+    for (let i = 0; i < cropWidth * cropHeight; i++) {
+      rgbaData[i*4]   = cropRaw[i*3];
+      rgbaData[i*4+1] = cropRaw[i*3+1];
+      rgbaData[i*4+2] = cropRaw[i*3+2];
+      rgbaData[i*4+3] = maskRaw[i];   // alpha = mask value (0 = transparent outside teeth)
+    }
+
+    const maskedCropPng = await sharp(rgbaData, {
+      raw: { width: cropWidth, height: cropHeight, channels: 4 },
+    }).png().toBuffer();
+
     compositedBuf = await sharp(origBuf)
-      .composite([{ input: blendedCropBuf, left: cropLeft, top: cropTop }])
-      .jpeg({ quality: 90 })
-      .toBuffer();
-    console.log(`[SIM CROP] Final composite: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
-  } catch (e) {
-    return { url: null, failReason: 'crop_composite: ' + e?.message };
-  }
+      .composite([{ input: maskedCropPng, left: cropLeft, top: cropTop, blend: 'over' }])
+      .jpeg({ quality: 90 }).toBuffer();
+    console.log(`[SIM CROP] Mask-composite done: ${Math.round(compositedBuf.byteLength / 1024)} KB`);
+  } catch (e) { return { url: null, failReason: 'crop_composite: ' + e?.message }; }
 
-  // ── 7. Upload to Supabase ─────────────────────────────────────────────────
+  // 7. Upload to Supabase
   try {
-    const ts          = Date.now();
-    const rand        = Math.random().toString(36).slice(2, 8);
+    const ts = Date.now(), rand = Math.random().toString(36).slice(2, 8);
     const storagePath = `ai-photos/${patientId}/sim-${ts}-${rand}.jpg`;
-
     console.log('[SIM CROP] Uploading to Supabase:', storagePath);
     const { error: upErr } = await supabaseAdmin.storage
       .from('patient-files')
       .upload(storagePath, compositedBuf, { contentType: 'image/jpeg', upsert: false });
-    if (upErr) {
-      console.error('[SIM CROP] Supabase upload error:', upErr.message);
-      throw new Error(upErr.message);
-    }
-
-    const { data: urlData } = supabaseAdmin.storage
-      .from('patient-files')
-      .getPublicUrl(storagePath);
+    if (upErr) throw new Error(upErr.message);
+    const { data: urlData } = supabaseAdmin.storage.from('patient-files').getPublicUrl(storagePath);
     const finalUrl = urlData?.publicUrl;
     if (!finalUrl) throw new Error('getPublicUrl returned nothing');
-
-    console.log('[SIM CROP] Supabase public URL:', finalUrl.slice(0, 100));
-    return { url: finalUrl, failReason: null };
+    console.log('[SIM CROP] Public URL:', finalUrl.slice(0, 100));
+    return { url: finalUrl, mode: cfg.name, confidence, avgPixelChange, stainWarning, structureWarning, failReason: null };
   } catch (e) {
     console.error('[SIM CROP] Supabase upload failed:', e?.message);
-    return { url: null, failReason: 'crop_upload_supabase: ' + e?.message };
+    return { url: null, failReason: 'supabase_upload: ' + e?.message };
   }
 }
 
-/**
- * Runs a SINGLE "balanced" smile simulation.
- * No fallback to original image — returns null url on failure so the
- * frontend knows it was a real failure and can show a retry button.
- */
-async function runSmileSimulation({ imageUrl, patientId }) {
-  const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) {
-    console.error('[SIM] REPLICATE_API_TOKEN not set');
-    return { variations: [], url: null, provider: null, error: 'no_providers_configured' };
-  }
-
-  console.log('[SIM] Starting | patientId:', patientId);
-
-  const balanced = SIM_VARIATIONS.find(v => v.id === 'balanced') ?? SIM_VARIATIONS[1];
-
-  // Convert signed URL → public URL once (used by both inpainting and img2img)
+async function runSmileSimulation({ imageUrl, patientId, mode = 'full' }) {
   const publicImageUrl = imageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
     .split('?')[0];
-  console.log('[SIM] Public image URL:', publicImageUrl.slice(0, 100));
 
-  const debugInfo = [];
-  let r = { url: null, failReason: 'not_attempted' };
+  console.log(`[SIM] mode=${mode} | patientId:`, patientId);
+  console.log('[SIM] Public URL:', publicImageUrl.slice(0, 120));
 
-  // ── PRIMARY: crop → img2img on teeth only → composite back onto original ──
-  // This is the ONLY approach that guarantees the beard/skin/lips are never
-  // touched — because they are never sent to the AI model at all.
-  //
-  // Flow:
-  //  1. Fetch original image bytes
-  //  2. Crop to mouth/teeth region (Y 52-82%, X 15-85%)
-  //  3. Run img2img at low strength (0.4) on the crop only
-  //  4. Paste the AI result back onto the original at the same coordinates
-  //  5. Upload the composited image and return its URL
-  console.log('[SIM] Trying crop-composite (teeth-only)…');
-  r = await cropCompositeSimulation(publicImageUrl, balanced, token, patientId);
-  if (r.url) {
-    console.log('[SIM] Crop-composite ✅ | url:', r.url.slice(0, 80));
-  } else {
-    debugInfo.push('crop_composite: ' + r.failReason);
-    console.warn('[SIM] Crop-composite failed:', r.failReason);
-  }
-
-  // ── FALLBACK: inpainting with mask (if crop-composite fails) ─────────────
-  // Inpainting also restricts edits to the masked region but relies on an
-  // external model version hash that may change. We keep it as a safety net.
-  if (!r.url && !r.isRateLimit) {
-    console.warn('[SIM] Crop-composite failed — trying inpainting fallback…');
-    try {
-      const maskUrl = await getOrUploadMask(token);
-      if (maskUrl) {
-        r = await replicateInpaintPrediction(publicImageUrl, maskUrl, balanced, token);
-        if (r.url) {
-          console.log('[SIM] Inpainting ✅ | url:', r.url.slice(0, 80));
-        } else {
-          debugInfo.push('inpaint: ' + r.failReason);
-        }
-      } else {
-        debugInfo.push('inpaint: mask_upload_failed');
-      }
-    } catch (e) {
-      debugInfo.push('inpaint_exception: ' + e?.message);
-    }
-  } else if (r.isRateLimit) {
-    console.warn('[SIM] Rate-limited — skipping all fallbacks');
-    debugInfo.push('fallback: skipped_due_to_rate_limit');
-  }
-
-  const isRateLimitError = !r.url && (r.isRateLimit || debugInfo.some(d => d.includes('429')));
+  const r = await cropCompositeSimulation(publicImageUrl, patientId, mode);
 
   if (!r.url) {
-    console.log('❌ Simulation failed | reasons:', debugInfo);
-    logAI('warn', 'sim_failed', { patientId, reasons: debugInfo });
-    return {
-      variations:      [],
-      url:             null,
-      provider:        null,
-      error:           r.failReason,
-      fallback:        false,
-      rateLimited:     isRateLimitError,   // frontend can show "try again in a moment"
-      billingRequired: isRateLimitError,
-      debugInfo,
-    };
+    console.log('❌ Simulation failed | reason:', r.failReason);
+    logAI('warn', 'sim_failed', { patientId, reason: r.failReason });
+    return { variations: [], url: null, provider: null, error: r.failReason, fallback: false, debugInfo: [r.failReason] };
   }
 
-  logAI('info', 'sim_done', { patientId });
-  const variation = { id: balanced.id, label: balanced.label, url: r.url };
+  const label = resolveSimMode(mode).label;
+  console.log(`[SIM] Done ✅ | mode=${r.mode} | confidence=${r.confidence} | url:`, r.url.slice(0, 80));
+  logAI('info', 'sim_done', { patientId, mode: r.mode, confidence: r.confidence });
   return {
-    variations: [variation],
-    url:        r.url,
-    provider:   'replicate',
-    error:      null,
-    fallback:   false,
-    debugInfo,
+    variations:     [{ id: mode, label, url: r.url }],
+    url:            r.url,
+    mode:           r.mode,
+    confidence:     r.confidence,
+    avgPixelChange: r.avgPixelChange,
+    stainWarning:     r.stainWarning     ?? false,
+    structureWarning: r.structureWarning ?? false,
+    provider:         'programmatic',
+    error:          null,
+    fallback:       false,
+    debugInfo:      [],
   };
 }
 
@@ -16651,29 +17312,33 @@ setInterval(() => {
 // Client polls GET /api/chat/sim-status/:jobId for the result.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   console.log('🎯 SIM ENDPOINT v7 HIT | ASYNC JOB | returning jobId immediately');
-  const { patientId, imageUrl } = req.body || {};
-  console.log('[SIM] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
+  const { patientId, imageUrl, mode = 'full' } = req.body || {};
+  const simMode = SIM_MODES[mode] ? mode : 'full';
+  console.log('[SIM] patientId:', patientId, '| mode:', simMode, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
   if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
   if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
   if (!ENABLE_SMILE_SIMULATION) return res.status(503).json({ ok: false, error: 'simulation_disabled' });
 
   const jobId = crypto.randomUUID();
-  _simJobs.set(jobId, { status: 'pending', url: null, variations: [], failReason: null, createdAt: Date.now() });
+  _simJobs.set(jobId, { status: 'pending', url: null, variations: [], failReason: null, mode: simMode, createdAt: Date.now() });
 
   // Fire-and-forget — do NOT await this
-  runSmileSimulation({ imageUrl, patientId }).then(result => {
+  runSmileSimulation({ imageUrl, patientId, mode: simMode }).then(result => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, {
       ...existing,
-      status:          result.url ? 'succeeded' : 'failed',
-      url:             result.url ?? null,
-      variations:      result.variations ?? [],
-      failReason:      result.error ?? null,
-      rateLimited:     result.rateLimited ?? false,
-      billingRequired: result.billingRequired ?? false,
+      status:         result.url ? 'succeeded' : 'failed',
+      url:            result.url ?? null,
+      variations:     result.variations ?? [],
+      mode:           result.mode ?? simMode,
+      confidence:     result.confidence ?? null,
+      avgPixelChange: result.avgPixelChange ?? null,
+      stainWarning:     result.stainWarning     ?? false,
+      structureWarning: result.structureWarning ?? false,
+      failReason:       result.error ?? null,
     });
-    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}${result.rateLimited ? ' (rate-limited)' : ''}`);
+    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
   }).catch(err => {
     const existing = _simJobs.get(jobId) ?? {};
     _simJobs.set(jobId, { ...existing, status: 'failed', failReason: err?.message });
@@ -16698,18 +17363,17 @@ app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
       ok:                true,
       status:            'succeeded',
       simulatedImageUrl: job.url,
-      simulationProvider:'replicate',
+      simulationProvider:'programmatic',
       variations:        job.variations ?? [],
+      mode:              job.mode ?? 'natural',
+      confidence:        job.confidence ?? null,
+      avgPixelChange:    job.avgPixelChange ?? null,
+      stainWarning:      job.stainWarning      ?? false,
+      structureWarning:  job.structureWarning  ?? false,
       fallback:          false,
     });
   }
-  return res.json({
-    ok:              false,
-    status:          'failed',
-    error:           job.failReason ?? 'unknown',
-    rateLimited:     job.rateLimited ?? false,
-    billingRequired: job.billingRequired ?? false,
-  });
+  return res.json({ ok: false, status: 'failed', error: job.failReason ?? 'unknown' });
 });
 
 // POST /api/chat/ai-upload
@@ -30661,6 +31325,189 @@ app.post("/api/patient/treatment-plans/:id/reject", requireToken, async (req, re
   }
 });
 
+// ── Treatment Requests & Offers ───────────────────────────────────────────────
+// These endpoints power the patient's "My Requests / Offers" screen.
+// Tables: treatment_requests, treatment_offers, ratings, doctors, clinics.
+
+// GET /api/patient/treatment-requests
+// Returns all requests by the authenticated patient, each with its doctor offers.
+app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    // Fetch requests (with the target clinic name)
+    const { data: requests, error: reqErr } = await supabaseAdmin
+      .from('treatment_requests')
+      .select('*, clinics(id, name)')
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+
+    if (reqErr) {
+      console.error('[TREATMENT-REQUESTS GET]', reqErr.message);
+      return res.status(500).json({ ok: false, error: 'db_error' });
+    }
+
+    if (!requests || requests.length === 0) {
+      return res.json({ ok: true, requests: [] });
+    }
+
+    const requestIds = requests.map(r => r.id);
+
+    // Fetch all offers for these requests (with doctor + clinic names)
+    const { data: offers, error: offErr } = await supabaseAdmin
+      .from('treatment_offers')
+      .select('*, doctors(id, full_name, name), clinics(id, name)')
+      .in('request_id', requestIds)
+      .order('created_at', { ascending: true });
+
+    if (offErr) console.warn('[TREATMENT-REQUESTS OFFERS]', offErr.message);
+
+    const offersByRequest = {};
+    for (const offer of offers || []) {
+      const rId = offer.request_id;
+      if (!offersByRequest[rId]) offersByRequest[rId] = [];
+      offersByRequest[rId].push({
+        id:             offer.id,
+        clinic_id:      offer.clinic_id || null,
+        clinic_name:    offer.clinics?.name || null,
+        doctor_name:    offer.doctors?.full_name || offer.doctors?.name || null,
+        treatment_type: offer.treatment_type,
+        price_range:    offer.price_range || null,
+        duration:       offer.duration    || null,
+        note:           offer.note        || null,
+        disclaimer:     offer.disclaimer  || 'This is a preliminary estimate. Final diagnosis requires clinical examination.',
+        created_at:     offer.created_at,
+      });
+    }
+
+    const result = requests.map(r => ({
+      id:                   r.id,
+      clinic_id:            r.clinic_id   || null,
+      clinic_name:          r.clinics?.name || null,
+      description:          r.description,
+      budget:               r.budget               || null,
+      preferred_treatment:  r.preferred_treatment  || null,
+      status:               r.status,
+      created_at:           r.created_at,
+      offers:               offersByRequest[r.id]  || [],
+    }));
+
+    return res.json({ ok: true, requests: result });
+  } catch (e) {
+    console.error('[TREATMENT-REQUESTS GET]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// POST /api/patient/treatment-requests/mark-seen
+// Sets patient_seen_at = NOW() on all answered requests that haven't been seen yet.
+// Called when the patient opens the My Requests screen — clears the home-screen badge.
+app.post('/api/patient/treatment-requests/mark-seen', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const { error } = await supabaseAdmin
+      .from('treatment_requests')
+      .update({ patient_seen_at: new Date().toISOString() })
+      .eq('patient_id', patientId)
+      .eq('status', 'answered')
+      .is('patient_seen_at', null);
+
+    if (error) console.warn('[MARK-SEEN]', error.message); // non-fatal
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[MARK-SEEN]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// GET /api/patient/ratings
+// Returns all ratings submitted by the authenticated patient.
+app.get('/api/patient/ratings', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const { data: ratings, error } = await supabaseAdmin
+      .from('ratings')
+      .select('id, clinic_id, offer_id, type, overall, created_at')
+      .eq('patient_id', patientId);
+
+    if (error) {
+      console.error('[RATINGS GET]', error.message);
+      return res.status(500).json({ ok: false, error: 'db_error' });
+    }
+    return res.json({ ok: true, ratings: ratings || [] });
+  } catch (e) {
+    console.error('[RATINGS GET]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// GET /api/patient/inbox-summary
+// Returns badge counts: new_offers (answered requests not yet seen) +
+// doctor_messages (unread messages from doctors in offer threads).
+app.get('/api/patient/inbox-summary', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    // Count answered requests the patient hasn't opened yet
+    const { count: newOffers, error: offerErr } = await supabaseAdmin
+      .from('treatment_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('patient_id', patientId)
+      .eq('status', 'answered')
+      .is('patient_seen_at', null);
+
+    if (offerErr) console.warn('[INBOX-SUMMARY offers]', offerErr.message);
+
+    // Count unread doctor messages across all offer threads belonging to this patient
+    // offer_messages.sender_role = 'doctor' AND read_at IS NULL for messages in the
+    // patient's offer threads.
+    let doctorMessages = 0;
+    try {
+      // First get all offer IDs for this patient's requests
+      const { data: reqs } = await supabaseAdmin
+        .from('treatment_requests')
+        .select('id')
+        .eq('patient_id', patientId);
+
+      if (reqs && reqs.length > 0) {
+        const reqIds = reqs.map(r => r.id);
+        const { data: offerRows } = await supabaseAdmin
+          .from('treatment_offers')
+          .select('id')
+          .in('request_id', reqIds);
+
+        if (offerRows && offerRows.length > 0) {
+          const offerIds = offerRows.map(o => o.id);
+          const { count } = await supabaseAdmin
+            .from('offer_messages')
+            .select('id', { count: 'exact', head: true })
+            .in('offer_id', offerIds)
+            .eq('sender_role', 'doctor')
+            .is('read_at', null);
+          doctorMessages = count || 0;
+        }
+      }
+    } catch (e2) {
+      console.warn('[INBOX-SUMMARY messages]', e2?.message);
+    }
+
+    return res.json({
+      ok:              true,
+      new_offers:      newOffers    || 0,
+      doctor_messages: doctorMessages,
+    });
+  } catch (e) {
+    console.error('[INBOX-SUMMARY]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
 async function requireDoctorOrAdminAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -33227,11 +34074,21 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
+// ── Global JSON 404 — API routes never return HTML ────────────────────────────
+// Any request that didn't match a route above returns a JSON 404 so the
+// mobile app can always parse the response (no "json parse error" on unknown paths).
+app.use((req, res) => {
+  res.status(404).json({ ok: false, error: 'not_found', path: req.path });
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v7');
-  console.log('🚀  SIM: async job pattern (POST→jobId, GET poll)');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v12');
+  console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
+  console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
+  console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
+  console.log('🚀  commit: 0bd30f59  built: ' + new Date().toISOString());
   console.log('🚀 ============================================');
 
 
