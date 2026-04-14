@@ -19791,13 +19791,33 @@ async function applyLowerStripRealismAdjust(rgbBuffer) {
 
 /**
  * Seamless mouth integration: blend hard composite with original using a blurred mouth mask (sharp center, soft edges only).
- * No full-image blur. SIM_MERGE_EDGE_FEATHER_SIGMA 6–14 (default 12). Optional lower-half alpha boost.
+ * No full-image blur. SIM_MERGE_EDGE_FEATHER_SIGMA (default 12) clamped to SIM_MERGE_EDGE_FEATHER_MIN/MAX (defaults 4–32).
+ * NOTE: Previously sigma was hard-capped at 14 — env values like 30 were silently truncated (no visible change).
  */
 async function featherBlendMouthComposite(origBuf, compositedBuf, ox, oy, mw, mh) {
-  const edgeSigma = (() => {
-    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_SIGMA ?? '12'), 10);
-    return Number.isFinite(v) ? Math.min(14, Math.max(4, v)) : 12;
+  const minFeather = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_MIN ?? '4'), 10);
+    return Number.isFinite(v) ? Math.min(12, Math.max(1, v)) : 4;
   })();
+  const maxFeather = (() => {
+    const v = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_MAX ?? '32'), 10);
+    return Number.isFinite(v) ? Math.min(64, Math.max(minFeather, v)) : 32;
+  })();
+  const requestedSigma = parseFloat(String(process.env.SIM_MERGE_EDGE_FEATHER_SIGMA ?? '12'), 10);
+  const edgeSigma = Number.isFinite(requestedSigma)
+    ? Math.min(maxFeather, Math.max(minFeather, requestedSigma))
+    : Math.min(maxFeather, Math.max(minFeather, 12));
+  console.log('MERGE FUNCTION RUNNING');
+  console.log(
+    '[MERGE TEETH] feather params: requestedSIGMA=',
+    process.env.SIM_MERGE_EDGE_FEATHER_SIGMA,
+    'effectiveSIGMA=',
+    edgeSigma,
+    'MIN=',
+    minFeather,
+    'MAX=',
+    maxFeather
+  );
   const lowerAlphaBoost = (() => {
     const v = parseFloat(String(process.env.SIM_MERGE_LOWER_ALPHA_BOOST ?? '1'), 10);
     return Number.isFinite(v) ? Math.min(1.15, Math.max(1, v)) : 1;
@@ -19852,8 +19872,10 @@ async function applyMergeMicroPostProcess(jpegBuf) {
   })();
   const b = 128 * (1 - contrastMult);
   if (String(process.env.SIM_MERGE_MICRO_POST ?? '1').trim() === '0') {
+    console.log('[MERGE TEETH] micro post: SKIPPED (SIM_MERGE_MICRO_POST=0)');
     return jpegBuf;
   }
+  console.log('[MERGE TEETH] micro post: APPLIED sat=', sat, 'contrast=', contrastMult);
   return sharp(jpegBuf)
     .modulate({ saturation: sat })
     .linear(contrastMult, b)
@@ -19862,9 +19884,17 @@ async function applyMergeMicroPostProcess(jpegBuf) {
 }
 
 // POST /api/chat/merge-teeth-strips
-// Composite AI upper/lower strips onto original full image. Body: { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth }
+// Strip pipeline only: client split → replicate-teeth-strip (×2) → THIS endpoint.
+// NOT used by POST /api/chat/smile-simulation (that uses cropCompositeSimulation + blendCropWithMask).
+// If SIM_MERGE_* env changes show no effect, confirm the app calls this route (see mergeTeeth.ts), not smile-simulation alone.
 app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
   try {
+    console.log('MERGE STARTED');
+    console.log('SIGMA:', process.env.SIM_MERGE_EDGE_FEATHER_SIGMA);
+    console.log('MICRO_POST:', process.env.SIM_MERGE_MICRO_POST);
+    console.log(
+      '[MERGE TEETH] strip-merge endpoint — SIM_MERGE_* env vars apply here (not /api/chat/smile-simulation)'
+    );
     const { patientId, originalImageUrl, upperImageUrl, lowerImageUrl, mouth } = req.body || {};
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
     if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
@@ -19943,8 +19973,9 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     let composited = hardComposite;
     try {
       composited = await featherBlendMouthComposite(origBuf, hardComposite, ox, oy, mw, mh);
+      console.log('[MERGE TEETH] feather blend completed OK');
     } catch (fe) {
-      console.warn('[MERGE TEETH] feather blend fallback to hard composite:', fe?.message);
+      console.warn('[MERGE TEETH] feather blend FAILED — using hard composite (no feather):', fe?.message);
       composited = hardComposite;
     }
 
@@ -36636,7 +36667,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v37');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v38');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
