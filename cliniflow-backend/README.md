@@ -1,6 +1,6 @@
 # Cliniflow backend entry
 
-**Production entry:** `cliniflow-backend/run.cjs` (or `npm start`) → loads **`../index.cjs`** (full API). `index.cjs` only forwards to `run.cjs`. No `.env` file is required on Render.
+**Production entry (Render):** repo root `node index.cjs` — see root `package.json`. **`cliniflow-backend/index.cjs`** is a one-file shim that forwards to **`run.cjs`**, which loads **`../index.cjs`** (full API). Prefer **`cd .. && node index.cjs`** from repo root. No `.env` file is required on Render when env vars are set in the dashboard.
 
 The small **`server/index.js`** is optional for local experiments only; it is **not** used when you `npm start` from this folder.
 
