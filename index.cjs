@@ -16071,9 +16071,156 @@ function enforceMouthOnlyCrop(origW, origH) {
   return box;
 }
 
-/** STEP 2 follow-up — softer mask edges before blend (reduces sharp teeth border). */
+/** STEP 2 follow-up — feathered teeth mask; Gaussian on mask only (σ ~12–14 typical). Not full-image blur. */
 async function featherTeethMaskForBlend(maskBuf, w, h) {
-  return sharp(maskBuf).resize(w, h).blur(2.8).png().toBuffer();
+  const sigma = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_MASK_FEATHER_SIGMA ?? '14'), 10);
+    return Number.isFinite(v) ? Math.min(20, Math.max(8, v)) : 14;
+  })();
+  return sharp(maskBuf).resize(w, h).blur(sigma).png().toBuffer();
+}
+
+/**
+ * Smile-simulation crop polish (cropCompositeSimulation only): mouth brightness match, lower depth,
+ * shadow under uppers, lower-only desat (SIM_SMILE_LOWER_SAT_MULT), softer lower arch, micro color.
+ */
+async function applySmileSimCropRealismPass(blendedCropBuf, origCropBuf, maskBuf, w, h) {
+  const lowerMult = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_LOWER_DARKEN_MULT ?? '0.87'), 10);
+    return Number.isFinite(v) ? Math.min(0.99, Math.max(0.82, v)) : 0.87;
+  })();
+  const shadowMult = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_UPPER_SHADOW_MULT ?? '0.92'), 10);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0.86, v)) : 0.92;
+  })();
+  const lowerSoftenSigma = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_LOWER_SOFTEN_SIGMA ?? '1.2'), 10);
+    return Number.isFinite(v) ? Math.min(1.8, Math.max(0, v)) : 1.2;
+  })();
+  const softenBlend = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_LOWER_SOFTEN_BLEND ?? '0.82'), 10);
+    return Number.isFinite(v) ? Math.min(0.95, Math.max(0, v)) : 0.82;
+  })();
+  const lowerSatMult = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_LOWER_SAT_MULT ?? '0.95'), 10);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0.88, v)) : 0.95;
+  })();
+
+  const cropRaw = await sharp(blendedCropBuf).resize(w, h).removeAlpha().raw().toBuffer();
+  const origRaw = await sharp(origCropBuf).resize(w, h).removeAlpha().raw().toBuffer();
+  const maskRaw = await sharp(maskBuf).resize(w, h).greyscale().raw().toBuffer();
+  const out = Buffer.from(cropRaw);
+
+  const lumRgb = (raw, ii) => {
+    const r = raw[ii * 3],
+      g = raw[ii * 3 + 1],
+      b = raw[ii * 3 + 2];
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  };
+  let refSum = 0,
+    refN = 0,
+    toothSum = 0,
+    toothN = 0;
+  for (let i = 0; i < w * h; i++) {
+    const m = maskRaw[i];
+    if (m > 35 && m < 115) {
+      refSum += lumRgb(origRaw, i);
+      refN++;
+    }
+    if (m > 185) {
+      toothSum += lumRgb(out, i);
+      toothN++;
+    }
+  }
+  const refAvg = refN > 0 ? refSum / refN : 105;
+  const toothAvg = toothN > 0 ? toothSum / toothN : refAvg;
+  const mouthMatch = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_MOUTH_MATCH_STRENGTH ?? '0.72'), 10);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.72;
+  })();
+  let brightPull = 1;
+  if (toothAvg > refAvg * 1.05 && toothN > 80) {
+    const target = refAvg * 1.03;
+    brightPull = 1 + (target / toothAvg - 1) * mouthMatch;
+  }
+
+  const yLower = Math.floor(h * 0.48);
+  const ySh0 = Math.floor(h * 0.26);
+  const ySh1 = Math.floor(h * 0.46);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (maskRaw[i] <= 64) continue;
+      let m = brightPull;
+      if (y >= yLower) m *= lowerMult;
+      if (y >= ySh0 && y <= ySh1) {
+        const t = (y - ySh0) / Math.max(1, ySh1 - ySh0);
+        const band = Math.sin(t * Math.PI);
+        m *= 1 + (shadowMult - 1) * band;
+      }
+      for (let c = 0; c < 3; c++) {
+        out[i * 3 + c] = Math.min(255, Math.round(out[i * 3 + c] * m));
+      }
+    }
+  }
+
+  // Lower-only chroma pull (less saturated than uppers) — luminance-preserving
+  if (lowerSatMult < 0.999) {
+    for (let y = yLower; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (maskRaw[i] <= 64) continue;
+        const r = out[i * 3],
+          g = out[i * 3 + 1],
+          b = out[i * 3 + 2];
+        const L = 0.299 * r + 0.587 * g + 0.114 * b;
+        out[i * 3] = Math.min(255, Math.round(L + (r - L) * lowerSatMult));
+        out[i * 3 + 1] = Math.min(255, Math.round(L + (g - L) * lowerSatMult));
+        out[i * 3 + 2] = Math.min(255, Math.round(L + (b - L) * lowerSatMult));
+      }
+    }
+  }
+
+  let softenedBuf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+  if (lowerSoftenSigma > 0.03) {
+    const blurRaw = await sharp(softenedBuf).blur(lowerSoftenSigma).removeAlpha().raw().toBuffer();
+    for (let y = yLower; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (maskRaw[i] <= 64) continue;
+        const sb = softenBlend;
+        for (let c = 0; c < 3; c++) {
+          const o = out[i * 3 + c];
+          const br = blurRaw[i * 3 + c];
+          out[i * 3 + c] = Math.min(255, Math.round(o * (1 - sb) + br * sb));
+        }
+      }
+    }
+    softenedBuf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+  } else {
+    softenedBuf = await sharp(out, { raw: { width: w, height: h, channels: 3 } })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+  }
+
+  const sat = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_MICRO_SAT ?? '0.978'), 10);
+    return Number.isFinite(v) ? Math.min(1.02, Math.max(0.94, v)) : 0.978;
+  })();
+  const contrastMult = (() => {
+    const v = parseFloat(String(process.env.SIM_SMILE_MICRO_CONTRAST ?? '1.025'), 10);
+    return Number.isFinite(v) ? Math.min(1.03, Math.max(0.98, v)) : 1.025;
+  })();
+  const b = 128 * (1 - contrastMult);
+  return sharp(softenedBuf)
+    .modulate({ saturation: sat })
+    .linear(contrastMult, b)
+    .jpeg({ quality: 92 })
+    .toBuffer();
 }
 
 /**
@@ -18449,6 +18596,7 @@ async function applyFailsafeManualWhiten(origCropBuf, maskBuf, w, h) {
 }
 
 async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full') {
+  console.log("SMILE PIPELINE ACTIVE");
   let cfg = { ...resolveSimMode(mode) };
   console.log(`[SIM] Mode: ${cfg.name} (label: ${cfg.label}) strength≈${SIM_TRANSFORM_STRENGTH}`);
   console.log('[SIM INTENT]', SIM_VISUAL_INTENT_PROMPT);
@@ -18462,6 +18610,42 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
     origW = meta.width; origH = meta.height;
     console.log(`[SIM CROP] Original: ${origW}×${origH}`);
   } catch (e) { return { url: null, failReason: 'fetch_orig: ' + e?.message }; }
+
+  // Hard verification: set SIM_SMILE_DEBUG_BLACK=1 on server → UI must show all-black result or this path is not used.
+  if (String(process.env.SIM_SMILE_DEBUG_BLACK || '').trim() === '1') {
+    console.warn('[SIM DEBUG] SIM_SMILE_DEBUG_BLACK=1 — short-circuit: solid black full-frame JPEG upload');
+    try {
+      const blackBuf = await sharp({
+        create: { width: origW, height: origH, channels: 3, background: { r: 0, g: 0, b: 0 } },
+      })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+      const ts = Date.now();
+      const rand = Math.random().toString(36).slice(2, 8);
+      const storagePath = `ai-photos/${patientId}/sim-debug-black-${ts}-${rand}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from('patient-files')
+        .upload(storagePath, blackBuf, { contentType: 'image/jpeg', upsert: false });
+      if (upErr) return { url: null, failReason: 'debug_black_upload: ' + upErr.message };
+      const { data: urlData } = supabase.storage.from('patient-files').getPublicUrl(storagePath);
+      const finalUrl = urlData?.publicUrl;
+      if (!finalUrl) return { url: null, failReason: 'debug_black_no_url' };
+      return {
+        url: finalUrl,
+        mode: cfg.name,
+        confidence: 0.2,
+        lowerArchWeak: false,
+        avgPixelChange: 255,
+        stainWarning: false,
+        structureWarning: false,
+        failReason: null,
+        level: 'strict',
+        status: 'success',
+      };
+    } catch (e) {
+      return { url: null, failReason: 'debug_black: ' + e?.message };
+    }
+  }
 
   // 2. Mouth-only crop — MediaPipe Face Mesh via TF.js (landmarks on lips → expand for teeth).
   //    SIM_FORCE_HEURISTIC_CROP=1 bypasses mesh (emergency / dev only).
@@ -19086,6 +19270,26 @@ async function cropCompositeSimulation(publicImageUrl, patientId, mode = 'full')
   }
   if (lowerArchWeak) {
     confidence = Math.min(confidence, 0.62);
+  }
+
+  // ── Smile-sim realism (UI pipeline): mask already feathered; lower darken + upper shadow + micro post on crop ──
+  if (String(process.env.SIM_SMILE_REALISM_POST ?? '1').trim() !== '0') {
+    try {
+      console.log("REALISM PASS RUNNING");
+      blendedCropBuf = await applySmileSimCropRealismPass(
+        blendedCropBuf,
+        origCropBuf,
+        maskBuf,
+        cropWidth,
+        cropHeight
+      );
+      blendedCropBuf = await enforceTeethMaskBoundary(
+        blendedCropBuf, origCropBuf, maskBuf, cropWidth, cropHeight
+      );
+      console.log('[SIM REALISM] applySmileSimCropRealismPass + fence OK');
+    } catch (e) {
+      console.warn('[SIM REALISM] non-fatal:', e?.message);
+    }
   }
 
   // 6. Raw-pixel surgery composite ────────────────────────────────────────────
@@ -19887,6 +20091,11 @@ async function applyMergeMicroPostProcess(jpegBuf) {
 // Strip pipeline only: client split → replicate-teeth-strip (×2) → THIS endpoint.
 // NOT used by POST /api/chat/smile-simulation (that uses cropCompositeSimulation + blendCropWithMask).
 // If SIM_MERGE_* env changes show no effect, confirm the app calls this route (see mergeTeeth.ts), not smile-simulation alone.
+//
+// Pipeline debug (server env): SIM_MERGE_DEBUG=original | black | (unset)
+//   original — upload unmodified original only (proves this handler ran; no AI teeth in output)
+//   black      — solid black JPEG same size as original (proves merge output is what client displays)
+//   Also: SIM_MERGE_DEBUG_RETURN_ORIGINAL=1  /  SIM_MERGE_DEBUG_BLACK=1
 app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
   try {
     console.log('MERGE STARTED');
@@ -19929,60 +20138,84 @@ app.post('/api/chat/merge-teeth-strips', requireToken, async (req, res) => {
     const upBuf = Buffer.from(await r1.arrayBuffer());
     const loBuf = Buffer.from(await r2.arrayBuffer());
 
-    const upperH = Math.max(1, Math.floor(mh / 2));
-    const lowerH = Math.max(1, mh - upperH);
+    console.log('MERGE FUNCTION ACTIVE');
 
-    const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
-    const loResizedRgb = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
-    let loAdjusted = loResizedRgb;
-    try {
-      loAdjusted = await applyLowerStripRealismAdjust(loResizedRgb);
-    } catch (le) {
-      console.warn('[MERGE TEETH] lower strip realism adjust skipped:', le?.message);
-    }
-    const lowerTeethOpacity = (() => {
-      const v = parseFloat(String(process.env.SIM_MERGE_LOWER_TEETH_OPACITY ?? '0.92'), 10);
-      return Number.isFinite(v) ? Math.min(1, Math.max(0.65, v)) : 0.92;
-    })();
-    let loInput = loAdjusted;
-    if (lowerTeethOpacity < 0.999) {
-      const { data, info } = await sharp(loAdjusted).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-      const lw = info.width;
-      const lh = info.height;
-      const a = Math.round(lowerTeethOpacity * 255);
-      for (let i = 0; i < lw * lh; i++) {
-        data[i * 4 + 3] = a;
-      }
-      loInput = await sharp(data, { raw: { width: lw, height: lh, channels: 4 } })
-        .png()
+    const mergeDbg = String(process.env.SIM_MERGE_DEBUG || '').trim().toLowerCase();
+    const debugOriginal =
+      mergeDbg === 'original' || String(process.env.SIM_MERGE_DEBUG_RETURN_ORIGINAL || '').trim() === '1';
+    const debugBlack =
+      mergeDbg === 'black' || String(process.env.SIM_MERGE_DEBUG_BLACK || '').trim() === '1';
+
+    let composited;
+    if (debugOriginal) {
+      console.log('[MERGE TEETH] DEBUG MODE: returning ORIGINAL image only (no composite). Clear SIM_MERGE_DEBUG when done.');
+      composited = await sharp(origBuf).jpeg({ quality: 92 }).toBuffer();
+    } else if (debugBlack) {
+      console.log('[MERGE TEETH] DEBUG MODE: returning BLACK image. Clear SIM_MERGE_DEBUG when done.');
+      const dm = await sharp(origBuf).metadata();
+      const bw = dm.width || 1;
+      const bh = dm.height || 1;
+      composited = await sharp({
+        create: { width: bw, height: bh, channels: 3, background: { r: 0, g: 0, b: 0 } },
+      })
+        .jpeg({ quality: 92 })
         .toBuffer();
-    }
+    } else {
+      const upperH = Math.max(1, Math.floor(mh / 2));
+      const lowerH = Math.max(1, mh - upperH);
 
-    const lx = Math.round(ox);
-    const ty = Math.round(oy);
-    const ty2 = Math.round(oy) + upperH;
+      const upResized = await sharp(upBuf).resize(Math.round(mw), upperH).removeAlpha().toBuffer();
+      const loResizedRgb = await sharp(loBuf).resize(Math.round(mw), lowerH).removeAlpha().toBuffer();
+      let loAdjusted = loResizedRgb;
+      try {
+        loAdjusted = await applyLowerStripRealismAdjust(loResizedRgb);
+      } catch (le) {
+        console.warn('[MERGE TEETH] lower strip realism adjust skipped:', le?.message);
+      }
+      const lowerTeethOpacity = (() => {
+        const v = parseFloat(String(process.env.SIM_MERGE_LOWER_TEETH_OPACITY ?? '0.92'), 10);
+        return Number.isFinite(v) ? Math.min(1, Math.max(0.65, v)) : 0.92;
+      })();
+      let loInput = loAdjusted;
+      if (lowerTeethOpacity < 0.999) {
+        const { data, info } = await sharp(loAdjusted).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const lw = info.width;
+        const lh = info.height;
+        const a = Math.round(lowerTeethOpacity * 255);
+        for (let i = 0; i < lw * lh; i++) {
+          data[i * 4 + 3] = a;
+        }
+        loInput = await sharp(data, { raw: { width: lw, height: lh, channels: 4 } })
+          .png()
+          .toBuffer();
+      }
 
-    const hardComposite = await sharp(origBuf)
-      .composite([
-        { input: upResized, left: lx, top: ty, blend: 'over' },
-        { input: loInput, left: lx, top: ty2, blend: 'over' },
-      ])
-      .jpeg({ quality: 92 })
-      .toBuffer();
+      const lx = Math.round(ox);
+      const ty = Math.round(oy);
+      const ty2 = Math.round(oy) + upperH;
 
-    let composited = hardComposite;
-    try {
-      composited = await featherBlendMouthComposite(origBuf, hardComposite, ox, oy, mw, mh);
-      console.log('[MERGE TEETH] feather blend completed OK');
-    } catch (fe) {
-      console.warn('[MERGE TEETH] feather blend FAILED — using hard composite (no feather):', fe?.message);
+      const hardComposite = await sharp(origBuf)
+        .composite([
+          { input: upResized, left: lx, top: ty, blend: 'over' },
+          { input: loInput, left: lx, top: ty2, blend: 'over' },
+        ])
+        .jpeg({ quality: 92 })
+        .toBuffer();
+
       composited = hardComposite;
-    }
+      try {
+        composited = await featherBlendMouthComposite(origBuf, hardComposite, ox, oy, mw, mh);
+        console.log('[MERGE TEETH] feather blend completed OK');
+      } catch (fe) {
+        console.warn('[MERGE TEETH] feather blend FAILED — using hard composite (no feather):', fe?.message);
+        composited = hardComposite;
+      }
 
-    try {
-      composited = await applyMergeMicroPostProcess(composited);
-    } catch (pe) {
-      console.warn('[MERGE TEETH] micro post skipped:', pe?.message);
+      try {
+        composited = await applyMergeMicroPostProcess(composited);
+      } catch (pe) {
+        console.warn('[MERGE TEETH] micro post skipped:', pe?.message);
+      }
     }
 
     const fileName = `merge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
@@ -36667,7 +36900,7 @@ app.use((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log('🚀 ============================================');
-  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v38');
+  console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v44');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
   console.log('🚀  SIM: mask-accurate RGBA composite — zero non-teeth leakage');
   console.log('🚀  ROUTES: patient/treatment-requests, ratings, inbox-summary');
