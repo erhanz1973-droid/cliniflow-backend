@@ -14,6 +14,14 @@
     return /^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h);
   }
   /** Always hit the same API origin as admin-login (avoids 401 when token was signed on admin service). */
+  function getStoredAdminToken() {
+    try {
+      return localStorage.getItem('adminToken') || localStorage.getItem('admin_token') || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function adminFetchUrl(path) {
     var p = String(path || '');
     if (!p.startsWith('/')) p = '/' + p;
@@ -157,9 +165,10 @@
 
   /* ── Inject layout ───────────────────────────────────────── */
   function inject() {
-    // Auth guard
-    const token = localStorage.getItem('adminToken');
-    if (!token && !window.location.pathname.includes('login') && !window.location.pathname.includes('register')) {
+    // Auth guard (must match admin.html: adminToken OR admin_token)
+    const token = getStoredAdminToken();
+    const p = window.location.pathname || '';
+    if (!token && !p.includes('login') && !p.includes('register')) {
       window.location.href = '/admin-login.html';
       return;
     }
@@ -217,7 +226,7 @@
   /* ── Load clinic name ────────────────────────────────────── */
   async function loadClinicName() {
     try {
-      const token = localStorage.getItem('adminToken');
+      const token = getStoredAdminToken();
       if (!token) return;
       const res = await fetch(adminFetchUrl('/api/admin/clinic'), {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -244,6 +253,8 @@
   /* ── Global 401 handler — call after any failing fetch ───── */
   window.handle401 = function (status) {
     if (status === 401) {
+      var p = (typeof location !== 'undefined' && location.pathname) ? location.pathname : '';
+      if (p.includes('admin-login.html')) return false;
       console.warn('[AUTH] 401 — token geçersiz veya süresi dolmuş, login sayfasına yönlendiriliyor.');
       localStorage.removeItem('adminToken');
       localStorage.removeItem('admin_token');
@@ -290,7 +301,7 @@
 
   async function pollUnreadCount() {
     try {
-      const token = localStorage.getItem('adminToken');
+      const token = getStoredAdminToken();
       if (!token) return;
       const res = await fetch(adminFetchUrl('/api/admin/messages/unread-counts?totalOnly=1'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
@@ -308,7 +319,7 @@
 
   async function pollPendingReferrals() {
     try {
-      const token = localStorage.getItem('adminToken');
+      const token = getStoredAdminToken();
       if (!token) return;
       const res = await fetch(adminFetchUrl('/api/admin/referrals?status=PENDING'), {
         headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
@@ -326,7 +337,7 @@
 
   async function pollPendingDoctorApplications() {
     try {
-      const token = localStorage.getItem('adminToken');
+      const token = getStoredAdminToken();
       if (!token) return;
       // admin-doctor-applications-v2.html ile aynı kaynak (clinic_code); /api/admin/doctors clinic_id kullanır, sayım sapabilir.
       const res = await fetch(adminFetchUrl('/admin/doctor-list'), {

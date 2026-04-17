@@ -188,7 +188,29 @@
   </div>
 
 <script>
-  const API = location.origin;
+  const API = "https://cliniflow-backend-dg8a.onrender.com";
+  console.log("[API BASE]", API);
+
+  /** Fetch + JSON + status/body logging (debug) */
+  async function fetchJsonLogged(tag, url, options) {
+    const method = (options && options.method) || "GET";
+    console.log("[fetch]", tag, method, url);
+    const r = await fetch(url, options);
+    console.log("[fetch]", tag, "STATUS:", r.status);
+    const text = await r.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch (e) {
+      console.log("[fetch]", tag, "RESPONSE (non-JSON):", text ? text.slice(0, 1200) : "");
+      return { r, j: null, text, parseError: true };
+    }
+    console.log("[fetch]", tag, "RESPONSE:", j);
+    if (!r.ok) {
+      console.warn("[fetch]", tag, "HTTP error:", r.status, j);
+    }
+    return { r, j, text };
+  }
 
   const U1 = ["11","12","13","14","15","16","17","18"];
   const U2 = ["21","22","23","24","25","26","27","28"];
@@ -342,11 +364,11 @@
   async function refreshTokens(){
     const adminToken = getAdminToken();
     if (!adminToken) {
-      setMsg("⚠️ Admin token bulunamadı. Lütfen yukarıdaki Admin Token alanına token'ı girin.", "err");
-      // Input alanına odaklan
-      const elAdminToken = document.getElementById('adminToken');
+      setMsg("⚠️ Admin token bulunamadı. Lütfen yukarıdaki Admin Token alanına token'ı yapıştırın veya giriş yapın.", "err");
+      const elAdminToken = document.getElementById("adminToken");
       if (elAdminToken) {
         elAdminToken.focus();
+        try { elAdminToken.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
       }
       return;
     }
@@ -363,17 +385,21 @@
         headers["Authorization"] = `Bearer ${adminToken}`;
       }
 
-      const r = await fetch(`${API}/api/admin/tokens`, {
+      const { r, j, parseError } = await fetchJsonLogged("admin/tokens", `${API}/api/admin/tokens`, {
         headers: headers
       });
-      
+
       if (r.status === 401) {
-        setMsg("❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.", "err");
+        setMsg("❌ Admin token geçersiz veya süresi dolmuş. Lütfen Admin Token alanını güncelleyin.", "err");
+        const elAdminToken = document.getElementById("adminToken");
+        if (elAdminToken) {
+          elAdminToken.focus();
+          try { elAdminToken.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+        }
         return;
       }
 
-      const j = await r.json();
-      if (!j?.ok) throw new Error("tokens_failed");
+      if (parseError || !j?.ok) throw new Error("tokens_failed");
 
       const items = (j.items || []).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       elSelPatient.innerHTML = "";
@@ -395,7 +421,8 @@
 
       setMsg("Hazır. Hasta seçip 'Treatments Yükle' de.", "ok");
     }catch(e){
-      setMsg("Tokens listesi alınamadı. /api/admin/tokens çalışıyor mu?", "err");
+      console.error("[admin/tokens]", e);
+      setMsg("Tokens listesi alınamadı. /api/admin/tokens çalışıyor mu? (konsola bakın)", "err");
     }
   }
 
@@ -424,13 +451,12 @@
 
     try{
       setMsg("Treatments yükleniyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const { r, j } = await fetchJsonLogged("treatments GET", `${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         headers: authHeaders()
       });
-      const j = await r.json().catch(()=>null);
 
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = (j && j.error) ? j.error : `${r.status}`;
         setMsg(`Yüklenemedi: ${err} (Token/Approve kontrol et)`, "err");
         return;
       }
@@ -441,7 +467,8 @@
       clearSelection();
       refreshBadgeAndColors();
     }catch(e){
-      setMsg("Yükleme hatası. Server erişimi var mı?", "err");
+      console.error("[treatments GET]", e);
+      setMsg("Yükleme hatası. Server erişimi var mı? (konsola bakın)", "err");
     }
   }
 
@@ -467,16 +494,14 @@
 
     try{
       setMsg("Kaydediliyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const { r, j } = await fetchJsonLogged("treatments POST", `${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload)
       });
 
-      const j = await r.json().catch(()=>null);
-
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = (j && j.error) ? j.error : `${r.status}`;
         setMsg(`Kaydetme başarısız: ${err} (POST route var mı?)`, "err");
         return;
       }
@@ -492,7 +517,8 @@
       renderSelectedToothList();
       refreshBadgeAndColors();
     }catch(e){
-      setMsg("Kaydetme hatası. Server POST route yoksa bu olur.", "err");
+      console.error("[treatments POST]", e);
+      setMsg("Kaydetme hatası. Server POST route yoksa bu olur. (konsola bakın)", "err");
     }
   }
 

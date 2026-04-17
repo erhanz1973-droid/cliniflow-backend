@@ -267,6 +267,12 @@
     }, type === "error" ? 6000 : 3000);
   }
 
+  /** Avoid redundant navigation to /admin.html (prevents reload / double redirect). */
+  function goToAdminDashboard() {
+    if ((location.pathname || "").includes("admin.html")) return;
+    window.location.href = window.location.origin + "/admin.html";
+  }
+
   // Show session-expired message if redirected from another page
   (function checkSessionExpired() {
     const params = new URLSearchParams(window.location.search);
@@ -370,7 +376,7 @@
 
       // ✅ REDIRECT
       setTimeout(() => {
-        window.location.href = window.location.origin + "/admin.html";
+        goToAdminDashboard();
       }, 800);
 
     } catch (err) {
@@ -553,7 +559,7 @@
             
             // Redirect to dashboard
             setTimeout(() => {
-              window.location.href = window.location.origin + "/admin.html";
+              goToAdminDashboard();
             }, 1000);
           } else {
             setOTPMsg(i18n.t("login.errors.otpFailed"), "err");

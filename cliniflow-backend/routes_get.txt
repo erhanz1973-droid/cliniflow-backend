@@ -1,4 +1,4 @@
-27:app.get("/admin-dashboard.html", (req, res) => {
+27: * /admin-dashboard.html: static file public/admin-dashboard.html (client redirect to /admin.html)
 388:app.get("/admin-travel.html", (req, res) => {
 422:app.get("/admin-patients.html", (req, res) => {
 444:app.get("/admin-treatment-create.html", (req, res) => {
