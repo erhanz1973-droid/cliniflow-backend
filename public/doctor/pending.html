@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Doktor Bekleme - Cliniflow</title>
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("doctor_token");
+      if (!token) {
+        window.location.href = "/doctor-login.html";
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .container{ 
+      max-width:500px; 
+      width:100%; 
+      padding:20px; 
+      text-align:center;
+    }
+    .card{ 
+      background:var(--card); 
+      border:1px solid var(--b); 
+      border-radius:16px; 
+      padding:40px 32px; 
+      margin-bottom:20px;
+    }
+    .logo{ 
+      font-size:32px; 
+      font-weight:700; 
+      margin-bottom:24px; 
+      color:#fff;
+    }
+    .status{ 
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      background:var(--y); 
+      color:#000; 
+      padding:8px 16px; 
+      border-radius:8px; 
+      font-weight:600; 
+      margin-bottom:24px;
+    }
+    .title{ 
+      font-size:20px; 
+      font-weight:700; 
+      margin-bottom:16px; 
+      color:#fff;
+    }
+    .message{ 
+      color:var(--muted); 
+      line-height:1.6; 
+      margin-bottom:32px;
+    }
+    .spinner{ 
+      width:40px; 
+      height:40px; 
+      border:3px solid var(--b); 
+      border-top:3px solid var(--p); 
+      border-radius:50%; 
+      animation:spin 1s linear infinite; 
+      margin:0 auto 24px;
+    }
+    @keyframes spin{ 
+      0%{ transform:rotate(0deg); } 
+      100%{ transform:rotate(360deg); } 
+    }
+    .refresh-info{ 
+      font-size:14px; 
+      color:var(--muted); 
+      margin-top:16px;
+    }
+    .logout-btn{ 
+      background:var(--r); 
+      color:#fff; 
+      border:none; 
+      padding:12px 24px; 
+      border-radius:8px; 
+      font-weight:600; 
+      cursor:pointer; 
+      margin-top:24px;
+      transition:all 0.2s;
+    }
+    .logout-btn:hover{ 
+      background:#b91c1c; 
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="logo">🏥 Cliniflow</div>
+      
+      <div class="status">
+        ⏳ Beklemede
+      </div>
+      
+      <h1 class="title">Doktor Başvurunuz Değerlendiriliyor</h1>
+      
+      <p class="message">
+        Başvurunuz admin tarafından inceleniyor. Onaylandığında otomatik olarak yönlendirileceksiniz.
+        Lütfen bu sayfayı açık tutun.
+      </p>
+      
+      <div class="spinner"></div>
+      
+      <div class="refresh-info">
+        Durumunuz otomatik olarak kontrol ediliyor...<br>
+        Son kontrol: <span id="last-check">Yükleniyor...</span>
+      </div>
+      
+      <button class="logout-btn" onclick="logout()">
+        Çıkış Yap
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let pollingInterval;
+    let checkCount = 0;
+
+    // Update last check time
+    function updateLastCheck() {
+      const now = new Date();
+      document.getElementById('last-check').textContent = 
+        now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    // Check doctor status
+    async function checkStatus() {
+      try {
+        const token = localStorage.getItem("doctor_token");
+        const doctorId = localStorage.getItem("doctor_id");
+        
+        if (!token || !doctorId) {
+          clearInterval(pollingInterval);
+          window.location.href = "/doctor-login.html";
+          return;
+        }
+
+        const response = await fetch(`/auth/verify-token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ type: "doctor" })
+        });
+
+        if (!response.ok) {
+          console.error("Status check failed:", response.status);
+          return;
+        }
+
+        const data = await response.json();
+        
+        if (data.ok && data.status === "APPROVED") {
+          clearInterval(pollingInterval);
+          localStorage.setItem("doctor_status", "APPROVED");
+          
+          // Show success message
+          document.querySelector('.status').innerHTML = '✅ Onaylandı';
+          document.querySelector('.status').style.background = 'var(--g)';
+          document.querySelector('.title').textContent = 'Başvurunuz Onaylandı!';
+          document.querySelector('.message').textContent = 'Yönlendiriliyorsunuz...';
+          document.querySelector('.spinner').style.display = 'none';
+          
+          // Redirect to dashboard after 2 seconds
+          setTimeout(() => {
+            window.location.href = "/doctor/dashboard";
+          }, 2000);
+        } else if (data.ok && data.status === "REJECTED") {
+          clearInterval(pollingInterval);
+          localStorage.setItem("doctor_status", "REJECTED");
+          
+          // Show rejection message
+          document.querySelector('.status').innerHTML = '❌ Reddedildi';
+          document.querySelector('.status').style.background = 'var(--r)';
+          document.querySelector('.title').textContent = 'Başvurunuz Reddedildi';
+          document.querySelector('.message').textContent = 'Bavurunuz değerlendirme sonucunda reddedilmiştir.';
+          document.querySelector('.spinner').style.display = 'none';
+        }
+        
+        updateLastCheck();
+        checkCount++;
+        
+        // Log polling activity
+        console.log(`[POLLING] Status check #${checkCount}:`, data.status);
+        
+      } catch (error) {
+        console.error("Status check error:", error);
+        updateLastCheck();
+      }
+    }
+
+    // Logout function
+    function logout() {
+      localStorage.removeItem("doctor_token");
+      localStorage.removeItem("doctor_id");
+      localStorage.removeItem("clinic_id");
+      localStorage.removeItem("doctor_status");
+      window.location.href = "/doctor-login.html";
+    }
+
+    // Start polling when page loads
+    document.addEventListener("DOMContentLoaded", () => {
+      console.log("[PENDING] Page loaded, starting status polling...");
+      
+      // Initial check
+      checkStatus();
+      
+      // Poll every 10 seconds
+      pollingInterval = setInterval(checkStatus, 10000);
+      
+      // Update last check time immediately
+      updateLastCheck();
+    });
+
+    // Cleanup on page unload
+    window.addEventListener("beforeunload", () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    });
+  </script>
+</body>
+</html>

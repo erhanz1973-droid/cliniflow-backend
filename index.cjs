@@ -6326,6 +6326,127 @@ app.get("/api/patient/clinics", requireToken, async (req, res) => {
   }
 });
 
+// PATCH /api/patient/clinic — join / switch clinic by code (mobile: "Kliniğe katıl")
+// Body: { clinic_code, referral_code? } — country is not required; lookup is by clinic_code only.
+app.patch("/api/patient/clinic", requireToken, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(503).json({
+        ok: false,
+        error: "supabase_required",
+        message: "Klinik katılımı şu an kullanılamıyor.",
+      });
+    }
+
+    const body = req.body || {};
+    const clinicCodeRaw = String(body.clinic_code || body.clinicCode || "").trim().toUpperCase();
+    if (!clinicCodeRaw) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+    }
+
+    const clinic = await getClinicByCode(clinicCodeRaw);
+    if (!clinic?.id) {
+      console.warn("[PATCH /api/patient/clinic] clinic_not_found:", clinicCodeRaw);
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+
+    const st = String(clinic.status ?? "active").toLowerCase();
+    if (["suspended", "reject", "rejected", "inactive", "closed"].includes(st)) {
+      return res.status(400).json({ ok: false, error: "clinic_unavailable", message: "Bu klinik şu an katılıma kapalı." });
+    }
+
+    const resolvedUuid = await resolveMessagesPatientDbId(req.patientId);
+    if (!resolvedUuid) {
+      console.warn("[PATCH /api/patient/clinic] patient_not_found token:", String(req.patientId || "").slice(0, 16));
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    let patientRow = null;
+    for (const sel of [
+      "id, patient_id, name, email, phone, status, language",
+      "id, patient_id, name, email, phone, status",
+      "id, name, email, phone, status",
+    ]) {
+      const r = await supabase.from("patients").select(sel).eq("id", resolvedUuid).maybeSingle();
+      if (!r.error && r.data) {
+        patientRow = r.data;
+        break;
+      }
+    }
+    if (!patientRow?.id) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const codeStored = String(clinic.clinic_code || clinicCodeRaw).trim().toUpperCase();
+    const { error: upErr } = await supabase
+      .from("patients")
+      .update({
+        clinic_id: clinic.id,
+        clinic_code: codeStored,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", patientRow.id);
+
+    if (upErr) {
+      console.error("[PATCH /api/patient/clinic] update failed:", upErr.message || upErr);
+      return res.status(500).json({ ok: false, error: "update_failed", message: upErr.message || "Güncelleme başarısız." });
+    }
+
+    const patientStatus = String(patientRow.status || "PENDING").toUpperCase();
+    const emailNorm = String(patientRow.email || "").trim().toLowerCase();
+    const foundPhone = String(patientRow.phone || "").trim();
+    const foundLanguage = patientRow.language;
+
+    const tokenPayload = {
+      type: "patient",
+      patientId: patientRow.id,
+      role: "PATIENT",
+      status: patientStatus,
+      email: emailNorm,
+      clinicId: clinic.id,
+      clinicCode: codeStored,
+      ...(foundPhone ? { phone: foundPhone } : {}),
+      ...(foundLanguage ? { language: foundLanguage } : {}),
+    };
+
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: `${TOKEN_EXPIRY_DAYS}d` });
+
+    try {
+      const tokens = readJson(TOK_FILE, {});
+      tokens[token] = {
+        type: "patient",
+        patientId: patientRow.id,
+        role: "PATIENT",
+        createdAt: now(),
+        email: emailNorm,
+        clinicId: clinic.id,
+        clinicCode: codeStored,
+        ...(foundPhone ? { phone: foundPhone } : {}),
+        ...(foundLanguage ? { language: foundLanguage } : {}),
+      };
+      writeJson(TOK_FILE, tokens);
+    } catch (tokErr) {
+      console.warn("[PATCH /api/patient/clinic] TOK_FILE write:", tokErr?.message);
+    }
+
+    console.log("[PATCH /api/patient/clinic] ok patient:", String(patientRow.id).slice(0, 8), "clinic:", codeStored);
+
+    return res.json({
+      ok: true,
+      token,
+      clinic: {
+        id: clinic.id,
+        name: clinic.name || "Klinik",
+        clinic_code: codeStored,
+      },
+      referral: null,
+    });
+  } catch (e) {
+    console.error("[PATCH /api/patient/clinic]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // ================== ADMIN LIST ==================
 app.get("/api/admin/registrations", (req, res) => {
   const raw = readJson(REG_FILE, {});
