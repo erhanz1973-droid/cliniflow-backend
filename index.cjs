@@ -34304,6 +34304,17 @@ app.post("/api/patient/treatment-plans/:id/reject", requireToken, async (req, re
 // These endpoints power the patient's "My Requests / Offers" screen.
 // Tables: treatment_requests, treatment_offers, ratings, doctors, clinics.
 
+function firstTreatmentRequestPhotoUrl(photos) {
+  if (!Array.isArray(photos) || photos.length === 0) return null;
+  const p0 = photos[0];
+  if (typeof p0 === 'string' && /^https?:\/\//i.test(p0.trim())) return p0.trim();
+  if (p0 && typeof p0 === 'object' && p0.url) {
+    const u = String(p0.url || '').trim();
+    return u || null;
+  }
+  return null;
+}
+
 // GET /api/patient/treatment-requests
 // Returns all requests by the authenticated patient, each with its doctor offers.
 app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
@@ -34356,21 +34367,101 @@ app.get('/api/patient/treatment-requests', requireToken, async (req, res) => {
       });
     }
 
-    const result = requests.map(r => ({
-      id:                   r.id,
-      clinic_id:            r.clinic_id   || null,
-      clinic_name:          r.clinics?.name || null,
-      description:          r.description,
-      budget:               r.budget               || null,
-      preferred_treatment:  r.preferred_treatment  || null,
-      status:               r.status,
-      created_at:           r.created_at,
-      offers:               offersByRequest[r.id]  || [],
-    }));
+    const result = requests.map(r => {
+      const photos = Array.isArray(r.photos) ? r.photos : [];
+      const image_url = firstTreatmentRequestPhotoUrl(photos);
+      return {
+        id:                   r.id,
+        clinic_id:            r.clinic_id   || null,
+        clinic_name:          r.clinics?.name || null,
+        description:          r.description,
+        photos,
+        image_url,
+        budget:               r.budget               || null,
+        preferred_treatment:  r.preferred_treatment  || null,
+        status:               r.status,
+        created_at:           r.created_at,
+        offers:               offersByRequest[r.id]  || [],
+      };
+    });
 
     return res.json({ ok: true, requests: result });
   } catch (e) {
     console.error('[TREATMENT-REQUESTS GET]', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// POST /api/patient/treatment-requests
+// AI analiz / teklif akışı: her klinik için ayrı talep satırı (aynı metin + foto).
+app.post('/api/patient/treatment-requests', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const body = req.body || {};
+    const clinicIds = Array.isArray(body.clinicIds)
+      ? body.clinicIds.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const message = String(body.message || '').trim();
+    const image = String(body.image || body.imageUrl || '').trim();
+    const analysis = body.analysis;
+
+    if (!clinicIds.length) {
+      return res.status(400).json({ ok: false, error: 'clinic_ids_required' });
+    }
+
+    let description = message;
+    const analysisBlock =
+      analysis === undefined || analysis === null
+        ? ''
+        : typeof analysis === 'string'
+          ? analysis
+          : JSON.stringify(analysis);
+    const trimmedAnalysis = analysisBlock.slice(0, 12000);
+    if (trimmedAnalysis) {
+      description = message
+        ? `${message}\n\n--- AI analysis (summary) ---\n${trimmedAnalysis}`
+        : `Dental quote request (AI-assisted).\n\n--- AI analysis (summary) ---\n${trimmedAnalysis}`;
+    }
+    if (!description) {
+      description = 'I would like to receive a quote from your clinic.';
+    }
+    if (image && /^https?:\/\//i.test(image)) {
+      description = `${description}\n\n--- Photo ---\n${image}`;
+    }
+    if (description.length > 50000) description = description.slice(0, 50000);
+
+    const photos = image ? [{ url: image }] : [];
+    const requestIds = [];
+
+    for (const cid of clinicIds) {
+      const { data, error } = await supabase
+        .from('treatment_requests')
+        .insert({
+          patient_id: patientId,
+          clinic_id: cid,
+          description,
+          photos,
+          status: 'pending',
+        })
+        .select('id')
+        .maybeSingle();
+
+      if (error) {
+        console.error('[TREATMENT-REQUESTS POST]', error.message);
+        return res.status(500).json({
+          ok: false,
+          error: 'db_error',
+          message: error.message || 'insert_failed',
+        });
+      }
+      if (data?.id) requestIds.push(data.id);
+    }
+
+    return res.json({ ok: true, requestIds });
+  } catch (e) {
+    console.error('[TREATMENT-REQUESTS POST]', e);
     return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
