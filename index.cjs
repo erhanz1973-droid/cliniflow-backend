@@ -349,6 +349,26 @@ function deriveMessageType(explicitType, attachment) {
   return "text";
 }
 
+function collectHttpsPhotoUrlsFromMessageBody(body) {
+  const b = body || {};
+  const out = [];
+  const push = (u) => {
+    const s = String(u || "").trim();
+    if (/^https?:\/\//i.test(s)) out.push(s);
+  };
+  if (Array.isArray(b.photo_urls)) for (const x of b.photo_urls) push(x);
+  if (Array.isArray(b.photoUrls)) for (const x of b.photoUrls) push(x);
+  push(b.image);
+  push(b.imageUrl);
+  return [...new Set(out)];
+}
+
+function attachmentObjectFromPhotoUrl(url) {
+  const u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return null;
+  return { url: u, name: "photo.jpg", fileType: "image", mimeType: "image/jpeg" };
+}
+
 async function resolveClinicCodeForPatient(patientId) {
   if (!patientId) return null;
   try {
@@ -753,7 +773,7 @@ async function insertClinicMessageViaPatientMessages(patientIdParam, text, msgTy
 }
 
 /** Same storage as admin replies — keeps admin chat GET (patient_messages merge) consistent. */
-async function insertPatientMessageViaPatientMessages(patientIdParam, text, msgType) {
+async function insertPatientMessageViaPatientMessages(patientIdParam, text, msgType, attachmentVal = null) {
   const resolvedPatientId = await resolveMessagesPatientDbId(patientIdParam);
   if (!resolvedPatientId) {
     return {
@@ -768,7 +788,7 @@ async function insertPatientMessageViaPatientMessages(patientIdParam, text, msgT
     chat_id: String(patientIdParam || "").trim(),
     text: String(text || "").trim(),
     type: String(msgType || "text").trim() || "text",
-    attachment: null,
+    attachment: attachmentVal == null ? null : attachmentVal,
   };
   const fromRoles = ["patient", "PATIENT"];
   let lastError = null;
@@ -813,7 +833,16 @@ async function insertPatientMessageViaPatientMessages(patientIdParam, text, msgT
   return { data: null, error: lastError || { message: "patient_messages_insert_failed" } };
 }
 
-async function insertMessageToSupabase({ patientId, sender, message, attachments, type, senderId: senderIdOpt }) {
+async function insertMessageToSupabase({
+  patientId,
+  sender,
+  message,
+  attachments,
+  type,
+  senderId: senderIdOpt,
+  targetClinicId: targetClinicIdOpt,
+  targetClinicCode: targetClinicCodeOpt,
+}) {
   const resolvedPatientId = await resolveMessagesPatientDbId(patientId);
   if (!resolvedPatientId) {
     return {
@@ -830,20 +859,45 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
   const fromPatient = String(sender || "").toLowerCase() === "patient";
   const msgType = deriveMessageType(type, attachments);
 
-  if (fromPatient) {
-    const pmTry = await insertPatientMessageViaPatientMessages(patientId, msgText, msgType);
+  const targetClinicIdRaw = targetClinicIdOpt != null ? String(targetClinicIdOpt).trim() : "";
+  const targetClinicCodeRaw = targetClinicCodeOpt != null ? String(targetClinicCodeOpt).trim() : "";
+  const useTargetClinic = !!(targetClinicIdRaw || targetClinicCodeRaw);
+
+  if (fromPatient && !useTargetClinic) {
+    const pmTry = await insertPatientMessageViaPatientMessages(
+      patientId,
+      msgText,
+      msgType,
+      attachments && typeof attachments === "object" ? attachments : null
+    );
     if (!pmTry.error && pmTry.data) {
       return { data: pmTry.data, error: null };
     }
   }
-  const { clinicId: rowClinicId, clinicCode: rowClinicCode } = await resolveClinicContextForPatientRow(
-    resolvedPatientId
-  );
-  let clinicCode =
-    rowClinicCode || (await resolveClinicCodeForPatient(resolvedPatientId)) || null;
-  let clinicId = rowClinicId || null;
-  if (!clinicId && clinicCode) {
-    clinicId = await resolveClinicUuidFromClinicCode(clinicCode);
+
+  let clinicId = null;
+  let clinicCode = null;
+  if (useTargetClinic) {
+    clinicId = targetClinicIdRaw || null;
+    clinicCode = targetClinicCodeRaw || null;
+    if (!clinicId && clinicCode) {
+      clinicId = await resolveClinicUuidFromClinicCode(clinicCode);
+    }
+    if (clinicId && !clinicCode) {
+      const cr = await supabase.from("clinics").select("clinic_code, code").eq("id", clinicId).maybeSingle();
+      if (!cr.error && cr.data) {
+        clinicCode = (cr.data.clinic_code != null && String(cr.data.clinic_code).trim()) || (cr.data.code != null && String(cr.data.code).trim()) || null;
+      }
+    }
+  } else {
+    const { clinicId: rowClinicId, clinicCode: rowClinicCode } = await resolveClinicContextForPatientRow(
+      resolvedPatientId
+    );
+    clinicCode = rowClinicCode || (await resolveClinicCodeForPatient(resolvedPatientId)) || null;
+    clinicId = rowClinicId || null;
+    if (!clinicId && clinicCode) {
+      clinicId = await resolveClinicUuidFromClinicCode(clinicCode);
+    }
   }
 
   if (!clinicId && !clinicCode) {
@@ -13893,16 +13947,22 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
   }
 });
 
-// POST /api/patient/me/messages (mobile convenience)
-app.post("/api/patient/me/messages", requireToken, async (req, res) => {
+// POST /api/patient/me/messages (+ /api/patient/messages alias) — metin, isteğe bağlı clinic_id, photo_urls
+async function handleAuthenticatedPatientMessagePost(req, res) {
   try {
     const patientId = String(req.patientId || "").trim();
     if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
 
     const body = req.body || {};
-    const text = String(body.text || body.message || body.content || "").trim();
-    const msgType = String(body.type || "text").trim() || "text";
-    if (!text) return res.status(400).json({ ok: false, error: "text_required" });
+    let text = String(body.text || body.message || body.content || "").trim();
+    const photoUrls = collectHttpsPhotoUrlsFromMessageBody(body);
+    const attachObj = photoUrls.length ? attachmentObjectFromPhotoUrl(photoUrls[0]) : null;
+    const targetClinicId = String(body.clinic_id || body.clinicId || "").trim();
+    const targetClinicCode = String(body.clinic_code || body.clinicCode || "").trim();
+    const msgType = attachObj ? "image" : String(body.type || "text").trim() || "text";
+
+    if (!text && !attachObj) return res.status(400).json({ ok: false, error: "text_required" });
+    if (!text && attachObj) text = "📷";
 
     if (!isSupabaseEnabled()) {
       if (!canUseFileFallback()) return res.status(500).json(supabaseDisabledPayload("messages"));
@@ -13917,6 +13977,7 @@ app.post("/api/patient/me/messages", requireToken, async (req, res) => {
         from: "PATIENT",
         createdAt: now(),
         patientId,
+        ...(attachObj ? { type: "image", attachment: attachObj } : {}),
       };
       messages.push(newMessage);
       writeJson(chatFile, { patientId, messages, updatedAt: now() });
@@ -13927,8 +13988,10 @@ app.post("/api/patient/me/messages", requireToken, async (req, res) => {
       patientId,
       sender: "patient",
       message: text,
-      attachments: null,
+      attachments: attachObj,
       type: msgType,
+      ...(targetClinicId ? { targetClinicId } : {}),
+      ...(targetClinicCode ? { targetClinicCode } : {}),
     });
     if (error) {
       const supabasePublic = supabaseErrorPublic(error);
@@ -13958,7 +14021,10 @@ app.post("/api/patient/me/messages", requireToken, async (req, res) => {
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
-});
+}
+
+app.post("/api/patient/me/messages", requireToken, handleAuthenticatedPatientMessagePost);
+app.post("/api/patient/messages", requireToken, handleAuthenticatedPatientMessagePost);
 
 // GET /api/patient/:patientId/messages
 app.get("/api/patient/:patientId/messages", (req, res) => {
@@ -14053,12 +14119,17 @@ app.post("/api/patient/:patientId/messages", requireToken, async (req, res) => {
     }
 
     const body = req.body || {};
-    const text = String(body.text || body.message || "").trim();
-    const msgType = String(body.type || "text").trim() || "text";
+    let text = String(body.text || body.message || "").trim();
+    const photoUrls = collectHttpsPhotoUrlsFromMessageBody(body);
+    const attachObj = photoUrls.length ? attachmentObjectFromPhotoUrl(photoUrls[0]) : null;
+    const targetClinicId = String(body.clinic_id || body.clinicId || "").trim();
+    const targetClinicCode = String(body.clinic_code || body.clinicCode || "").trim();
+    const msgType = attachObj ? "image" : String(body.type || "text").trim() || "text";
 
-    if (!text) {
+    if (!text && !attachObj) {
       return res.status(400).json({ ok: false, error: "text_required", received: body });
     }
+    if (!text && attachObj) text = "📷";
 
     const tokenPid = String(req.patientId || "").trim();
     const internalToken = await resolveMessagesPatientDbId(tokenPid);
@@ -14082,6 +14153,7 @@ app.post("/api/patient/:patientId/messages", requireToken, async (req, res) => {
         from: "PATIENT",
         createdAt: now(),
         patientId: req.patientId,
+        ...(attachObj ? { type: "image", attachment: attachObj } : {}),
       };
       messages.push(newMessage);
       writeJson(chatFile, { patientId, messages, updatedAt: now() });
@@ -14092,8 +14164,10 @@ app.post("/api/patient/:patientId/messages", requireToken, async (req, res) => {
       patientId,
       sender: "patient",
       message: String(text).trim(),
-      attachments: null,
+      attachments: attachObj,
       type: msgType,
+      ...(targetClinicId ? { targetClinicId } : {}),
+      ...(targetClinicCode ? { targetClinicCode } : {}),
     });
     if (error) {
       const supabasePublic = supabaseErrorPublic(error);
@@ -34411,6 +34485,14 @@ app.post('/api/patient/treatment-requests', requireToken, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'clinic_ids_required' });
     }
 
+    if (!image || !/^https?:\/\//i.test(image)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'photo_url_required',
+        message: 'Teklif talebi için geçerli bir fotoğraf adresi (https) zorunludur.',
+      });
+    }
+
     let description = message;
     const analysisBlock =
       analysis === undefined || analysis === null
@@ -34432,7 +34514,7 @@ app.post('/api/patient/treatment-requests', requireToken, async (req, res) => {
     }
     if (description.length > 50000) description = description.slice(0, 50000);
 
-    const photos = image ? [{ url: image }] : [];
+    const photos = [{ url: image }];
     const requestIds = [];
 
     for (const cid of clinicIds) {
@@ -34457,6 +34539,34 @@ app.post('/api/patient/treatment-requests', requireToken, async (req, res) => {
         });
       }
       if (data?.id) requestIds.push(data.id);
+
+      const chatText =
+        message ||
+        (trimmedAnalysis
+          ? 'Diş hekimliği teklif talebi — fotoğraf ve AI özeti eklendi.'
+          : 'Diş hekimliği teklif talebi — fotoğraf eklendi.');
+      const photoAttach = {
+        url: image,
+        name: 'dental-quote.jpg',
+        fileType: 'image',
+        mimeType: 'image/jpeg',
+      };
+      const msgIns = await insertMessageToSupabase({
+        patientId,
+        sender: 'patient',
+        message: chatText,
+        attachments: photoAttach,
+        type: 'image',
+        targetClinicId: cid,
+      });
+      if (msgIns.error) {
+        console.error('[TREATMENT-REQUESTS] Mesaj/foto eklenemedi', cid, msgIns.error);
+        return res.status(500).json({
+          ok: false,
+          error: 'message_attach_failed',
+          message: String(msgIns.error?.message || msgIns.error || 'Mesaj kaydı başarısız'),
+        });
+      }
     }
 
     return res.json({ ok: true, requestIds });
