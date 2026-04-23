@@ -94,54 +94,81 @@ export default function DoctorDashboard() {
       setDoctorInfo(data.doctor || null);
       setStats(data.stats || { planned: 0, in_progress: 0, done: 0, today: 0, waiting: 0 });
       setRecentPatients(Array.isArray(data.recentPatients) ? data.recentPatients.slice(0, 5) : []);
-      
-      // Tüm planları al
-      const allPlans: TreatmentPlan[] = Array.isArray(data.recentTreatmentPlans) 
-        ? data.recentTreatmentPlans 
+
+      /** cliniflow-backend-clean: todayAppointments / tomorrowAppointments (recentTreatmentPlans yok) */
+      const mapDashboardAppt = (a: any): TreatmentPlan => {
+        const datePart = String(a?.date || "").trim();
+        const timePart = String(a?.time || "09:00").trim();
+        let sched: string | undefined;
+        if (datePart) {
+          sched =
+            timePart.length === 5
+              ? `${datePart}T${timePart}:00`
+              : timePart
+                ? `${datePart}T${timePart}`
+                : `${datePart}T09:00:00`;
+        }
+        const encId = String(a?.planId || "").trim();
+        const apptId = String(a?.appointmentId || "").trim();
+        return {
+          id: encId || apptId || `appt-${datePart}-${timePart}`,
+          status: String(a?.status || "scheduled"),
+          procedure_name: String(a?.procedureSummary || "Randevu"),
+          scheduled_date: sched,
+          date: sched,
+          patient: { name: String(a?.patientName || "Hasta") },
+        };
+      };
+
+      const apiToday = Array.isArray(data.todayAppointments) ? data.todayAppointments : [];
+      const apiTomorrow = Array.isArray(data.tomorrowAppointments) ? data.tomorrowAppointments : [];
+      const allPlans: TreatmentPlan[] = Array.isArray(data.recentTreatmentPlans)
+        ? data.recentTreatmentPlans
         : [];
-      
-      console.log('[DEBUG] Raw treatmentPlans:', JSON.stringify(allPlans, null, 2));
-      
-      // Tarihe göre grupla
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-      const dayAfterTomorrow = new Date(today);
-      dayAfterTomorrow.setDate(today.getDate() + 2);
-      
-      const todayList: TreatmentPlan[] = [];
-      const tomorrowList: TreatmentPlan[] = [];
-      const upcomingList: TreatmentPlan[] = [];
-      
-      allPlans.forEach(plan => {
-        // Tarih alanını bul (scheduled_date, date, veya created_at)
-        const dateStr = plan.scheduled_date || plan.date || plan.created_at;
-        if (!dateStr) {
-          upcomingList.push(plan); // Tarihsiz planlar
-          return;
-        }
-        
-        const planDate = new Date(dateStr);
-        
-        if (isSameDay(planDate, today)) {
-          todayList.push(plan);
-        } else if (isSameDay(planDate, tomorrow)) {
-          tomorrowList.push(plan);
-        } else if (planDate > today) {
-          upcomingList.push(plan);
-        }
-      });
-      
+
+      let todayList: TreatmentPlan[] = [];
+      let tomorrowList: TreatmentPlan[] = [];
+      let upcomingList: TreatmentPlan[] = [];
+
+      if (apiToday.length > 0 || apiTomorrow.length > 0) {
+        todayList = apiToday.map(mapDashboardAppt);
+        tomorrowList = apiTomorrow.map(mapDashboardAppt);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        allPlans.forEach((plan) => {
+          const dateStr = plan.scheduled_date || plan.date || plan.created_at;
+          if (!dateStr) {
+            upcomingList.push(plan);
+            return;
+          }
+          const planDate = new Date(dateStr);
+          if (isSameDay(planDate, today) || isSameDay(planDate, tomorrow)) return;
+          if (planDate > tomorrow) upcomingList.push(plan);
+        });
+      } else {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+
+        allPlans.forEach((plan) => {
+          const dateStr = plan.scheduled_date || plan.date || plan.created_at;
+          if (!dateStr) {
+            upcomingList.push(plan);
+            return;
+          }
+          const planDate = new Date(dateStr);
+          if (isSameDay(planDate, today)) todayList.push(plan);
+          else if (isSameDay(planDate, tomorrow)) tomorrowList.push(plan);
+          else if (planDate > today) upcomingList.push(plan);
+        });
+      }
+
       setTodayAppointments(todayList);
       setTomorrowAppointments(tomorrowList);
       setUpcomingAppointments(upcomingList);
-      
-      console.log('[DEBUG] Grouped:', {
-        today: todayList.length,
-        tomorrow: tomorrowList.length,
-        upcoming: upcomingList.length
-      });
       
     } catch (error: any) {
       Alert.alert("Hata", error?.message || "Dashboard yüklenemedi");
