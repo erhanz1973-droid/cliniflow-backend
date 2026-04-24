@@ -4,6 +4,7 @@ console.log("TF BACKEND:", tf.getBackend());
 
 // ─── Bootstrap: imports & app init ─────────────────────────────────────────
 require("dotenv").config();
+console.log("🔥 ROOT INDEX.CJS RUNNING");
 
 console.log("🚀 REPO CHECK: cliniflow-backend-clean");
 console.log("🚀 BUILD VERSION:", new Date().toISOString());
@@ -35,7 +36,6 @@ const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const http = require("http");
 
 // ─── AI config (read once at startup) ────────────────────────────────────────
 const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS     || "30000", 10));
@@ -272,19 +272,24 @@ const {
 } = require("./lib/phoneIdentity.cjs");
 
 const app = express();
-const server = http.createServer(app);
+app.disable("x-powered-by");
 const _portEnv = process.env.PORT;
 const PORT =
   _portEnv != null && String(_portEnv).trim() !== ""
-    ? Number.parseInt(String(_portEnv), 10) || 10000
-    : 10000;
+    ? Number.parseInt(String(_portEnv), 10) || 3000
+    : 3000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
-const JWT_SECRET =
-  typeof process.env.JWT_SECRET === "string" && process.env.JWT_SECRET.trim().length >= 8
-    ? process.env.JWT_SECRET.trim()
-    : "yJ2uB87EHHAEqMyrePIrYQR0+pC3t8fFh5IJJ/QH6lY";
-const JWT_EXPIRES_IN = "30d";
 const IS_PROD = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+const JWT_SECRET = (() => {
+  const s = typeof process.env.JWT_SECRET === "string" ? process.env.JWT_SECRET.trim() : "";
+  if (s.length >= 8) return s;
+  if (IS_PROD) {
+    throw new Error("JWT_SECRET (min 8 characters) is required when NODE_ENV=production");
+  }
+  console.warn("[SECURITY] JWT_SECRET missing or too short — set in .env for non-dev use");
+  return "dev-only-jwt-secret-min-8-chars";
+})();
+const JWT_EXPIRES_IN = "30d";
 const PERF_LOGS_ENABLED = !IS_PROD || String(process.env.PERF_LOGS || "").trim() === "1";
 /** Set OTP_DEBUG=1 to log OTP digits in register/send paths (never enable in prod unless short tests). */
 const OTP_DEBUG_LOG = String(process.env.OTP_DEBUG || "").trim() === "1" || !IS_PROD;
@@ -1141,36 +1146,38 @@ const SUPER_ADMIN_PASSWORD =
   process.env.SUPER_ADMIN_PASSWORD ||
   process.env.SUPERADMIN_PASSWORD ||
   "";
-const SUPER_ADMIN_JWT_SECRET =
-  process.env.SUPER_ADMIN_JWT_SECRET ||
-  process.env.SUPERADMIN_JWT_SECRET ||
-  "super-admin-secret-key-change-in-production";
+const SUPER_ADMIN_JWT_SECRET = (() => {
+  const s = String(
+    process.env.SUPER_ADMIN_JWT_SECRET || process.env.SUPERADMIN_JWT_SECRET || "",
+  ).trim();
+  if (s.length >= 8) return s;
+  if (IS_PROD) {
+    throw new Error(
+      "SUPER_ADMIN_JWT_SECRET or SUPERADMIN_JWT_SECRET (min 8 chars) is required when NODE_ENV=production",
+    );
+  }
+  return "dev-super-admin-jwt-min-8-chars";
+})();
 
 // ================== MIDDLEWARE ==================
-const corsOptions = {
-  origin: [
-    "http://localhost:8082", 
-    "http://localhost:8083", 
-    "https://clinic.clinifly.net", 
-    "https://cliniflow-admin.onrender.com", 
-    "https://cliniflow-backend-dg8a.onrender.com",
-    "http://localhost:10000", 
-    "http://localhost:8081", 
-    "http://localhost:8082"
-  ],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Accept",
-    "x-actor",
-    "Cache-Control",
-    "Pragma",
-  ],
-};
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+app.options(
+  "*",
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
 app.use(express.json({ limit: "2mb" }));
 
 // ── UUID param sanitization ──────────────────────────────────────────────────
@@ -1260,7 +1267,8 @@ const FORCE_FILE_STORAGE = false;  // Changed to false to use Supabase
 
 // Override isSupabaseEnabled to force file-based storage
 function isSupabaseEnabled() {
-  return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && key;
 }
 
 // ================== CLINIC ORAL HEALTH AVERAGE ==================
@@ -1384,7 +1392,7 @@ app.get("/admin-treatment.html", (req, res) => {
   return res.status(404).send("admin-treatment.html not found in cliniflow-admin/public");
 });
 
-app.use(express.static(publicDir));
+app.use(express.static("public"));
 
 // ================== STORAGE ==================
 const DATA_DIR = path.join(__dirname, "data");
@@ -1397,6 +1405,7 @@ const REF_FILE = path.join(DATA_DIR, "referrals.json");
 const REF_EVENT_FILE = path.join(DATA_DIR, "referralEvents.json");
 const CLINIC_FILE = path.join(DATA_DIR, "clinic.json");
 const CLINICS_FILE = path.join(DATA_DIR, "clinics.json"); // Admin clinics (email/password)
+const SUPER_ADMIN_STATE_FILE = path.join(DATA_DIR, "super_admin_state.json");
 const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
 const OTP_FILE = path.join(DATA_DIR, "otps.json"); // OTP storage with hashed codes
 const PUSH_SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "pushSubscriptions.json"); // Push notification subscriptions
@@ -2742,26 +2751,9 @@ app.get("/health/detail", (req, res) => {
   });
 });
 
-// ── Standard /api/health (matches main backend convention) ───────────────────
-app.get("/api/health", async (req, res) => {
-  const t0 = Date.now();
-  try {
-    const { error: dbErr } = await supabase.from("clinics").select("id").limit(1);
-    const dbOk = !dbErr;
-    if (dbErr) console.error("[DB] health check DB error:", dbErr.message);
-    res.json({
-      ok: true,
-      status: "ok",
-      db: dbOk ? "ok" : "degraded",
-      dbError: dbErr?.message || null,
-      uptime: Math.floor(process.uptime()),
-      ts: Date.now(),
-      ms: Date.now() - t0,
-    });
-  } catch (err) {
-    console.error("[API][ERROR] /api/health:", err.message);
-    res.status(500).json({ ok: false, status: "error", error: err.message });
-  }
+// ── /api/health (Railway / load balancer) ──────────────────────────────────
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
 });
 
 // ── Fast ping ─────────────────────────────────────────────────────────────────
@@ -3081,6 +3073,24 @@ app.get("/super-admin-login.html", (req, res) => {
     res.sendFile(filePath);
     } else {
     res.status(404).send("Super Admin Login page not found");
+  }
+});
+
+app.get("/super-admin-forgot.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "super-admin-forgot.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("Super Admin forgot password page not found");
+  }
+});
+
+app.get("/super-admin-reset.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "super-admin-reset.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("Super Admin reset password page not found");
   }
 });
 
@@ -26363,6 +26373,19 @@ app.get("/api/admin/tokens", requireAdminAuth, (req, res) => {
 
 // ================== SUPER ADMIN AUTHENTICATION ==================
 
+function readSuperAdminState() {
+  return readJson(SUPER_ADMIN_STATE_FILE, {
+    passwordHash: null,
+    resetToken: null,
+    resetTokenExpiry: null,
+    email: null,
+  });
+}
+
+function writeSuperAdminState(s) {
+  writeJson(SUPER_ADMIN_STATE_FILE, s);
+}
+
 // Middleware: Super Admin Guard
 function superAdminGuard(req, res, next) {
   try {
@@ -26392,8 +26415,8 @@ function superAdminGuard(req, res, next) {
 }
 
 // POST /api/super-admin/login
-// Super admin login (email + password from ENV)
-app.post("/api/super-admin/login", (req, res) => {
+// Super admin login: ENV email + plain password, or (after password reset) bcrypt in super_admin_state.json
+app.post("/api/super-admin/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -26401,31 +26424,109 @@ app.post("/api/super-admin/login", (req, res) => {
       return res.status(400).json({ ok: false, error: "missing_credentials", message: "Missing credentials" });
     }
 
-    if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
-
+    if (!String(SUPER_ADMIN_EMAIL || "").trim()) {
       return res.status(500).json({ ok: false, error: "configuration_error", message: "Super admin not configured" });
     }
 
-    if (email !== SUPER_ADMIN_EMAIL || password !== SUPER_ADMIN_PASSWORD) {
+    const emailNorm = String(email).trim().toLowerCase();
+    const envEmail = String(SUPER_ADMIN_EMAIL).trim().toLowerCase();
+    if (emailNorm !== envEmail) {
+      return res.status(401).json({ ok: false, error: "invalid_credentials", message: "Invalid credentials" });
+    }
+
+    const state = readSuperAdminState();
+    let passwordOk = false;
+    if (state && state.passwordHash) {
+      passwordOk = await bcrypt.compare(String(password), String(state.passwordHash));
+    } else if (SUPER_ADMIN_PASSWORD) {
+      passwordOk = String(password) === String(SUPER_ADMIN_PASSWORD);
+    } else {
+      return res.status(500).json({ ok: false, error: "configuration_error", message: "Super admin not configured" });
+    }
+    if (!passwordOk) {
       return res.status(401).json({ ok: false, error: "invalid_credentials", message: "Invalid credentials" });
     }
 
     const token = jwt.sign(
-      { role: "super-admin", email },
+      { role: "super-admin", email: emailNorm },
       SUPER_ADMIN_JWT_SECRET,
-      { expiresIn: "12h" }
+      { expiresIn: "12h" },
     );
-
-
 
     res.json({
       ok: true,
       token,
-      email,
+      email: emailNorm,
       message: "Login successful",
     });
   } catch (error) {
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
 
+// POST /api/super-admin/forgot-password
+app.post("/api/super-admin/forgot-password", (req, res) => {
+  try {
+    const emailNorm = String((req.body || {}).email || "")
+      .trim()
+      .toLowerCase();
+    if (!emailNorm) {
+      return res.json({ ok: true });
+    }
+    const envEmail = String(SUPER_ADMIN_EMAIL || "")
+      .trim()
+      .toLowerCase();
+    if (envEmail && emailNorm === envEmail) {
+      const st = readSuperAdminState();
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const resetTokenExpiry = Date.now() + 30 * 60 * 1000;
+      st.resetToken = resetToken;
+      st.resetTokenExpiry = resetTokenExpiry;
+      st.email = emailNorm;
+      writeSuperAdminState(st);
+      const host = (req.get("x-forwarded-host") || req.get("host") || "localhost").split(",")[0].trim();
+      const proto = String(req.get("x-forwarded-proto") || req.protocol || "http").split(",")[0].trim() || "http";
+      const pathAndQuery = `/super-admin-reset.html?token=${encodeURIComponent(resetToken)}`;
+      const full = `${proto}://${host}${pathAndQuery}`;
+      console.log("[SUPER_ADMIN] password reset link:", full);
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// POST /api/super-admin/reset-password
+app.post("/api/super-admin/reset-password", async (req, res) => {
+  try {
+    const { token, password: newPassword } = req.body || {};
+    const t = String(token || "").trim();
+    if (!t || newPassword == null) {
+      return res.status(400).json({ ok: false, error: "invalid_request", message: "Token and password required" });
+    }
+    const pw = String(newPassword).trim();
+    if (pw.length < 6) {
+      return res.status(400).json({ ok: false, error: "password_too_short", message: "Password too short" });
+    }
+    const state = readSuperAdminState();
+    if (
+      !state.resetToken ||
+      state.resetToken !== t ||
+      !state.resetTokenExpiry ||
+      Number(state.resetTokenExpiry) <= Date.now()
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_or_expired_token",
+        message: "Invalid or expired token",
+      });
+    }
+    state.passwordHash = await bcrypt.hash(pw, 10);
+    state.resetToken = null;
+    state.resetTokenExpiry = null;
+    writeSuperAdminState(state);
+    return res.json({ ok: true });
+  } catch (error) {
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -27069,6 +27170,100 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
   } catch (error) {
 
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// POST /api/super-admin/clinics/:clinicId/assign-plan
+// Body: { plan, days } — plan: FREE|BASIC|PRO|PREMIUM; days: non-negative number
+app.post("/api/super-admin/clinics/:clinicId/assign-plan", superAdminGuard, async (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    const { plan, days } = req.body || {};
+    const allowed = new Set(["FREE", "BASIC", "PRO", "PREMIUM"]);
+    const planU = String(plan || "").toUpperCase().trim();
+    const daysN = Number(days);
+
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+    if (!allowed.has(planU)) {
+      return res.status(400).json({ ok: false, error: "invalid_plan" });
+    }
+    if (!Number.isFinite(daysN) || daysN < 0) {
+      return res.status(400).json({ ok: false, error: "invalid_days" });
+    }
+
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + Math.floor(daysN));
+    const planExpiryIso = expiry.toISOString();
+
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+
+    let clinic = null;
+    let isSingleClinic = false;
+    let isSupabaseClinic = false;
+
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else if (isSupabaseEnabled()) {
+      try {
+        const { data: supabaseClinic, error } = await supabase
+          .from("clinics")
+          .select("id, name, plan")
+          .eq("id", clinicId)
+          .maybeSingle();
+        if (!error && supabaseClinic) {
+          clinic = supabaseClinic;
+          isSupabaseClinic = true;
+        }
+      } catch (e) {
+        console.error("[assign-plan] supabase lookup", e);
+      }
+    }
+
+    if (!clinic) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+
+    if (isSupabaseClinic) {
+      const { error: upErr } = await supabase
+        .from("clinics")
+        .update({
+          plan: planU,
+          plan_expiry: planExpiryIso,
+          plan_source: "ADMIN",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", clinicId);
+      if (upErr) {
+        console.error("[assign-plan] update", upErr);
+        return res.status(500).json({
+          ok: false,
+          error: "update_failed",
+          message: upErr.message || "Failed to update clinic",
+        });
+      }
+    } else {
+      clinic.plan = planU;
+      clinic.planExpiry = planExpiryIso;
+      clinic.planSource = "ADMIN";
+      clinic.updatedAt = Date.now();
+      if (isSingleClinic) {
+        writeJson(CLINIC_FILE, clinic);
+      } else {
+        clinics[clinicId] = clinic;
+        writeJson(CLINICS_FILE, clinics);
+      }
+    }
+
+    return res.json({ ok: true, plan: planU, planExpiry: planExpiryIso, planSource: "ADMIN" });
+  } catch (err) {
+    console.error("[assign-plan]", err);
+    return res.status(500).json({ ok: false, error: "internal_error", message: err?.message || "Error" });
   }
 });
 
@@ -38020,12 +38215,6 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 // ================== START ==================
-// Render: bind the same http.Server instance; handle listen errors (avoid silent uncaughtException).
-server.on("error", (err) => {
-  console.error("[SERVER] listen/bind error:", err && err.message ? err.message : err);
-  process.exit(1);
-});
-
 // ── Global JSON 404 — API routes never return HTML ────────────────────────────
 // Any request that didn't match a route above returns a JSON 404 so the
 // mobile app can always parse the response (no "json parse error" on unknown paths).
@@ -38033,8 +38222,8 @@ app.use((req, res) => {
   res.status(404).json({ ok: false, error: 'not_found', path: req.path });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port " + PORT);
   console.log('🚀 ============================================');
   console.log('🚀  CLINIFLOW BACKEND  —  BUILD VERSION v44');
   console.log('🚀  SIM: 3-mode dental pipeline (whitening/alignment/full)');
@@ -38051,5 +38240,10 @@ server.listen(PORT, "0.0.0.0", () => {
 
 
   postBootInit();
+});
+
+server.on("error", (err) => {
+  console.error("[SERVER] listen/bind error:", err && err.message ? err.message : err);
+  process.exit(1);
 });
 // Deployment trigger - Mon Feb 16 22:01:03 +04 2026
