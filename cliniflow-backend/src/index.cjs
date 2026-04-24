@@ -3273,14 +3273,33 @@ app.get("/api/doctor/dashboard/stats", async (req, res) => {
 
     const { clinicId } = v.decoded;
 
-    // Get today's appointments count
-    const today = new Date().toISOString().split('T')[0];
-    const { count: todayAppointments } = await supabase
-      .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("clinic_id", clinicId)
-      .eq("date", today)
-      .neq("status", "cancelled");
+    const nowDate = new Date();
+    const todayLocal = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}-${String(nowDate.getDate()).padStart(2, "0")}`;
+    const dayStart = new Date(`${todayLocal}T00:00:00`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayStart.getDate() + 1);
+    const dayStartIso = dayStart.toISOString();
+    const dayEndIso = dayEnd.toISOString();
+
+    let todayAppointments = 0;
+    for (const col of ["start_time", "startTime"]) {
+      const { count, error } = await supabase
+        .from("appointments")
+        .select("*", { count: "exact", head: true })
+        .eq("clinic_id", clinicId)
+        .gte(col, dayStartIso)
+        .lt(col, dayEndIso)
+        .neq("status", "cancelled");
+      if (!error) {
+        todayAppointments = count || 0;
+        break;
+      }
+      const code = String(error?.code || "");
+      const msg = String(error?.message || "").toLowerCase();
+      if (!["42703", "PGRST204", "PGRST205"].includes(code) && !msg.includes("column")) {
+        break;
+      }
+    }
 
     // Get pending procedures count
     const { count: pendingProcedures } = await supabase
@@ -3306,7 +3325,7 @@ app.get("/api/doctor/dashboard/stats", async (req, res) => {
     res.json({
       ok: true,
       stats: {
-        todayAppointments: todayAppointments || 0,
+        todayAppointments,
         pendingProcedures: pendingProcedures || 0,
         waitingPatients: waitingPatients || 0,
         totalPatients: totalPatients || 0,
@@ -3327,25 +3346,48 @@ app.get("/api/doctor/dashboard/appointments", async (req, res) => {
     }
 
     const { clinicId } = v.decoded;
-    const today = new Date().toISOString().split('T')[0];
+    const nowDate = new Date();
+    const todayLocal = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}-${String(nowDate.getDate()).padStart(2, "0")}`;
+    const dayStart = new Date(`${todayLocal}T00:00:00`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayStart.getDate() + 1);
+    const dayStartIso = dayStart.toISOString();
+    const dayEndIso = dayEnd.toISOString();
 
-    // Get today's appointments with patient info
-    const { data: appointments, error } = await supabase
-      .from("appointments")
-      .select(`
+    let appointments = [];
+    let listError = null;
+    let listOk = false;
+    for (const col of ["start_time", "startTime"]) {
+      const { data, error } = await supabase
+        .from("appointments")
+        .select(`
         *,
         patients!inner(
           patient_id,
           name
         )
       `)
-      .eq("clinic_id", clinicId)
-      .eq("date", today)
-      .neq("status", "cancelled")
-      .order("time", { ascending: true });
+        .eq("clinic_id", clinicId)
+        .gte(col, dayStartIso)
+        .lt(col, dayEndIso)
+        .neq("status", "cancelled")
+        .order(col, { ascending: true });
 
-    if (error) {
-      console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", error);
+      if (!error) {
+        appointments = data || [];
+        listOk = true;
+        break;
+      }
+      listError = error;
+      const code = String(error?.code || "");
+      const msg = String(error?.message || "").toLowerCase();
+      if (!["42703", "PGRST204", "PGRST205"].includes(code) && !msg.includes("column")) {
+        break;
+      }
+    }
+
+    if (!listOk && listError) {
+      console.error("[DOCTOR DASHBOARD APPOINTMENTS] Error:", listError);
       return res.status(500).json({ ok: false, error: "internal_error" });
     }
 

@@ -908,7 +908,7 @@ function formatAppointmentRow(r, opts = {}) {
   const patientName = opts.patientName || r.patient_id || '';
   const doctorName  = opts.doctorName  || r.doctor_id  || '';
   const timeStr     = String(r.time || '').trim().padStart(5, '0');
-  const startAt     = r.start_at || (r.date && timeStr ? `${r.date}T${timeStr}:00` : null);
+  const startAt     = r.start_at || r.start_time || r.startTime || (r.date && timeStr ? `${r.date}T${timeStr}:00` : null);
 
   return {
     id:               r.id               || null,
@@ -970,65 +970,113 @@ router.get('/appointments', adminAuth, async (req, res) => {
     dateFrom = dateTo = today;
   }
 
-  // ── 3. Query with joins ────────────────────────────────────────────────────
+  // Inclusive YYYY-MM-DD range → [start_time, end) on `start_time` (timestamptz)
+  const rangeStartIso = `${dateFrom}T00:00:00.000Z`;
+  const rangeEndExcl = (() => {
+    const d = new Date(`${dateTo}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString();
+  })();
+
+  // ── 3. Query with joins (then bare) using start_time / startTime ──────────
   let rows = null;
   let usedJoin = false;
 
-  try {
-    const { data, error } = await supabase
-      .from('appointments')
-      .select(`
-        id, date, time, start_at, end_at, status, procedure,
+  const timeCols = [
+    {
+      filter: 'start_time',
+      order: 'start_time',
+      selectJoin: `
+        id, date, time, start_at, end_at, start_time, status, procedure,
         duration_minutes, break_minutes, chair, chair_no,
         doctor_id, patient_id, notes,
         patients ( id, name, patient_id ),
         doctors  ( id, name, full_name )
-      `)
-      .eq('clinic_id', clinicId)
-      .neq('status', 'cancelled')
-      .gte('date', dateFrom)
-      .lte('date', dateTo)
-      .order('date', { ascending: true })
-      .order('time', { ascending: true });
+      `,
+      selectBare:
+        'id, date, time, start_at, end_at, start_time, status, procedure, duration_minutes, break_minutes, chair, chair_no, doctor_id, patient_id, notes',
+    },
+    {
+      filter: 'startTime',
+      order: 'startTime',
+      selectJoin: `
+        id, date, time, start_at, end_at, startTime, status, procedure,
+        duration_minutes, break_minutes, chair, chair_no,
+        doctor_id, patient_id, notes,
+        patients ( id, name, patient_id ),
+        doctors  ( id, name, full_name )
+      `,
+      selectBare:
+        'id, date, time, start_at, end_at, startTime, status, procedure, duration_minutes, break_minutes, chair, chair_no, doctor_id, patient_id, notes',
+    },
+  ];
 
-    if (error) {
-      console.warn('[ADMIN APPOINTMENTS] join query error:', error.code, error.message);
-    } else {
+  for (const { filter, order, selectJoin, selectBare } of timeCols) {
+    if (usedJoin) break;
+    try {
+      const { data, error } = await supabase
+        .from('appointments')
+        .select(selectJoin)
+        .eq('clinic_id', clinicId)
+        .neq('status', 'cancelled')
+        .gte(filter, rangeStartIso)
+        .lt(filter, rangeEndExcl)
+        .order(order, { ascending: true });
+
+      if (error) {
+        const c = String(error.code || '');
+        const m = String(error.message || '').toLowerCase();
+        if (['42703', 'PGRST204', 'PGRST205'].includes(c) || m.includes('column')) {
+          continue;
+        }
+        console.warn('[ADMIN APPOINTMENTS] join query error:', error.code, error.message);
+        continue;
+      }
       rows = data;
       usedJoin = true;
+    } catch (joinErr) {
+      console.warn('[ADMIN APPOINTMENTS] join query threw:', joinErr?.message);
     }
-  } catch (joinErr) {
-    console.warn('[ADMIN APPOINTMENTS] join query threw:', joinErr?.message);
   }
 
   // ── 4. Bare fallback when join fails ──────────────────────────────────────
   if (!usedJoin) {
-    try {
-      const { data: bare, error: bareErr } = await supabase
-        .from('appointments')
-        .select('id, date, time, start_at, end_at, status, procedure, duration_minutes, break_minutes, chair, chair_no, doctor_id, patient_id, notes')
-        .eq('clinic_id', clinicId)
-        .neq('status', 'cancelled')
-        .gte('date', dateFrom)
-        .lte('date', dateTo)
-        .order('date', { ascending: true })
-        .order('time', { ascending: true });
+    for (const { filter, order, selectBare } of timeCols) {
+      if (rows != null) break;
+      try {
+        const { data: bare, error: bareErr } = await supabase
+          .from('appointments')
+          .select(selectBare)
+          .eq('clinic_id', clinicId)
+          .neq('status', 'cancelled')
+          .gte(filter, rangeStartIso)
+          .lt(filter, rangeEndExcl)
+          .order(order, { ascending: true });
 
-      if (bareErr) {
-        const c = String(bareErr.code || '');
-        // Table / column not found → degrade gracefully, never 500
-        if (['42P01', '42703', 'PGRST205', 'PGRST204', 'PGRST200'].includes(c)) {
+        if (bareErr) {
+          const c = String(bareErr.code || '');
+          const m = String(bareErr.message || '').toLowerCase();
+          if (['42703', 'PGRST204', 'PGRST205'].includes(c) || m.includes('column')) {
+            continue;
+          }
+          // Table / column not found → degrade gracefully, never 500
+          if (['42P01', 'PGRST200'].includes(c)) {
+            return res.json({ ok: true, appointments: [] });
+          }
+          console.error('[ADMIN APPOINTMENTS] bare query error:', bareErr.message);
           return res.json({ ok: true, appointments: [] });
         }
-        console.error('[ADMIN APPOINTMENTS] bare query error:', bareErr.message);
-        return res.json({ ok: true, appointments: [] });
-      }
 
-      rows = bare;
-    } catch (bareThrown) {
-      console.error('[ADMIN APPOINTMENTS] bare query threw:', bareThrown?.message);
-      return res.json({ ok: true, appointments: [] });
+        rows = bare;
+        break;
+      } catch (bareThrown) {
+        console.error('[ADMIN APPOINTMENTS] bare query threw:', bareThrown?.message);
+      }
     }
+  }
+
+  if (rows == null) {
+    return res.json({ ok: true, appointments: [] });
   }
 
   // ── 5. Shape response ─────────────────────────────────────────────────────
