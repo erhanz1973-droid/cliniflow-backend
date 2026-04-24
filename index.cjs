@@ -260,6 +260,13 @@ const {
   getPushSubscriptionsByPatient,
 } = require("./lib/supabase");
 
+const {
+  normalizePhone: normalizePhoneE164,
+  tryParseE164,
+  normalizeRegisterEmail: normalizeRegisterEmailLib,
+  phoneSearchVariants,
+} = require("./lib/phoneIdentity.cjs");
+
 const app = express();
 const server = http.createServer(app);
 const _portEnv = process.env.PORT;
@@ -275,6 +282,92 @@ const JWT_SECRET =
 const JWT_EXPIRES_IN = "30d";
 const IS_PROD = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 const PERF_LOGS_ENABLED = !IS_PROD || String(process.env.PERF_LOGS || "").trim() === "1";
+/** Set OTP_DEBUG=1 to log OTP digits in register/send paths (never enable in prod unless short tests). */
+const OTP_DEBUG_LOG = String(process.env.OTP_DEBUG || "").trim() === "1" || !IS_PROD;
+
+function maskEmailForLog(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return "(empty)";
+  const at = e.indexOf("@");
+  if (at < 1) return "***";
+  return `${e.slice(0, 2)}***${e.slice(at)}`;
+}
+
+/** Step markers for register debugging (Railway logs). */
+function logRegisterTrace(route, step, meta = {}) {
+  console.log("[REGISTER_TRACE]", { route, step, ...meta });
+}
+
+/** Turkish user-facing copy for `/api/register` and `/api/register/patient` JSON responses. */
+const REGISTER_USER_MSG = {
+  emailRequired: "E-posta adresi gereklidir.",
+  invalidEmail: "Geçersiz e-posta adresi.",
+  invalidPhone: "Geçersiz telefon numarası formatı.",
+  clinicNotFound: (code) =>
+    `Klinik kodu "${code}" bulunamadı. Lütfen geçerli bir klinik kodu girin.`,
+  registerFailed: "Kayıt tamamlanamadı. Lütfen bir süre sonra tekrar deneyin.",
+  registerFailedLookup:
+    "Kayıt sırasında bir tutarsızlık oluştu. Lütfen tekrar deneyin veya destek ile iletişime geçin.",
+  clinicIdNullableHint:
+    "Sunucu: hastalar için clinic_id zorunlu olabilir. Migration (patients.clinic_id nullable) veya DEFAULT_CLINIC_ID gerekir.",
+  phoneAlreadyRegistered:
+    "Bu telefon numarası başka bir hesaba bağlı. Farklı bir numara kullanın veya bu numarayı kayıtlı e-posta adresinizle deneyin.",
+  otpSentInstructions: "Kayıt alındı. E-postanıza gönderilen doğrulama kodunu girin.",
+  reviewModeClinic:
+    "Klinik kaydı (inceleme modu) tamamlandı. Doğrulama için OTP: 123456.",
+  otpEmailNotConfigured:
+    "Doğrulama e-postası şu an gönderilemiyor (sunucu yapılandırması). Lütfen daha sonra tekrar deneyin.",
+  otpEmailNotConfiguredHint:
+    "Yönetici: BREVO_API_KEY veya SMTP_HOST+SMTP_USER+SMTP_PASS tanımlayın; gönderen için EMAIL_FROM veya SMTP_FROM kullanın.",
+  otpSendFailedGeneric:
+    "Doğrulama e-postası gönderilemedi. Lütfen bir süre sonra tekrar deneyin.",
+  otpStoredEmailSendFailed:
+    "Kayıt alındı; doğrulama e-postası şu an gönderilemedi. Lütfen «kodu yeniden gönder» veya bir süre sonra tekrar deneyin.",
+  otpSentSms: "Doğrulama kodu telefon numaranıza SMS ile gönderildi.",
+  otpSentSmsEn: "Your verification code was sent by SMS.",
+  otpCouldNotBeSent: "OTP could not be sent",
+  selfReferralNotAllowed: "Kendi kendinize referans kullanamazsınız.",
+  referralCreateFailed: "Referans kaydı oluşturulamadı. Lütfen tekrar deneyin.",
+  invalidReferralCode: (code) =>
+    `"${code}" referans kodu geçersiz veya bulunamadı. Lütfen kontrol edip tekrar deneyin.`,
+};
+
+function buildRegisterOtpSuccessJson({
+  patientId,
+  emailNormalized,
+  patientLanguage,
+  requestId,
+  supabaseClinicId,
+  validatedClinicCode,
+  emailSent,
+  smsSent,
+  deliveryChannel,
+}) {
+  const lang = normalizePatientLanguage(patientLanguage);
+  const bySms = Boolean(smsSent) && (deliveryChannel === "sms" || !emailSent);
+  const message = bySms
+    ? (lang === "tr" ? REGISTER_USER_MSG.otpSentSms : REGISTER_USER_MSG.otpSentSmsEn)
+    : emailSent
+      ? REGISTER_USER_MSG.otpSentInstructions
+      : REGISTER_USER_MSG.otpStoredEmailSendFailed;
+  return {
+    ok: true,
+    message,
+    patientId,
+    email: emailNormalized,
+    language: patientLanguage,
+    requestId,
+    status: "PENDING",
+    requires_verification: true,
+    requiresOTP: true,
+    email_sent: Boolean(emailSent),
+    sms_sent: Boolean(smsSent),
+    delivery_channel: deliveryChannel || (bySms ? "sms" : emailSent ? "email" : null),
+    hasClinic: Boolean(supabaseClinicId),
+    clinicId: supabaseClinicId || null,
+    clinicCode: validatedClinicCode || null,
+  };
+}
 /** Non-production: skip OTP hash / missing-row checks for /auth/verify-otp (patient & doctor). Set OTP_DEV_BYPASS=0 to enforce real OTP locally. */
 function isOtpDevBypassEnabled() {
   if (IS_PROD) return false;
@@ -2295,6 +2388,205 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
   }
 }
 
+/** True if Brevo REST or full SMTP credentials are present (OTP send can be attempted). */
+function isTransactionalEmailConfigured() {
+  const brevo = String(process.env.BREVO_API_KEY || "").trim();
+  return Boolean(brevo) || Boolean(emailTransporter);
+}
+
+/** Booleans only — log when register OTP returns 503 (no secrets). */
+function getTransactionalEmailDiagnostic() {
+  const hasHost = Boolean(String(process.env.SMTP_HOST || "").trim());
+  const hasUser = Boolean(String(process.env.SMTP_USER || "").trim());
+  const hasPass = Boolean(String(process.env.SMTP_PASS || "").trim());
+  return {
+    hasBrevoKey: Boolean(String(process.env.BREVO_API_KEY || "").trim()),
+    hasSMTPHost: hasHost,
+    hasSMTPUser: hasUser,
+    hasSMTPPass: hasPass,
+    smtpTripletComplete: hasHost && hasUser && hasPass,
+    nodemailerTransportCreated: Boolean(emailTransporter),
+    hasFromAddress: Boolean(String(process.env.EMAIL_FROM || process.env.SMTP_FROM || "").trim()),
+    hasTwilio: Boolean(
+      String(process.env.TWILIO_ACCOUNT_SID || "").trim() &&
+        String(process.env.TWILIO_AUTH_TOKEN || "").trim() &&
+        String(
+          process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM || "",
+        ).trim(),
+    ),
+  };
+}
+
+function isSmsOtpConfigured() {
+  const sid = String(process.env.TWILIO_ACCOUNT_SID || "").trim();
+  const token = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
+  const from = String(
+    process.env.TWILIO_MESSAGING_SERVICE_SID ||
+      process.env.TWILIO_PHONE_NUMBER ||
+      process.env.TWILIO_FROM ||
+      "",
+  ).trim();
+  return Boolean(sid && token && from);
+}
+
+function isOtpDeliveryConfigured() {
+  return isTransactionalEmailConfigured() || isSmsOtpConfigured();
+}
+
+function formatPhoneE164(phoneInput) {
+  return tryParseE164(phoneInput);
+}
+
+function maskE164ForLog(e164) {
+  const s = String(e164 || "");
+  if (s.length <= 6) return "(short)";
+  return `${s.slice(0, 4)}…${s.slice(-2)}`;
+}
+
+async function sendOtpSms(e164, otpCode, { lang = "en" } = {}) {
+  const sid = String(process.env.TWILIO_ACCOUNT_SID || "").trim();
+  const token = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
+  const messagingSid = String(process.env.TWILIO_MESSAGING_SERVICE_SID || "").trim();
+  const fromNum = String(process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM || "").trim();
+
+  if (!sid || !token || (!messagingSid && !fromNum)) {
+    const msg =
+      "sms_not_configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER";
+    console.error("[sendOtpSms] ❌", msg);
+    throw new Error(msg);
+  }
+
+  const safeLang = String(lang || "en").toLowerCase();
+  const bodyText =
+    safeLang === "tr"
+      ? `Clinifly doğrulama kodunuz: ${otpCode} (5 dakika geçerlidir).`
+      : `Your Clinifly verification code: ${otpCode} (valid for 5 minutes).`;
+
+  const params = new URLSearchParams();
+  params.set("To", e164);
+  if (messagingSid) {
+    params.set("MessagingServiceSid", messagingSid);
+  } else {
+    params.set("From", fromNum);
+  }
+  params.set("Body", bodyText);
+
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`;
+  const auth = Buffer.from(`${sid}:${token}`).toString("base64");
+
+  console.log("[sendOtpSms] attempting SMS", { to: maskE164ForLog(e164), hasMessagingService: Boolean(messagingSid) });
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    },
+    body: params.toString(),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    console.error("[sendOtpSms] ❌ Twilio HTTP error", {
+      status: res.status,
+      body: text.slice(0, 500),
+      to: maskE164ForLog(e164),
+    });
+    throw new Error(`twilio_sms_http_${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch (_) {
+    /* non-JSON body */
+  }
+  console.log("[sendOtpSms] ✅ SMS accepted", { to: maskE164ForLog(e164), sid: json?.sid || null });
+  return json || { ok: true };
+}
+
+/**
+ * Persists hashed OTP (Supabase `otps` table when available, else file) — for /api/register (saveOTP mode).
+ */
+async function saveOTP(email, otpCode, attempts = 0) {
+  const emailKey = String(email).toLowerCase().trim();
+  const hashedOTP = await hashOTP(otpCode);
+  const expMs = Date.now() + OTP_EXPIRY_MS;
+  if (isSupabaseEnabled()) {
+    try {
+      await createOTP(emailKey, hashedOTP, expMs);
+      return;
+    } catch (e) {
+      console.warn("[saveOTP] createOTP (Supabase) failed, file fallback:", e?.message || e);
+    }
+  }
+  const otps = readJson(OTP_FILE, {});
+  otps[emailKey] = {
+    hashedOTP,
+    createdAt: now(),
+    expiresAt: now() + OTP_EXPIRY_MS,
+    attempts: attempts,
+    verified: false,
+  };
+  writeJson(OTP_FILE, otps);
+}
+
+/**
+ * Try Brevo/SMTP email first; on failure, SMS to E.164 if Twilio is configured.
+ * @throws {Error} when no channel delivers
+ */
+async function deliverOtpWithFallback({ email, phoneRaw, otpCode, lang = "en" }) {
+  const e164 = phoneRaw != null && String(phoneRaw).trim() ? formatPhoneE164(phoneRaw) : null;
+  if (e164) {
+    console.log("[deliverOtp] phone E.164 for SMS:", maskE164ForLog(e164));
+  } else {
+    console.log("[deliverOtp] no E.164 phone; SMS fallback unavailable for this request");
+  }
+
+  let lastEmailErr = null;
+  if (isTransactionalEmailConfigured()) {
+    try {
+      await sendOTPEmail(email, otpCode, lang);
+      console.log("[deliverOtp] ✅ email channel OK", { email: maskEmailForLog(email) });
+      return { channel: "email", emailSent: true, smsSent: false };
+    } catch (err) {
+      lastEmailErr = err;
+      console.error("[deliverOtp] ❌ email send failed, will try SMS if possible", {
+        email: maskEmailForLog(email),
+        message: String(err?.message || err).slice(0, 300),
+      });
+    }
+  } else {
+    console.warn("[deliverOtp] email not configured (no BREVO / SMTP), skipping email");
+  }
+
+  if (e164 && isSmsOtpConfigured()) {
+    try {
+      await sendOtpSms(e164, otpCode, { lang });
+      console.log("[deliverOtp] ✅ SMS channel OK (fallback)", { to: maskE164ForLog(e164) });
+      return {
+        channel: "sms",
+        emailSent: false,
+        smsSent: true,
+        ...(lastEmailErr ? { email_error: String(lastEmailErr?.message || lastEmailErr).slice(0, 200) } : {}),
+      };
+    } catch (smsErr) {
+      console.error("[deliverOtp] ❌ SMS send failed", {
+        to: maskE164ForLog(e164),
+        message: String(smsErr?.message || smsErr).slice(0, 300),
+      });
+    }
+  } else if (e164 && !isSmsOtpConfigured()) {
+    console.error("[deliverOtp] SMS not configured (Twilio env missing); cannot use SMS fallback");
+  } else if (!e164 && lastEmailErr) {
+    console.error("[deliverOtp] email failed and no valid E.164 phone for SMS");
+  }
+
+  const err = new Error(REGISTER_USER_MSG.otpCouldNotBeSent);
+  err.code = "otp_delivery_failed";
+  throw err;
+}
+
 // Rate limiting: track OTP requests per email
 const otpRequestRateLimit = new Map(); // email -> { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
@@ -2795,8 +3087,44 @@ app.get("/super-admin.html", (req, res) => {
   }
 });
 
-// ================== REGISTER ==================
-app.post("/api/register", async (req, res) => {
+// ================== REGISTER (no patient upsert; phone-first identity) ==================
+/**
+ * Kayıtta klinik isteğe bağlı: hastalar klinik kodu olmadan da kayıt olabilir; boş bırakılabilir.
+ * İsteğe bağlı çözümleme: clinicCode | clinic_code | clinic_id (UUID), sonra DEFAULT_CLINIC_CODE / DEFAULT_CLINIC_ID.
+ */
+async function augmentRegisterClinicFromBody(body) {
+  const b = body || {};
+  let code = String(b.clinicCode ?? b.clinic_code ?? "").trim();
+  const idHint = String(b.clinicId ?? b.clinic_id ?? "").trim();
+  if (!code && idHint && UUID_RE.test(idHint) && isSupabaseEnabled()) {
+    try {
+      const c = await getClinicById(idHint);
+      if (c?.clinic_code) code = String(c.clinic_code).trim().toUpperCase();
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+  if (!code) {
+    const defCode = String(process.env.DEFAULT_CLINIC_CODE || "").trim();
+    if (defCode) code = defCode.toUpperCase();
+  }
+  if (!code && isSupabaseEnabled()) {
+    const defId = String(process.env.DEFAULT_CLINIC_ID || "").trim();
+    if (UUID_RE.test(defId)) {
+      try {
+        const c = await getClinicById(defId);
+        if (c?.clinic_code) code = String(c.clinic_code).trim().toUpperCase();
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+  }
+  return code;
+}
+// ================== REGISTER (shared: /api/register + /api/patient/register + /api/register/patient) ==================
+async function runPatientRegister(req, res, route, otpMode) {
+  try {
+  console.log("🔥 NEW REGISTER FLOW ACTIVE - NO UPSERT", { route });
   const body = req.body || {};
   const {
     name = "",
@@ -2804,11 +3132,17 @@ app.post("/api/register", async (req, res) => {
     fullName = "",
     phone = "",
     email = "",
-    clinicCode = "",
     language = "",
   } = body;
   const referralCode = String(body.referralCode || body.inviterReferralCode || "").trim();
   const displayName = String(bodyPatientName || fullName || name || "").trim();
+
+  let clinicCode = "";
+  try {
+    clinicCode = await augmentRegisterClinicFromBody(body);
+  } catch (augErr) {
+    console.warn("[REGISTER] augmentRegisterClinicFromBody:", augErr?.message || augErr);
+  }
 
   console.log(`[REGISTER] Request received:`, { 
     name: displayName ? "***" : "", 
@@ -2817,41 +3151,50 @@ app.post("/api/register", async (req, res) => {
     clinicCode: clinicCode || "(empty)",
     hasClinicCode: !!clinicCode 
   });
-  
+  console.log("[REGISTER] REGISTER_START", { route });
+
   // Email is required for registration
   if (!email || !String(email).trim()) {
-    return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
+    return res.status(400).json({
+      ok: false,
+      error: "email_required",
+      message: REGISTER_USER_MSG.emailRequired,
+    });
   }
-  
+
   // Validate email format
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const emailNormalized = String(email).trim().toLowerCase();
+  const emailNormalized = normalizeRegisterEmailLib(email);
   if (!emailRegex.test(emailNormalized)) {
-    return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_email",
+      message: REGISTER_USER_MSG.invalidEmail,
+    });
   }
 
   const patientLanguage = normalizePatientLanguage(language);
 
-  // Phone is OPTIONAL (email-only OTP). If present, validate and normalize.
+  // Phone is OPTIONAL (email-only OTP). If present, validate and normalize to E.164 for storage + SMS.
   const phoneTrimmed = String(phone || "").trim();
-  const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
-  if (phoneTrimmed && (!phoneNormalized || phoneNormalized.length < 10)) {
+  const phoneNormalized = phoneTrimmed ? normalizePhoneE164(phoneTrimmed) : "";
+  // DB `patients.phone` often stores national/international digits only (e.g. 9955…) — must match for unique + preflight
+  const phoneDigits = phoneNormalized.replace(/\D/g, "");
+  if (phoneTrimmed && (!phoneNormalized || phoneDigits.length < 8)) {
     return res.status(400).json({
       ok: false,
       error: "invalid_phone",
-      message: "Geçersiz telefon numarası formatı.",
+      message: REGISTER_USER_MSG.invalidPhone,
     });
   }
 
-  // Validate clinic code if provided
+  // Klinik kodu isteğe bağlı — yalnızca gönderilmiş ve boş değilse doğrulanır
   let validatedClinicCode = null;
   let foundClinicId = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
     let foundClinic = null;
-    
 
-    
     // SUPABASE: Primary lookup
     if (isSupabaseEnabled()) {
       foundClinic = await getClinicByCode(code);
@@ -2905,10 +3248,10 @@ app.post("/api/register", async (req, res) => {
     } else {
       // Clinic not found - return error
 
-      return res.status(404).json({ 
-        ok: false, 
+      return res.status(404).json({
+        ok: false,
         error: "clinic_not_found",
-        message: `Klinik kodu "${code}" bulunamadı. Lütfen geçerli bir klinik kodu girin.`
+        message: REGISTER_USER_MSG.clinicNotFound(code),
       });
     }
   } else {
@@ -2917,17 +3260,77 @@ app.post("/api/register", async (req, res) => {
   
 
 
-  // EMAIL is the identity: if a patient already exists for this email, reuse its patientId.
+  // Identity: phone-first (E.164 + legacy storage variants), then email, then new id. No upsert.
+  let existingUser = false;
   let patientId = null;
-  if (isSupabaseEnabled()) {
+  /** @type {string|null} Supabase `patients.id` (UUID) when an existing row is found */
+  let existingPatientUuid = null;
+  if (isSupabaseEnabled() && (phoneDigits || phoneNormalized)) {
+    try {
+      let phoneRows = null;
+      let phErr = null;
+      if (phoneDigits) {
+        const r = await supabase
+          .from("patients")
+          .select("id, patient_id, email")
+          .eq("phone", phoneDigits)
+          .limit(3);
+        phoneRows = r.data;
+        phErr = r.error;
+      }
+      if (!phErr && (!phoneRows || phoneRows.length === 0) && phoneNormalized) {
+        const variants = phoneSearchVariants(phoneNormalized);
+        if (variants.length) {
+          const r2 = await supabase
+            .from("patients")
+            .select("id, patient_id, email")
+            .in("phone", variants)
+            .limit(3);
+          phoneRows = r2.data;
+          phErr = r2.error;
+        }
+      }
+      if (phErr && String(phErr.code) !== "PGRST116") {
+        console.error("[REGISTER] phone identity lookup failed", {
+          message: phErr.message,
+          code: phErr.code,
+        });
+      } else if (Array.isArray(phoneRows) && phoneRows.length > 1) {
+        return res.status(500).json({
+          ok: false,
+          error: "phone_identity_ambiguous",
+          message: "Telefon eşleşmesi belirsiz. Lütfen destek ile iletişime geçin.",
+        });
+      } else if (Array.isArray(phoneRows) && phoneRows.length === 1) {
+        const row = phoneRows[0];
+        const pem = String(row.email || "").trim().toLowerCase();
+        if (pem && pem !== emailNormalized) {
+          return res.status(409).json({
+            ok: false,
+            error: "phone_already_registered",
+            message: REGISTER_USER_MSG.phoneAlreadyRegistered,
+            conflict: "email_mismatch",
+          });
+        }
+        existingPatientUuid = String(row.id || "").trim() || null;
+        patientId = row.patient_id || row.id;
+        existingUser = true;
+      }
+    } catch (e) {
+      console.warn("[REGISTER] phone lookup", e?.message || e);
+    }
+  }
+  if (!existingPatientUuid && isSupabaseEnabled()) {
     try {
       const { data: existing, error: e } = await supabase
         .from("patients")
         .select("id, patient_id, email")
         .eq("email", emailNormalized)
-        .single();
+        .maybeSingle();
       if (!e && existing) {
+        existingPatientUuid = String(existing.id || "").trim() || null;
         patientId = existing.patient_id || existing.id;
+        existingUser = true;
       } else if (e && String(e.code || "") !== "PGRST116") {
         console.error("[REGISTER] Supabase patient lookup by email failed", {
           message: e.message,
@@ -2936,7 +3339,7 @@ app.post("/api/register", async (req, res) => {
         });
       }
     } catch (err) {
-
+      // ignore
     }
   }
   if (!patientId) {
@@ -2945,6 +3348,7 @@ app.post("/api/register", async (req, res) => {
       const em = String(patientsByFile[pid]?.email || "").trim().toLowerCase();
       if (em && em === emailNormalized) {
         patientId = pid;
+        existingUser = true;
         break;
       }
     }
@@ -2970,95 +3374,297 @@ app.post("/api/register", async (req, res) => {
     }
   }
 
+  let defaultClinicApplied = false;
   if (isSupabaseEnabled() && !supabaseClinicId) {
-
-    return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
+    const defId = String(process.env.DEFAULT_CLINIC_ID || "").trim();
+    if (UUID_RE.test(defId)) {
+      try {
+        const cdef = await getClinicById(defId);
+        if (cdef?.id) {
+          supabaseClinicId = cdef.id;
+          defaultClinicApplied = true;
+        }
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+  }
+  const isGlobalLead = !supabaseClinicId;
+  if (isSupabaseEnabled() && !supabaseClinicId) {
+    console.log(
+      "[REGISTER] open signup / global lead — no clinic (clinic_id null). Set DEFAULT_CLINIC_ID to assign, or is_lead marks global lead.",
+    );
+  } else if (defaultClinicApplied) {
+    console.log("[REGISTER] applied DEFAULT_CLINIC_ID →", String(supabaseClinicId).slice(0, 8) + "…");
   }
 
-  // === SUPABASE PATIENT UPSERT (ZORUNLU) ===
+  console.log("[REGISTER_FLOW]", {
+    route,
+    phone: phoneNormalized ? `***${String(phoneNormalized).slice(-4)}` : null,
+    email: maskEmailForLog(emailNormalized),
+    existingUser,
+    clinic_id: supabaseClinicId || null,
+    is_global_lead: isGlobalLead,
+    defaultClinicApplied,
+  });
+
+  logRegisterTrace(route, "STEP_BEFORE_DB_PERSIST", {
+    supabase: isSupabaseEnabled(),
+  });
+
+  // === SUPABASE: update by id, or insert — no upsert (phone identity is not upserted) ===
   if (isSupabaseEnabled()) {
-    const payload = {
-      patient_id: patientId, // legacy app id (p_xxx)
-      email: emailNormalized,
+    const roleUp = (req.body?.role || "PATIENT").toUpperCase();
+    const nowIso = new Date().toISOString();
+    const buildUpdatePayload = () => ({
       name: displayName,
       full_name: displayName,
       first_name: "",
       last_name: "",
+      email: emailNormalized,
       clinic_id: supabaseClinicId,
       status: "PENDING",
       language: patientLanguage,
-      role: (req.body?.role || "PATIENT").toUpperCase(), // 🔥 NORMALIZE ROLE TO UPPERCASE
-      ...(phoneNormalized ? { phone: phoneNormalized } : {}),
+      role: roleUp,
+      is_lead: isGlobalLead,
+      updated_at: nowIso,
+      ...(phoneDigits ? { phone: phoneDigits } : {}),
+    });
+    const buildInsertPayload = () => ({
+      id: crypto.randomUUID(),
+      patient_id: patientId,
+      name: displayName,
+      full_name: displayName,
+      first_name: "",
+      last_name: "",
+      email: emailNormalized,
+      clinic_id: supabaseClinicId,
+      status: "PENDING",
+      language: patientLanguage,
+      role: roleUp,
+      is_lead: isGlobalLead,
+      created_at: nowIso,
+      updated_at: nowIso,
+      ...(phoneDigits ? { phone: phoneDigits } : {}),
+    });
+
+    const detailBlob = (err) => `${err?.details || ""} ${err?.message || ""}`.toLowerCase();
+
+    let patientPersistRow = null;
+    const applyRow = (row) => {
+      patientPersistRow = row;
+      if (row && (row.patient_id || row.id)) {
+        patientId = String(row.patient_id || row.id);
+      }
     };
-    const { data, error } = await supabase
-      .from("patients")
-      .upsert(
-        payload,
-        {
-          onConflict: "email",
+
+    if (existingPatientUuid) {
+      const { data, error: upErr } = await supabase
+        .from("patients")
+        .update(buildUpdatePayload())
+        .eq("id", existingPatientUuid)
+        .select()
+        .single();
+      if (upErr) {
+        console.error("[SUPABASE] PATIENT UPDATE FAILED", {
+          message: upErr.message,
+          code: upErr.code,
+          details: upErr.details,
+        });
+        if (String(upErr.code) === "23505" && /email|key \(email\)|patients_email_unique/i.test(detailBlob(upErr))) {
+          return res.status(409).json({
+            ok: false,
+            error: "email_in_use",
+            message: "Bu e-posta başka bir hesaba ait. Lütfen giriş yapın veya farklı e-posta kullanın.",
+          });
         }
-      )
-      .select()
-      .single();
-
-    if (error) {
-      console.error("[SUPABASE] PATIENT UPSERT FAILED", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
-      // If email is already taken, treat registration as idempotent and reuse existing patient.
-      const isUniqueEmail =
-        String(error.code || "") === "23505" ||
-        String(error.message || "").toLowerCase().includes("patients_email_unique") ||
-        String(error.message || "").toLowerCase().includes("duplicate key");
-      if (isUniqueEmail) {
-        try {
-          const { data: existing, error: e2 } = await supabase
-            .from("patients")
-            .select("id, patient_id, email, language")
-            .eq("email", emailNormalized)
-            .limit(1)
-            .maybeSingle();
-          if (!e2 && existing) {
-            patientId = existing.patient_id || existing.id;
-
-            // Best-effort: keep language in sync
-            if (patientLanguage && existing.language !== patientLanguage) {
-              await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
-            }
-            // Best-effort: keep supabase patient row for downstream (referrals)
-            try {
-              const { data: fullRow } = await supabase
+        if (String(upErr.code) === "23505" && /phone|patients_phone_unique|key \(phone\)/i.test(detailBlob(upErr))) {
+          return res.status(409).json({
+            ok: false,
+            error: "phone_in_use",
+            message: REGISTER_USER_MSG.phoneAlreadyRegistered,
+          });
+        }
+        return res.status(500).json({
+          ok: false,
+          error: "register_failed",
+          message: REGISTER_USER_MSG.registerFailed,
+        });
+      }
+      applyRow(data);
+      console.log("[SUPABASE] ✅ patient updated:", data?.id);
+    } else {
+      let { data, error: insErr } = await supabase
+        .from("patients")
+        .insert(buildInsertPayload())
+        .select()
+        .single();
+      if (insErr) {
+        const isSchema = /is_lead|42703|pgrst204|column/i.test(detailBlob(insErr));
+        if (isSchema) {
+          const p = buildInsertPayload();
+          delete p.is_lead;
+          const r2 = await supabase.from("patients").insert(p).select().single();
+          data = r2.data;
+          insErr = r2.error;
+        }
+        const is23505 = insErr && (String(insErr.code) === "23505" || detailBlob(insErr).includes("duplicate key"));
+        if (insErr && is23505) {
+          let found = null;
+          if (phoneDigits || phoneNormalized) {
+            console.warn("[REGISTER] insert 23505 — re-fetch by phone (digits first), update if exactly one row", {
+              code: insErr.code,
+              details: insErr.details,
+            });
+            if (phoneDigits) {
+              const { data: d1, error: q0 } = await supabase
                 .from("patients")
-                .select("id, patient_id, clinic_id, name, referral_code, email")
-                .eq("email", emailNormalized)
-                .limit(1)
-                .maybeSingle();
-              supabasePatientRow = fullRow || existing;
-            } catch {
-              supabasePatientRow = existing;
+                .select("id, patient_id, email, language, name, full_name, clinic_id, referral_code")
+                .eq("phone", phoneDigits)
+                .limit(2);
+              if (q0) {
+                console.error("[SUPABASE] PATIENT 23505 phone re-fetch (digits) failed", q0);
+                return res.status(500).json({
+                  ok: false,
+                  error: "register_failed",
+                  message: REGISTER_USER_MSG.registerFailed,
+                });
+              }
+              if (Array.isArray(d1) && d1.length > 1) {
+                return res.status(500).json({
+                  ok: false,
+                  error: "register_failed",
+                  message: REGISTER_USER_MSG.registerFailed,
+                });
+              }
+              if (Array.isArray(d1) && d1.length === 1) {
+                found = d1[0];
+              }
+            }
+            if (!found && phoneNormalized) {
+              const { data: rows, error: qe } = await supabase
+                .from("patients")
+                .select("id, patient_id, email, language, name, full_name, clinic_id, referral_code")
+                .in("phone", phoneSearchVariants(phoneNormalized))
+                .limit(2);
+              if (qe) {
+                console.error("[SUPABASE] PATIENT 23505 phone re-fetch (variants) failed", qe);
+                return res.status(500).json({
+                  ok: false,
+                  error: "register_failed",
+                  message: REGISTER_USER_MSG.registerFailed,
+                });
+              }
+              if (Array.isArray(rows) && rows.length > 1) {
+                return res.status(500).json({
+                  ok: false,
+                  error: "register_failed",
+                  message: REGISTER_USER_MSG.registerFailed,
+                });
+              }
+              if (Array.isArray(rows) && rows.length === 1) {
+                found = rows[0];
+              }
+            }
+            if (phoneDigits || phoneNormalized) {
+              if (!found) {
+                return res.status(500).json({
+                  ok: false,
+                  error: "register_failed",
+                  message: REGISTER_USER_MSG.registerFailed,
+                  details: !IS_PROD ? "23505: no row matched phone after re-fetch" : undefined,
+                });
+              }
             }
           } else {
-            console.error("[REGISTER] Unique email but failed to fetch existing patient", {
-              message: e2?.message,
-              code: e2?.code,
-              details: e2?.details,
+            // No phone on request (email-only flow): 23505 is almost certainly email — single necessary lookup
+            console.warn("[REGISTER] insert 23505 — no phone; re-fetch by email", {
+              code: insErr.code,
             });
-            return res.status(500).json({ ok: false, error: "register_failed" });
+            const { data: emRow, error: q2 } = await supabase
+              .from("patients")
+              .select("id, patient_id, email, language, name, full_name, clinic_id, referral_code")
+              .eq("email", emailNormalized)
+              .limit(1)
+              .maybeSingle();
+            if (q2) {
+              return res.status(500).json({
+                ok: false,
+                error: "register_failed",
+                message: REGISTER_USER_MSG.registerFailed,
+              });
+            }
+            if (emRow) found = emRow;
+            if (!found) {
+              return res.status(500).json({
+                ok: false,
+                error: "register_failed",
+                message: REGISTER_USER_MSG.registerFailed,
+                details: !IS_PROD ? "23505: no row matched email" : undefined,
+              });
+            }
           }
-        } catch (e3) {
-
-          return res.status(500).json({ ok: false, error: "register_failed" });
+          const pem = String(found.email || "").trim().toLowerCase();
+          if (phoneNormalized && pem && pem !== emailNormalized) {
+            return res.status(409).json({
+              ok: false,
+              error: "phone_already_registered",
+              message: REGISTER_USER_MSG.phoneAlreadyRegistered,
+              conflict: "email_mismatch",
+            });
+          }
+          const { data: upData, error: upe } = await supabase
+            .from("patients")
+            .update(buildUpdatePayload())
+            .eq("id", found.id)
+            .select()
+            .single();
+          if (upe) {
+            console.error("[SUPABASE] PATIENT 23505 recovery update failed", upe);
+            return res.status(500).json({
+              ok: false,
+              error: "register_failed",
+              message: REGISTER_USER_MSG.registerFailed,
+            });
+          }
+          applyRow(upData);
+          existingUser = true;
+          existingPatientUuid = found.id;
+          insErr = null;
+          data = upData;
+          console.log(
+            "[SUPABASE] ✅ patient 23505 — updated existing row" + (phoneNormalized ? " (phone re-fetch)" : " (email-only)"),
+            upData?.id
+          );
         }
+        if (insErr) {
+          console.error("[SUPABASE] PATIENT INSERT FAILED", {
+            message: insErr.message,
+            code: insErr.code,
+            details: insErr.details,
+            hint: insErr.hint,
+          });
+          const hintNull =
+            !supabaseClinicId && String(insErr.message || "").toLowerCase().includes("clinic_id");
+          return res.status(500).json({
+            ok: false,
+            error: "register_failed",
+            message: REGISTER_USER_MSG.registerFailed,
+            ...(hintNull ? { hint: REGISTER_USER_MSG.clinicIdNullableHint } : {}),
+          });
+        }
+        applyRow(data);
+        if (data?.id) console.log("[SUPABASE] ✅ patient inserted:", data.id);
       } else {
-        return res.status(500).json({ ok: false, error: error.message });
+        applyRow(data);
+        if (data?.id) console.log("[SUPABASE] ✅ patient inserted:", data.id);
       }
     }
 
-    if (data?.id) console.log("[SUPABASE] ✅ patient upserted:", data.id);
-    if (data) supabasePatientRow = data;
+    if (patientPersistRow) supabasePatientRow = patientPersistRow;
+    logRegisterTrace(route, "STEP_AFTER_DB_PERSIST", {
+      patientRowId: patientPersistRow?.id || supabasePatientRow?.id || null,
+    });
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -3176,7 +3782,7 @@ app.post("/api/register", async (req, res) => {
           return res.status(400).json({
             ok: false,
             error: "invalid_referral_code",
-            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+            message: REGISTER_USER_MSG.invalidReferralCode(refCodeRaw),
             supabase: lastInviterErr ? supabaseErrorPublic(lastInviterErr) : null,
           });
         }
@@ -3192,7 +3798,7 @@ app.post("/api/register", async (req, res) => {
           return res.status(400).json({
             ok: false,
             error: "invalid_referral_code",
-            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+            message: REGISTER_USER_MSG.invalidReferralCode(refCodeRaw),
           });
         }
 
@@ -3231,7 +3837,7 @@ app.post("/api/register", async (req, res) => {
             return res.status(400).json({
               ok: false,
               error: "invalid_referral_code",
-              message: "Self-referral is not allowed.",
+              message: REGISTER_USER_MSG.selfReferralNotAllowed,
             });
           }
         }
@@ -3276,7 +3882,7 @@ app.post("/api/register", async (req, res) => {
           return res.status(500).json({
             ok: false,
             error: "referral_create_failed",
-            message: "Could not create referral. Please try again.",
+            message: REGISTER_USER_MSG.referralCreateFailed,
             supabase: supabaseErrorPublic(lastCreateErr),
           });
         }
@@ -3341,671 +3947,160 @@ app.post("/api/register", async (req, res) => {
   try {
     // Review Mode Bypass: Skip OTP generation and saving for test@clinifly.net
     if (REVIEW_MODE && emailNormalized === "test@clinifly.net") {
-
-
-      
-      // Still return success response but without actually sending OTP
+      let reviewClinic = null;
+      if (validatedClinicCode && isSupabaseEnabled()) {
+        try {
+          reviewClinic = await getClinicByCode(validatedClinicCode);
+        } catch (_e) {
+          /* ignore */
+        }
+      }
       return res.status(201).json({
         ok: true,
-        clinicId: clinicData.id,
-        clinicCode: clinicData.clinic_code,
-        message: "Clinic registered successfully (Review Mode). Use OTP 123456 to verify.",
+        clinicId: reviewClinic?.id || supabaseClinicId || null,
+        clinicCode: reviewClinic?.clinic_code || validatedClinicCode || null,
+        hasClinic: Boolean(reviewClinic?.id || supabaseClinicId),
+        message: REGISTER_USER_MSG.reviewModeClinic,
         reviewMode: true,
-        requiresOTP: true
+        requires_verification: true,
+        requiresOTP: true,
+        email_sent: false,
       });
     }
-    
-    // Clean up expired OTPs
+
+    logRegisterTrace(route, "STEP_OTP_BLOCK_ENTER", {
+      email: maskEmailForLog(emailNormalized),
+    });
+    console.log("[REGISTER] register_otp_start", { route, email: maskEmailForLog(emailNormalized) });
     cleanupExpiredOTPs();
-    
-    // Generate OTP
-    const otpCode = generateOTP();
 
-    
-    // Save OTP (hashed) - this is fast, keep it sync
-    await saveOTP(emailNormalized, otpCode, 0);
+    logRegisterTrace(route, "STEP_1_GENERATE_CODE", {});
+    const otpCode = String(generateOTP()).trim();
+    console.log("[REGISTER] register_otp_code_generated", {
+      digits: otpCode.length,
+      ...(OTP_DEBUG_LOG ? { code: otpCode } : {}),
+    });
 
-    
-    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
-    // This prevents API timeout from blocking the response
-
-
-
-
-
-    
-
-    sendOTPEmail(emailNormalized, otpCode, patientLanguage)
-      .then(() => {
-
-      })
-      .catch((emailError) => {
-        console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
-        // Email failed but registration succeeded - user can request OTP again
+    if (!isOtpDeliveryConfigured()) {
+      logRegisterTrace(route, "STEP_OTP_EMAIL_NOT_CONFIGURED", {
+        email: maskEmailForLog(emailNormalized),
       });
-    
-    // Return success IMMEDIATELY - don't wait for email
+      console.error("[REGISTER] no OTP delivery channel (email or SMS) → 503", {
+        route: route,
+        email: maskEmailForLog(emailNormalized),
+        ...getTransactionalEmailDiagnostic(),
+        sms: { twilio: isSmsOtpConfigured() },
+      });
+      return res.status(503).json({
+        ok: false,
+        error: "otp_delivery_not_configured",
+        message: REGISTER_USER_MSG.otpEmailNotConfigured,
+        hint: `${REGISTER_USER_MSG.otpEmailNotConfiguredHint} Alternatif: Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER).`,
+      });
+    }
 
-    res.json({ 
-      ok: true, 
-      message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
-      patientId, 
-      email: emailNormalized,
-      language: patientLanguage,
-      requestId, 
-      status: "PENDING",
-      requiresOTP: true,
-    });
+    logRegisterTrace(route, "STEP_3_BEFORE_SEND_OTP", {});
+    console.log("[REGISTER] register_otp_before_deliver", { hasPhone: Boolean(phoneTrimmed) });
+
+    let delivery;
+    try {
+      delivery = await deliverOtpWithFallback({
+        email: emailNormalized,
+        phoneRaw: phoneNormalized || phoneTrimmed,
+        otpCode,
+        lang: patientLanguage,
+      });
+      logRegisterTrace(route, "STEP_4_AFTER_DELIVER", { channel: delivery?.channel || null });
+    } catch (err) {
+      console.error("[REGISTER] OTP_DELIVERY_FAILED", {
+        route: route,
+        message: err?.message || err,
+        code: err?.code,
+      });
+      return res.status(500).json({
+        ok: false,
+        error: "otp_send_failed",
+        message: REGISTER_USER_MSG.otpCouldNotBeSent,
+        details: !IS_PROD ? String(err?.message || err).slice(0, 200) : undefined,
+      });
+    }
+
+    if (otpMode === "hashedOTP") {
+      const otpHash = await bcrypt.hash(otpCode, 10);
+      logRegisterTrace(route, "STEP_2_STORE_OTP_HASH", {});
+      await storeOTPForEmail(emailNormalized, otpHash, null, {
+        type: "patient_registration",
+        phone: phone || "",
+        name: (req.body && (req.body.name || req.body.patientName)) || "",
+        language: (req.body && req.body.language) || "en",
+      });
+    } else {
+      logRegisterTrace(route, "STEP_2_STORE_OTP_FILE", {});
+      await saveOTP(emailNormalized, otpCode, 0);
+    }
+    console.log("[REGISTER] register_otp_stored", { email: maskEmailForLog(emailNormalized) });
+
+    return res.json(
+      buildRegisterOtpSuccessJson({
+        patientId,
+        emailNormalized,
+        patientLanguage,
+        requestId,
+        supabaseClinicId,
+        validatedClinicCode,
+        emailSent: delivery?.emailSent || false,
+        smsSent: delivery?.smsSent || false,
+        deliveryChannel: delivery?.channel,
+      }),
+    );
   } catch (otpError) {
-
-    // Still return success, but user will need to request OTP manually
-    res.json({ 
-      ok: true, 
-      message: "Kayıt başarılı. Lütfen OTP kodu talep edin.",
-      patientId, 
-      email: emailNormalized,
-      requestId, 
-      status: "PENDING",
-      requiresOTP: true,
+    if (res.headersSent) return;
+    console.error("[REGISTER] register_otp_unexpected", otpError?.stack || otpError?.message || otpError);
+    return res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: IS_PROD ? "Sunucu hatası. Lütfen tekrar deneyin." : String(otpError?.message || otpError),
     });
+  }
+  } catch (regErr) {
+    console.error("[REGISTER] unhandled:", regErr?.stack || regErr?.message || regErr);
+    if (!res.headersSent) {
+      res.status(500).json({
+        ok: false,
+        error: "internal_error",
+        message: IS_PROD ? "Sunucu hatası. Lütfen tekrar deneyin." : String(regErr?.message || regErr),
+      });
+    }
+  }
+}
+
+
+app.post("/api/register", async (req, res) => {
+  try {
+    await runPatientRegister(req, res, "/api/register", "saveOTP");
+  } catch (regErr) {
+    console.error("[REGISTER] unhandled (wrapper):", regErr?.stack || regErr?.message || regErr);
+    if (!res.headersSent) {
+      res.status(500).json({
+        ok: false,
+        error: "internal_error",
+        message: IS_PROD ? "Sunucu hatası. Lütfen tekrar deneyin." : String(regErr?.message || regErr),
+      });
+    }
   }
 });
-
-// ================== PATIENT LOGIN ==================
-// Removed duplicate endpoint - using the one at line 509
-
-// ================== PATIENT REGISTER (alias) ==================
-// Same as /api/register/patient — some clients use the swapped path
 app.post(["/api/patient/register", "/api/register/patient"], async (req, res) => {
-  const body = req.body || {};
-  const {
-    name = "",
-    patientName: bodyPatientName = "",
-    fullName = "",
-    phone = "",
-    email = "",
-    clinicCode = "",
-    language = "",
-  } = body;
-  const referralCode = String(body.referralCode || body.inviterReferralCode || "").trim();
-  /** Full display name: mobile often sends patientName; keep single field in DB (name/full_name), leave first/last empty */
-  const displayName = String(bodyPatientName || fullName || name || "").trim();
-
-  console.log(`[REGISTER /api/patient/register] Request received:`, { 
-    name: displayName ? "***" : "", 
-    phone: phone ? "***" : "", 
-    email: email ? "***" : "",
-    clinicCode: clinicCode || "(empty)",
-    hasClinicCode: !!clinicCode 
-  });
-  
-  // Email is required for registration
-  if (!email || !String(email).trim()) {
-    return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
-  }
-  
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const emailNormalized = String(email).trim().toLowerCase();
-  if (!emailRegex.test(emailNormalized)) {
-    return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
-  }
-
-  const patientLanguage = normalizePatientLanguage(language);
-
-  // Phone is OPTIONAL (email-only OTP). If present, validate and normalize.
-  const phoneTrimmed = String(phone || "").trim();
-  const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
-  if (phoneTrimmed && (!phoneNormalized || phoneNormalized.length < 10)) {
-    return res.status(400).json({
-      ok: false,
-      error: "invalid_phone",
-      message: "Geçersiz telefon numarası formatı.",
-    });
-  }
-
-  // Validate clinic code if provided
-  let validatedClinicCode = null;
-  let foundClinicId = null;
-  if (clinicCode && String(clinicCode).trim()) {
-    const code = String(clinicCode).trim().toUpperCase();
-    let foundClinic = null;
-    
-
-
-    // SUPABASE: Primary lookup (source of truth)
-    if (isSupabaseEnabled()) {
-      try {
-        foundClinic = await getClinicByCode(code);
-        if (foundClinic) {
-          foundClinicId = foundClinic.id;
-
-        }
-      } catch (e) {
-
-      }
-    }
-    
-    // First check CLINIC_FILE (single clinic object)
-    if (!foundClinic) {
-      const singleClinic = readJson(CLINIC_FILE, {});
-      if (singleClinic && singleClinic.clinicCode) {
-        const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-
-        if (singleClinicCode === code) {
-          foundClinic = singleClinic;
-
-        }
-      }
-    }
-    
-    // Then check CLINICS_FILE (multiple clinics object)
-    if (!foundClinic) {
-      const clinics = readJson(CLINICS_FILE, {});
-
-      
-      // Search for clinic by clinicCode or code field
-      for (const clinicId in clinics) {
-        const clinic = clinics[clinicId];
-        if (clinic) {
-          // Check both clinicCode and code fields
-          const clinicCodeToCheck = clinic.clinicCode || clinic.code;
-          if (clinicCodeToCheck) {
-            const clinicCodeUpper = String(clinicCodeToCheck).toUpperCase();
-
-            if (clinicCodeUpper === code) {
-              foundClinic = clinic;
-              foundClinicId = foundClinicId || clinicId;
-
-              break;
-            }
-          }
-        }
-      }
-    }
-    
-    if (foundClinic) {
-      validatedClinicCode = code;
-
-    } else {
-      // Clinic not found - return error
-
-      return res.status(404).json({ 
-        ok: false, 
-        error: "clinic_not_found",
-        message: `Klinik kodu "${code}" bulunamadı. Lütfen geçerli bir klinik kodu girin.`
-      });
-    }
-  } else {
-
-  }
-  
-
-
-  // EMAIL is the identity: if a patient already exists for this email, reuse its patientId.
-  let patientId = null;
-  if (isSupabaseEnabled()) {
-    try {
-      const { data: existing, error: e } = await supabase
-        .from("patients")
-        .select("id, patient_id, email")
-        .eq("email", emailNormalized)
-        .single();
-      if (!e && existing) {
-        patientId = existing.patient_id || existing.id;
-      } else if (e && String(e.code || "") !== "PGRST116") {
-        console.error("[REGISTER /api/patient/register] Supabase patient lookup by email failed", {
-          message: e.message,
-          code: e.code,
-          details: e.details,
-        });
-      }
-    } catch (err) {
-
-    }
-  }
-  if (!patientId) {
-    const patientsByFile = readJson(PAT_FILE, {});
-    for (const pid in patientsByFile) {
-      const em = String(patientsByFile[pid]?.email || "").trim().toLowerCase();
-      if (em && em === emailNormalized) {
-        patientId = pid;
-        break;
-      }
-    }
-  }
-  if (!patientId) patientId = rid("p");
-  const requestId = rid("req");
-  const token = makeToken();
-
-  // SUPABASE: Insert patient (PRIMARY - production source of truth)
-  let supabaseClinicId = null;
-  let supabasePatientRow = null;
-  if (isSupabaseEnabled() && validatedClinicCode) {
-    try {
-      const clinic = await getClinicByCode(validatedClinicCode);
-      if (clinic) {
-        supabaseClinicId = clinic.id;
-
-      } else {
-
-      }
-    } catch (err) {
-
-    }
-  }
-
-  if (isSupabaseEnabled() && !supabaseClinicId) {
-
-    return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
-  }
-
-  // === SUPABASE PATIENT UPSERT (ZORUNLU) ===
-  if (isSupabaseEnabled()) {
-    const payload = {
-      patient_id: patientId, // legacy app id (p_xxx)
-      email: emailNormalized,
-      name: displayName,
-      full_name: displayName,
-      first_name: "",
-      last_name: "",
-      clinic_id: supabaseClinicId,
-      status: "PENDING",
-      language: patientLanguage,
-      role: (req.body?.role || "PATIENT").toUpperCase(), // 🔥 NORMALIZE ROLE TO UPPERCASE
-      ...(phoneNormalized ? { phone: phoneNormalized } : {}),
-    };
-    const { data, error } = await supabase
-      .from("patients")
-      .upsert(
-        payload,
-        {
-          onConflict: "email",
-        }
-      )
-      .select()
-      .single();
-
-    if (error) {
-      console.error("[SUPABASE] PATIENT UPSERT FAILED", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
-      // If email is already taken, treat registration as idempotent and reuse existing patient.
-      const isUniqueEmail =
-        String(error.code || "") === "23505" ||
-        String(error.message || "").toLowerCase().includes("patients_email_unique") ||
-        String(error.message || "").toLowerCase().includes("duplicate key");
-      if (isUniqueEmail) {
-        try {
-          const { data: existing, error: e2 } = await supabase
-            .from("patients")
-            .select("id, patient_id, email, language")
-            .eq("email", emailNormalized)
-            .limit(1)
-            .maybeSingle();
-          if (!e2 && existing) {
-            patientId = existing.patient_id || existing.id;
-
-            // Best-effort: keep language in sync
-            if (patientLanguage && existing.language !== patientLanguage) {
-              await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
-            }
-            // Best-effort: keep supabase patient row for downstream (referrals)
-            try {
-              const { data: fullRow } = await supabase
-                .from("patients")
-                .select("id, patient_id, clinic_id, name, referral_code, email")
-                .eq("email", emailNormalized)
-                .limit(1)
-                .maybeSingle();
-              supabasePatientRow = fullRow || existing;
-            } catch {
-              supabasePatientRow = existing;
-            }
-          } else {
-            console.error("[REGISTER /api/patient/register] Unique email but failed to fetch existing patient", {
-              message: e2?.message,
-              code: e2?.code,
-              details: e2?.details,
-            });
-            return res.status(500).json({ ok: false, error: "register_failed" });
-          }
-        } catch (e3) {
-
-          return res.status(500).json({ ok: false, error: "register_failed" });
-        }
-      } else {
-        return res.status(500).json({ ok: false, error: error.message });
-      }
-    }
-
-    if (data?.id) console.log("[SUPABASE] ✅ patient upserted:", data.id);
-    if (data) supabasePatientRow = data;
-  }
-
-  // FILE-BASED: Fallback storage (for backward compatibility)
-  const patients = readJson(PAT_FILE, {});
-  const existingFile = patients[patientId] || null;
-  patients[patientId] = {
-    patientId,
-    name: displayName,
-    ...(phoneNormalized ? { phone: phoneNormalized } : {}),
-    email: emailNormalized,
-    language: patientLanguage,
-    status: "PENDING",
-    clinicCode: validatedClinicCode,
-    createdAt: existingFile?.createdAt || now(),
-    updatedAt: now(),
-  };
-  writeJson(PAT_FILE, patients);
-
-  // tokens
-  const tokens = readJson(TOK_FILE, {});
-  tokens[token] = { patientId, role: "PENDING", createdAt: now() };
-  writeJson(TOK_FILE, tokens);
-
-  // registrations (array/object safe)
-  const regs = readJson(REG_FILE, {});
-  const row = {
-    requestId,
-    patientId,
-    name: displayName,
-    phone: phoneNormalized, // Use normalized phone
-    email: emailNormalized,
-    status: "PENDING",
-    clinicCode: validatedClinicCode, // Keep parity with /api/register
-    createdAt: now(),
-    updatedAt: now(),
-  };
-  if (Array.isArray(regs)) {
-    regs.push(row);
-    writeJson(REG_FILE, regs);
-  } else {
-    regs[requestId] = row;
-    writeJson(REG_FILE, regs);
-  }
-
-  // Handle referral code if provided (Supabase-first; file fallback only when enabled)
-  if (referralCode && String(referralCode).trim()) {
-    try {
-      const refCodeRaw = String(referralCode).trim();
-      const refCode = refCodeRaw;
-
-      // ================== SUPABASE PATH (source of truth) ==================
-      if (isSupabaseEnabled() && supabaseClinicId) {
-        const variants = Array.from(
-          new Set([refCode, refCode.toUpperCase(), refCode.toLowerCase()].filter(Boolean))
-        );
-
-        let inviter = null;
-        let lastInviterErr = null;
-        for (const v of variants) {
-          // 1) referral_code match (if column exists)
-          try {
-            const q1 = await supabase
-              .from("patients")
-              .select("id, patient_id, clinic_id, name, referral_code")
-              .eq("referral_code", v)
-              .limit(1)
-              .maybeSingle();
-            if (!q1.error && q1.data) {
-              inviter = q1.data;
-              break;
-            }
-            if (q1.error && !isMissingColumnError(q1.error, "referral_code") && String(q1.error.code || "") !== "PGRST116") {
-              lastInviterErr = q1.error;
-            }
-          } catch {}
-
-          // 2) patient_id match (if column exists)
-          try {
-            const q2 = await supabase
-              .from("patients")
-              .select("id, patient_id, clinic_id, name, referral_code")
-              .eq("patient_id", v)
-              .limit(1)
-              .maybeSingle();
-            if (!q2.error && q2.data) {
-              inviter = q2.data;
-              break;
-            }
-            if (q2.error && !isMissingColumnError(q2.error, "patient_id") && String(q2.error.code || "") !== "PGRST116") {
-              lastInviterErr = q2.error;
-            }
-          } catch {}
-
-          // 3) id match (covers schemas where patient id is stored in `id`)
-          try {
-            const q3 = await supabase
-              .from("patients")
-              .select("id, patient_id, clinic_id, name, referral_code")
-              .eq("id", v)
-              .limit(1)
-              .maybeSingle();
-            if (!q3.error && q3.data) {
-              inviter = q3.data;
-              break;
-            }
-            if (q3.error && String(q3.error.code || "") !== "PGRST116") {
-              lastInviterErr = q3.error;
-            }
-          } catch {}
-        }
-
-        if (!inviter) {
-
-          return res.status(400).json({
-            ok: false,
-            error: "invalid_referral_code",
-            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
-            supabase: lastInviterErr ? supabaseErrorPublic(lastInviterErr) : null,
-          });
-        }
-
-        // Prevent cross-clinic referrals (must match clinic being registered)
-        const inviterClinicId = inviter.clinic_id || null;
-        if (inviterClinicId && String(inviterClinicId) !== String(supabaseClinicId)) {
-          return res.status(400).json({
-            ok: false,
-            error: "invalid_referral_code",
-            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
-          });
-        }
-
-        const uuidLike = (s) =>
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
-
-        let inviterCandidates = Array.from(
-          new Set([inviter.id, inviter.patient_id].filter(Boolean))
-        );
-
-        let invitedCandidates = Array.from(
-          new Set([supabasePatientRow?.id, supabasePatientRow?.patient_id, patientId].filter(Boolean))
-        );
-
-        // Some production schemas store referrals.*_patient_id as UUID.
-        // Ensure we try UUID ids first by resolving from patient_id (p_xxx) when needed.
-        const resolvedInviterUuids = (await Promise.all(inviterCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
-        inviterCandidates = Array.from(new Set([...inviterCandidates, ...resolvedInviterUuids]));
-        inviterCandidates = [
-          ...inviterCandidates.filter((x) => uuidLike(x)),
-          ...inviterCandidates.filter((x) => !uuidLike(x)),
-        ];
-
-        const resolvedInvitedUuids = (await Promise.all(invitedCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
-        invitedCandidates = Array.from(new Set([...invitedCandidates, ...resolvedInvitedUuids]));
-        invitedCandidates = [
-          ...invitedCandidates.filter((x) => uuidLike(x)),
-          ...invitedCandidates.filter((x) => !uuidLike(x)),
-        ];
-
-        // Self-referral guard (compare any representation)
-        const inviterSet = new Set(inviterCandidates.map((x) => String(x)));
-        const invitedSet = new Set(invitedCandidates.map((x) => String(x)));
-        for (const x of inviterSet) {
-          if (invitedSet.has(x)) {
-            return res.status(400).json({
-              ok: false,
-              error: "invalid_referral_code",
-              message: "Self-referral is not allowed.",
-            });
-          }
-        }
-
-        let created = null;
-        let lastCreateErr = null;
-        for (const invId of inviterCandidates) {
-          for (const invitedId of invitedCandidates) {
-            try {
-              const referralData = {
-                clinic_id: supabaseClinicId,
-                inviter_patient_id: invId,
-                invited_patient_id: invitedId,
-                referral_code: generateReferralCodeV2(),
-                status: "PENDING",
-                inviter_discount_percent: null,
-                invited_discount_percent: null,
-                discount_percent: null,
-                inviter_patient_name: inviter?.name || null,
-                invited_patient_name: displayName || null,
-              };
-              created = await createReferralInDBFlexible(referralData);
-              break;
-            } catch (e) {
-              lastCreateErr = e;
-              if (String(e?.code || "") === "23505") {
-                created = { id: null, duplicate: true };
-                break;
-              }
-              if (isInvalidUuidError(e)) {
-                continue;
-              }
-            }
-          }
-          if (created) break;
-        }
-
-        if (!created) {
-          console.error("[PATIENT/REGISTER] ❌ Failed to create referral in Supabase", supabaseErrorPublic(lastCreateErr));
-          return res.status(500).json({
-            ok: false,
-            error: "referral_create_failed",
-            message: "Could not create referral. Please try again.",
-            supabase: supabaseErrorPublic(lastCreateErr),
-          });
-        }
-      } else {
-        // ================== FILE FALLBACK ==================
-        const allPatients = readJson(PAT_FILE, {});
-        let inviterPatientId = null;
-        let inviterPatientName = null;
-
-        for (const pid in allPatients) {
-          const p = allPatients[pid];
-          const code = String(p?.referralCode || p?.referral_code || "").trim();
-          if (code && code === refCode) {
-            inviterPatientId = pid;
-            inviterPatientName = p?.name || "Unknown";
-            break;
-          }
-          if (pid === refCode) {
-            inviterPatientId = pid;
-            inviterPatientName = p?.name || "Unknown";
-            break;
-          }
-        }
-
-        if (inviterPatientId && inviterPatientId !== patientId && canUseFileFallback()) {
-          const referrals = readJson(REF_FILE, []);
-          const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-          referralList.push({
-            id: rid("ref"),
-            inviterPatientId,
-            inviterPatientName,
-            invitedPatientId: patientId,
-            invitedPatientName: displayName,
-            status: "PENDING",
-            createdAt: now(),
-            inviterDiscountPercent: null,
-            invitedDiscountPercent: null,
-            discountPercent: null,
-            checkInAt: null,
-            approvedAt: null,
-            clinicCode: validatedClinicCode,
-          });
-          writeJson(REF_FILE, referralList);
-        }
-      }
-    } catch (err) {
-
-    }
-  }
-
-  // Send OTP for email verification instead of returning token immediately
   try {
-    // Clean up expired OTPs
-    cleanupExpiredOTPs();
-    
-    // Generate OTP with standardization
-    const otpCode = String(generateOTP()).trim();
-    const otpHash = await bcrypt.hash(otpCode, 10);
-
-
-    
-    // Store OTP in Supabase (not file-based)
-    await storeOTPForEmail(emailNormalized, otpHash, null, {
-      type: 'patient_registration',
-      phone: phone || '',
-      name: name || '',
-      language: language || 'en'
-    });
-
-    
-    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
-    // This prevents API timeout from blocking the response
-
-
-
-
-
-    
-
-    sendOTPEmail(emailNormalized, otpCode, patientLanguage)
-      .then(() => {
-
-      })
-      .catch((emailError) => {
-        console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
-        // Email failed but registration succeeded - user can request OTP again
+    await runPatientRegister(req, res, "/api/register/patient", "hashedOTP");
+  } catch (regErr) {
+    console.error("[REGISTER] unhandled (alias):", regErr?.stack || regErr?.message || regErr);
+    if (!res.headersSent) {
+      res.status(500).json({
+        ok: false,
+        error: "internal_error",
+        message: IS_PROD ? "Sunucu hatası. Lütfen tekrar deneyin." : String(regErr?.message || regErr),
       });
-    
-    // Return success IMMEDIATELY - don't wait for email
-
-    res.json({ 
-      ok: true, 
-      message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
-      patientId, 
-      email: emailNormalized,
-      language: patientLanguage,
-      requestId, 
-      status: "PENDING",
-      requiresOTP: true,
-    });
-  } catch (otpError) {
-
-    // Still return success, but user will need to request OTP manually
-    res.json({ 
-      ok: true, 
-      message: "Kayıt başarılı. Lütfen OTP kodu talep edin.",
-      patientId, 
-      email: emailNormalized,
-      requestId, 
-      status: "PENDING",
-      requiresOTP: true,
-    });
+    }
   }
 });
 

@@ -4586,29 +4586,15 @@ app.get("/api/admin/patients/:patientId", adminAuth, async (req, res) => {
 /* ================= GET ACTIVE PATIENTS ================= */
 app.get("/api/admin/active-patients", adminAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
+    const clinicId = req.admin?.clinicId;
+    if (!clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_required", message: "Token must include clinicId" });
     }
 
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (error) {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
-    }
-
-    // Check if admin
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "admin_required" });
-    }
-
-    // Get active patients
     const { data: patients, error } = await supabase
       .from("patients")
       .select("*")
+      .eq("clinic_id", clinicId)
       .eq("role", "PATIENT")
       .eq("status", "ACTIVE")
       .order("created_at", { ascending: false });
