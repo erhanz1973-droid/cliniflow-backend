@@ -9,8 +9,11 @@ const {
   sendDoctorUuidResolveError,
 } = require(appPath('lib', 'resolveDoctorUUID'));
 
+console.log('🔥 DOCTOR DASHBOARD ROUTE LOADED');
+
 // GET /api/doctor/dashboard
 router.get('/dashboard', authenticateToken, async (req, res) => {
+  console.log('🔥 DOCTOR DASHBOARD ENDPOINT HIT');
   try {
     const tokenDoctorRaw = req.user?.id || req.user?.doctorId;
     const clinicId = req.user?.clinicId;
@@ -20,18 +23,53 @@ router.get('/dashboard', authenticateToken, async (req, res) => {
 
     const doctorDbId = await resolveDoctorUUID(tokenDoctorRaw);
 
-    // Today appointments
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    const { data: todayAppointments, error: apptError } = await supabase
-      .from('appointments')
-      .select('*')
-      .eq('doctor_id', doctorDbId)
-      .gte('date', today.toISOString())
-      .lt('date', tomorrow.toISOString());
-    if (apptError) throw apptError;
+    // Today appointments — `appointments` uses `start_time` (timestamptz), not `date` equality
+    const nowDate = new Date();
+    const todayLocal = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
+    const dayStart = new Date(`${todayLocal}T00:00:00`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayStart.getDate() + 1);
+    const dayStartIso = dayStart.toISOString();
+    const dayEndIso = dayEnd.toISOString();
+
+    let todayAppointments = [];
+    const apptAttempts = [
+      () =>
+        supabase
+          .from('appointments')
+          .select('*')
+          .eq('doctor_id', doctorDbId)
+          .gte('start_time', dayStartIso)
+          .lt('start_time', dayEndIso),
+      () =>
+        supabase
+          .from('appointments')
+          .select('*')
+          .eq('doctor_id', doctorDbId)
+          .gte('startTime', dayStartIso)
+          .lt('startTime', dayEndIso),
+    ];
+    let apptError = null;
+    let apptFound = false;
+    for (const run of apptAttempts) {
+      const { data, error } = await run();
+      if (!error) {
+        todayAppointments = data || [];
+        apptFound = true;
+        break;
+      }
+      apptError = error;
+      const code = String(error?.code || '');
+      const msg = String(error?.message || '').toLowerCase();
+      const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('column');
+      if (!schemaIssue) break;
+    }
+    if (!apptFound && apptError) {
+      const code = String(apptError?.code || '');
+      const msg = String(apptError?.message || '').toLowerCase();
+      const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('column');
+      if (!schemaIssue) throw apptError;
+    }
 
     // Tasks
     const { data: tasks, error: tasksError } = await supabase
