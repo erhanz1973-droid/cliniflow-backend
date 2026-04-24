@@ -359,7 +359,11 @@ function renderTable(list){
     const hasMail=!!c.email;
     const contactPerson=c.contactName||c.contact_name||"";
     const notesPreview=c.notes?(c.notes.length>50?c.notes.substring(0,50)+"…":c.notes):"";
-    const cid=esc(c.clinicId||c.id||"");
+    const rawId=String(c.clinicId||c.id||"");
+    const cid=esc(rawId);
+    const expiryText = c.planExpiry
+      ? `Bitiş: ${new Date(c.planExpiry).toLocaleDateString()}`
+      : "";
 
     return `<tr>
       <td>
@@ -380,7 +384,7 @@ function renderTable(list){
       <td>${c.city?`<span>${esc(c.city)}</span>${c.country?`<span class="muted"> ${esc(c.country)}</span>`:""}` : `<span class="no-contact">—</span>`}</td>
       <td>
         <div>${planBadge(c.plan)}</div>
-        ${c.planExpiry?`<div class="muted" style="font-size:10px;margin-top:2px;">Bitiş: ${esc(fmtDate(c.planExpiry))}</div>`:""}
+        ${expiryText?`<div class="muted" style="font-size:10px;margin-top:2px;">${esc(expiryText)}</div>`:""}
       </td>
       <td>${statusBadge(c.status)}</td>
       <td>${crmBadge(c.crmStatus)}</td>
@@ -395,6 +399,7 @@ function renderTable(list){
           ${hasMail?`<a href="mailto:${esc(c.email)}" class="qa qa-mail">✉️ Mail</a>`:""}
           <button class="qa qa-note" onclick="openCrm('${cid}')">📝 CRM</button>
           <button class="qa qa-detail" onclick="showDetails('${cid}')">📊 Detay</button>
+          <button type="button" class="qa" style="background:rgba(245,158,11,.12);color:#fde68a;border:1px solid rgba(245,158,11,.3)" onclick="openPlanModal('${rawId}')">💰 Plan</button>
           ${(c.status||"").toUpperCase()==="SUSPENDED"
             ?`<button class="qa" style="background:rgba(22,163,74,.15);color:#86efac;border:1px solid rgba(22,163,74,.3)" onclick="activateClinic('${cid}')">✅</button>`
             :`<button class="qa" style="background:rgba(220,38,38,.12);color:#fca5a5;border:1px solid rgba(220,38,38,.25)" onclick="suspendClinic('${cid}')">⏸</button>`}
@@ -651,9 +656,14 @@ async function assignPlan() {
       }
     );
     const json = await res.json();
-    if (!res.ok || !json.ok) throw new Error(json.message || json.error || "Plan güncellenemedi");
+    if (!res.ok || !json.ok) {
+      const e = json.error;
+      const msg = e && typeof e === "object" && e.message ? e.message : (typeof e === "string" ? e : json.message) || "Plan güncellenemedi";
+      throw new Error(msg);
+    }
     closeModal("planModal");
-    const ex = json.planExpiry ? new Date(json.planExpiry).toLocaleString("tr-TR") : "";
+    const row = Array.isArray(json.updated) && json.updated[0];
+    const ex = row && row.plan_expiry ? new Date(row.plan_expiry).toLocaleString("tr-TR") : "";
     setAlert("Plan güncellendi" + (ex ? " — bitiş: " + ex : ""), "success");
     currentClinicId = "";
     await loadClinics();
