@@ -218,9 +218,37 @@
   </div>
 </div>
 
+<!-- Plan assignment -->
+<div id="planModal" class="modal-overlay" onclick="closeModal('planModal',event)">
+  <div class="modal-content" onclick="event.stopPropagation()" style="max-width:480px">
+    <div class="modal-header">
+      <h3 class="modal-title">Abonelik planı</h3>
+      <button class="modal-close" onclick="closeModal('planModal')">×</button>
+    </div>
+    <div class="form-group">
+      <label>Plan</label>
+      <select id="planSelect">
+        <option value="FREE">FREE</option>
+        <option value="BASIC">BASIC</option>
+        <option value="PRO">PRO</option>
+        <option value="PREMIUM">PREMIUM</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Süre (gün)</label>
+      <input id="planDays" type="number" min="0" placeholder="30" value="30" />
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
+      <button class="btn btn-ghost" type="button" onclick="closeModal('planModal')">İptal</button>
+      <button class="btn" type="button" onclick="assignPlan()">Kaydet</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
 let allClinics = [];
+let currentClinicId = "";
 
 /* ─── Auth ─────────────────────────── */
 function token() { try { return localStorage.getItem("super_admin_token")||""; } catch { return ""; } }
@@ -350,7 +378,10 @@ function renderTable(list){
       </td>
       <td>${hasMail?`<a href="mailto:${esc(c.email)}" class="contact-chip">✉️ ${esc(c.email)}</a>`:`<span class="no-contact">—</span>`}</td>
       <td>${c.city?`<span>${esc(c.city)}</span>${c.country?`<span class="muted"> ${esc(c.country)}</span>`:""}` : `<span class="no-contact">—</span>`}</td>
-      <td>${planBadge(c.plan)}</td>
+      <td>
+        <div>${planBadge(c.plan)}</div>
+        ${c.planExpiry?`<div class="muted" style="font-size:10px;margin-top:2px;">Bitiş: ${esc(fmtDate(c.planExpiry))}</div>`:""}
+      </td>
       <td>${statusBadge(c.status)}</td>
       <td>${crmBadge(c.crmStatus)}</td>
       <td style="text-align:center;font-weight:600;">${(c.stats?.patientCount)||0}</td>
@@ -584,6 +615,50 @@ async function showDetails(clinicId){
     document.getElementById("detailModalBody").innerHTML=html;
   }catch(e){
     document.getElementById("detailModalBody").innerHTML=`<div class="empty-state">⚠️ ${esc(e.message)}</div>`;
+  }
+}
+
+function openPlanModal(clinicId){
+  currentClinicId = clinicId;
+  const c = allClinics.find((x) => (x.clinicId || x.id) === clinicId);
+  const p = String(c?.plan || "FREE").toUpperCase();
+  const sel = document.getElementById("planSelect");
+  if (sel) {
+    const allowed = ["FREE", "BASIC", "PRO", "PREMIUM"];
+    sel.value = allowed.includes(p) ? p : "FREE";
+  }
+  const pd = document.getElementById("planDays");
+  if (pd) pd.value = "30";
+  document.getElementById("planModal")?.classList.add("active");
+}
+
+async function assignPlan() {
+  if (!currentClinicId) return;
+  const plan = document.getElementById("planSelect").value;
+  const daysRaw = document.getElementById("planDays").value;
+  const days = daysRaw === "" ? 0 : Number(daysRaw);
+  if (!Number.isFinite(days) || days < 0) {
+    setAlert("Geçerli gün sayısı girin", "error");
+    return;
+  }
+  try {
+    const res = await fetch(
+      `${API}/api/super-admin/clinics/${encodeURIComponent(currentClinicId)}/assign-plan`,
+      {
+        method: "POST",
+        headers: authH({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ plan, days }),
+      }
+    );
+    const json = await res.json();
+    if (!res.ok || !json.ok) throw new Error(json.message || json.error || "Plan güncellenemedi");
+    closeModal("planModal");
+    const ex = json.planExpiry ? new Date(json.planExpiry).toLocaleString("tr-TR") : "";
+    setAlert("Plan güncellendi" + (ex ? " — bitiş: " + ex : ""), "success");
+    currentClinicId = "";
+    await loadClinics();
+  } catch (e) {
+    setAlert("Hata: " + (e && e.message ? e.message : e), "error");
   }
 }
 
