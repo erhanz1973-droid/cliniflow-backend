@@ -5,8 +5,8 @@
   "description": "DEPRECATED sub-package. Production runs root/index.cjs. Do not use this as an entry point.",
   "main": "../index.cjs",
   "scripts": {
-    "start": "node ../index.cjs",
-    "dev": "node ../index.cjs"
+    "start": "node run.cjs",
+    "dev": "node run.cjs"
   },
   "engines": {
     "node": ">=18"
