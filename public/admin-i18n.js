@@ -28,6 +28,19 @@
         success: "Başarılı",
         warning: "Uyarı"
       },
+
+      menu: {
+        dashboard: "Dashboard",
+        patients: "Hastalar",
+        treatment: "Tedaviler",
+        schedule: "Takvim",
+        doctors: "Doktorlar",
+        chat: "Mesajlar",
+        leads: "Potansiyel / Atanmamış",
+        files: "Dosyalar",
+        referrals: "Referanslar",
+        settings: "Ayarlar"
+      },
       
       // Suspended Clinic Messages
       clinicSuspended: {
@@ -619,6 +632,19 @@
         success: "Success",
         warning: "Warning"
       },
+
+      menu: {
+        dashboard: "Dashboard",
+        patients: "Patients",
+        treatment: "Treatments",
+        schedule: "Calendar",
+        doctors: "Doctors",
+        chat: "Messages",
+        leads: "Leads / Unassigned",
+        files: "Files",
+        referrals: "Referrals",
+        settings: "Settings"
+      },
       
       // Suspended Clinic Messages
       clinicSuspended: {
@@ -1199,6 +1225,18 @@
         back: "Назад", next: "Далее", previous: "Предыдущий", submit: "Отправить",
         yes: "Да", no: "Нет", ok: "ОК", error: "Ошибка", success: "Успешно", warning: "Предупреждение"
       },
+      menu: {
+        dashboard: "Панель",
+        patients: "Пациенты",
+        treatment: "Лечение",
+        schedule: "Календарь",
+        doctors: "Врачи",
+        chat: "Сообщения",
+        leads: "Лиды / Без назначения",
+        files: "Файлы",
+        referrals: "Рефералы",
+        settings: "Настройки"
+      },
       dashboard: {
         title: "Clinifly Admin – Панель управления",
         nav: { dashboard: "Панель", patients: "Пациенты", travel: "Путешествие", treatment: "Лечение", schedule: "Календарь", doctors: "Врачи", chat: "Сообщения", files: "Файлы", referrals: "Рефералы", health: "Здоровье", settings: "Настройки" },
@@ -1474,6 +1512,18 @@
         edit: "რედაქტირება", search: "ძებნა", filter: "ფილტრი", close: "დახურვა",
         back: "უკან", next: "შემდეგ", previous: "წინა", submit: "გაგზავნა",
         yes: "დიახ", no: "არა", ok: "OK", error: "შეცდომა", success: "წარმატება", warning: "გაფრთხილება"
+      },
+      menu: {
+        dashboard: "პანელი",
+        patients: "პაციენტები",
+        treatment: "მკურნალება",
+        schedule: "კალენდარი",
+        doctors: "ექიმები",
+        chat: "შეტყობინებები",
+        leads: "ლიდები / მიუთითებელი",
+        files: "ფაილები",
+        referrals: "მოწვევები",
+        settings: "პარამეტრები"
       },
       dashboard: {
         title: "Clinifly Admin – მართვის პანელი",
@@ -1893,6 +1943,12 @@
           const key = el.getAttribute('data-i18n-title');
           el.title = this.t(key);
         });
+        if (this.currentLang === 'ru' && document.body) {
+          const bodyText = document.body.innerText || '';
+          if (bodyText.match(/[A-Za-z]/)) {
+            console.warn('⚠️ Mixed language detected');
+          }
+        }
       } finally {
         isUpdatingI18n = false;
       }
