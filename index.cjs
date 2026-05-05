@@ -6717,6 +6717,49 @@ app.get("/api/patient/clinics", requireToken, async (req, res) => {
   }
 });
 
+// GET /api/discovery/countries — unique ISO country codes from listed clinics (public)
+app.get("/api/discovery/countries", async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, countries: [] });
+    }
+
+    const { data: rows, error } = await supabase
+      .from("clinics")
+      .select("country")
+      .eq("is_listed", true)
+      .not("country", "is", null)
+      .limit(3000);
+
+    if (error && /column|schema|is_listed/i.test(String(error.message || ""))) {
+      return res.status(503).json({
+        ok: false,
+        error: "discovery_schema_pending",
+        message: "Discovery requires clinics.is_listed; apply the latest database migration.",
+      });
+    }
+    if (error) throw error;
+
+    const codes = new Set();
+    for (const r of rows || []) {
+      const c = String(r.country ?? "").trim().toUpperCase();
+      if (/^[A-Z]{2}$/.test(c)) codes.add(c);
+    }
+    const countries = Array.from(codes).sort();
+
+    console.log("[GET /api/discovery/countries]", {
+      rowCount: (rows || []).length,
+      uniqueCountries: countries.length,
+      countries,
+    });
+
+    return res.json({ ok: true, countries });
+  } catch (e) {
+    console.error("[GET /api/discovery/countries]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // GET /api/discovery/clinics — public clinic directory (is_listed only; optional city filter within country)
 app.get("/api/discovery/clinics", async (req, res) => {
   try {
@@ -6724,8 +6767,8 @@ app.get("/api/discovery/clinics", async (req, res) => {
       return res.json({ ok: true, clinics: [] });
     }
 
-    const countryQ = String(req.query.country || "").trim().toUpperCase();
-    if (!/^[A-Z]{2}$/.test(countryQ)) {
+    const country = String(req.query.country || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(country)) {
       return res.status(400).json({
         ok: false,
         error: "country_required",
@@ -6733,17 +6776,21 @@ app.get("/api/discovery/clinics", async (req, res) => {
       });
     }
 
-    const cityQ = String(req.query.city || "").trim();
+    const city = String(req.query.city ?? "").trim();
+    const applyCityFilter = Boolean(city && city.length >= 2);
 
-    let q = supabase
+    let query = supabase
       .from("clinics")
       .select("id, name, city, country, status, is_listed")
-      .eq("country", countryQ)
       .eq("is_listed", true)
       .order("name", { ascending: true })
       .limit(500);
 
-    let { data: raw, error } = await q;
+    if (country) {
+      query = query.eq("country", country);
+    }
+
+    let { data: raw, error } = await query;
 
     if (error && /column|schema|is_listed/i.test(String(error.message || ""))) {
       return res.status(503).json({
@@ -6759,11 +6806,23 @@ app.get("/api/discovery/clinics", async (req, res) => {
       return !["suspended", "reject", "rejected", "inactive", "closed"].includes(s);
     });
 
-    if (cityQ.length >= 2) {
-      rows = rows.filter((c) => cityMatchesQuery(cityQ, c.city));
+    const afterStatus = rows.length;
+    if (applyCityFilter) {
+      rows = rows.filter((c) => cityMatchesQuery(city, c.city));
     }
-
+    const afterCity = rows.length;
     rows = rows.slice(0, 200);
+
+    console.log("[GET /api/discovery/clinics]", {
+      country,
+      cityParam: city,
+      cityFilterApplied: applyCityFilter,
+      supabaseRowCount: (raw || []).length,
+      afterStatusFilter: afterStatus,
+      afterCityFilter: afterCity,
+      returned: rows.length,
+      sampleIds: rows.slice(0, 8).map((c) => c.id),
+    });
 
     const ids = rows.map((c) => c.id);
     const ratingMap = {};
