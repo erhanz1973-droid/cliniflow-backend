@@ -1232,6 +1232,75 @@ app.use((err, req, res, next) => {
   }
   next(err);
 });
+
+/**
+ * :patientId accepts patients.id UUID, `p_<uuid>`, legacy patients.patient_id (Supabase resolve).
+ * Must register before any route that uses :patientId (e.g. /api/patient/:patientId/messages/read).
+ */
+const UUID_RE_PARAM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+app.param("patientId", (req, res, next, value) => {
+  let raw = String(value ?? "").normalize("NFKC").trim();
+  raw = raw.replace(/[\u2010-\u2015\u2212]/g, "-");
+  if (!raw) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid patient id",
+      code: "invalid_patient_id",
+      message: "patientId is required.",
+    });
+  }
+  if (raw.toLowerCase() === "me") {
+    req.params.patientId = "me";
+    return next();
+  }
+  if (raw.toLowerCase() === "treatment-requests") {
+    req.params.patientId = "me";
+    return next();
+  }
+  let id = raw;
+  const prefixedUuid = /^p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(raw);
+  if (prefixedUuid) id = prefixedUuid[1];
+  if (UUID_RE_PARAM.test(id)) {
+    req.params.patientId = id;
+    return next();
+  }
+  if (!isSupabaseEnabled()) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid patient id",
+      code: "invalid_patient_id",
+      message:
+        "patientId must be a UUID or p_<uuid>. Enable Supabase to resolve legacy patients.patient_id codes.",
+    });
+  }
+  resolveMessagesPatientDbId(raw)
+    .then((resolved) => {
+      if (resolved) {
+        req.params.patientId = resolved;
+        return next();
+      }
+      console.warn("[param patientId] unknown segment", {
+        len: raw.length,
+        prefix: String(raw).slice(0, 24),
+      });
+      return res.status(400).json({
+        ok: false,
+        error: "Invalid patient id",
+        code: "invalid_patient_id",
+        message:
+          "Unknown patient id. Use patients.id (UUID), p_<uuid>, or a valid patients.patient_id.",
+      });
+    })
+    .catch((err) => {
+      console.warn("[param patientId] resolve failed:", err?.message || err);
+      return res.status(400).json({
+        ok: false,
+        error: "Invalid patient id",
+        code: "invalid_patient_id",
+      });
+    });
+});
+
 app.use((req, res, next) => {
   // Structured request logger — always active for /api/ paths
   if (String(req.path || "").startsWith("/api/")) {
@@ -13042,6 +13111,9 @@ app.get("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asyn
     patientLookupIds: [],
     encounterIds: [],
     planIds: [],
+    planSourceEncCount: 0,
+    planSourcePatCount: 0,
+    planMergedCount: 0,
     treatmentItemsCount: 0,
     treatmentItemsTooth44: 0,
     finalTooth44Procedures: 0,
@@ -13275,29 +13347,55 @@ app.get("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asyn
         } catch (error) {
           console.error("[TREATMENTS GET] encounter_diagnoses merge failed", error);
         }
+      }
 
-        try {
-          // Run both encounter-level and patient-level plan queries in parallel
+      try {
+          // Encounter-level + patient-level plans (must merge both — patient-scoped rows often have encounter_id null)
+          const skipCodes = ["42P01", "42703", "PGRST204", "PGRST205"];
+          const encPlansPromise =
+            encounterIds.length > 0
+              ? supabase
+                  .from("treatment_plans")
+                  .select("id, encounter_id, patient_id, created_at")
+                  .in("encounter_id", encounterIds)
+              : Promise.resolve({ data: [], error: null });
+
           const [encPlansResult, patPlansResult] = await Promise.all([
-            supabase.from("treatment_plans").select("id, encounter_id, created_at").in("encounter_id", encounterIds),
-            supabase.from("treatment_plans").select("id, encounter_id, patient_id, created_at")
-              .in("patient_id", patientLookupIds).order("created_at", { ascending: false }),
+            encPlansPromise,
+            supabase
+              .from("treatment_plans")
+              .select("id, encounter_id, patient_id, created_at")
+              .in("patient_id", patientLookupIds)
+              .order("created_at", { ascending: false }),
           ]);
 
-          let plans = [];
-          const skipCodes = ["42P01", "42703", "PGRST204", "PGRST205"];
-          if (!encPlansResult.error && Array.isArray(encPlansResult.data) && encPlansResult.data.length > 0) {
-            plans = encPlansResult.data;
-          } else if (!patPlansResult.error && Array.isArray(patPlansResult.data) && patPlansResult.data.length > 0) {
-            plans = patPlansResult.data;
-          } else {
-            if (encPlansResult.error && !skipCodes.includes(String(encPlansResult.error.code || ""))) {
-              console.error("[TREATMENTS GET] treatment_plans (encounter) fetch failed", encPlansResult.error);
-            }
-            if (patPlansResult.error && !skipCodes.includes(String(patPlansResult.error.code || ""))) {
-              console.error("[TREATMENTS GET] treatment_plans (patient) fetch failed", patPlansResult.error);
-            }
+          if (encPlansResult.error && encounterIds.length > 0 && !skipCodes.includes(String(encPlansResult.error.code || ""))) {
+            console.error("[TREATMENTS GET] treatment_plans (encounter) fetch failed", encPlansResult.error);
           }
+          if (patPlansResult.error && !skipCodes.includes(String(patPlansResult.error.code || ""))) {
+            console.error("[TREATMENTS GET] treatment_plans (patient) fetch failed", patPlansResult.error);
+          }
+
+          const plansById = new Map();
+          const ingestPlanRow = (plan) => {
+            const planId = String(plan?.id || "").trim();
+            if (!planId) return;
+            const prev = plansById.get(planId);
+            const enc = String(plan?.encounter_id || "").trim();
+            if (!prev) {
+              plansById.set(planId, plan);
+              return;
+            }
+            const prevEnc = String(prev?.encounter_id || "").trim();
+            if (!prevEnc && enc) plansById.set(planId, plan);
+          };
+          (encPlansResult.data || []).forEach(ingestPlanRow);
+          (patPlansResult.data || []).forEach(ingestPlanRow);
+
+          const plans = [...plansById.values()];
+          debugTrace.planSourceEncCount = Array.isArray(encPlansResult.data) ? encPlansResult.data.length : 0;
+          debugTrace.planSourcePatCount = Array.isArray(patPlansResult.data) ? patPlansResult.data.length : 0;
+          debugTrace.planMergedCount = plans.length;
 
           let plansResult = { data: plans, error: null };
 
@@ -13309,9 +13407,9 @@ app.get("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asyn
             for (const plan of plans) {
               const planId = String(plan?.id || "").trim();
               const encounterId = String(plan?.encounter_id || "").trim();
-              if (!planId || !encounterId) continue;
+              if (!planId) continue;
               planIds.push(planId);
-              planIdToEncounter.set(planId, encounterId);
+              planIdToEncounter.set(planId, encounterId || null);
             }
             debugTrace.planIds = [...planIds];
 
@@ -13445,7 +13543,6 @@ app.get("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asyn
         } catch (error) {
           console.error("[TREATMENTS GET] treatment_plan_items merge failed", error);
         }
-      }
     } catch (error) {
       console.error("[TREATMENTS GET] diagnoses query failed", error);
     }
@@ -26223,11 +26320,6 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
         if (pLegacy) patientRowByLookupId.set(pLegacy, prow);
       }
 
-      const isMirroredEncounterTreatmentProcedure = (proc) => {
-        const sid = String(proc?.id || proc?.procedureId || "").trim();
-        return sid.startsWith("encounter-treatment-");
-      };
-
       // encounter_treatments (doktor uygulaması) — dashboard'ta JSON/stale mirror'dan bağımsız doğru zaman çizelgesi
       try {
         const etRows = [];
@@ -26408,7 +26500,6 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
           const toothId = tooth?.toothId;
           const procs = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
           procs.forEach((proc) => {
-            if (isMirroredEncounterTreatmentProcedure(proc)) return;
             // scheduledAt preferred, else createdAt (both are ms)
             const timelineAt = toIso(proc?.scheduledAt) || toIso(proc?.createdAt);
             if (!timelineAt) return;
@@ -26468,7 +26559,6 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
           const toothId = tooth?.id ?? tooth?.toothId;
           const procs = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
           procs.forEach((proc) => {
-            if (isMirroredEncounterTreatmentProcedure(proc)) return;
             const timelineAt =
               toIso(proc?.scheduledAt) ||
               toIso(proc?.scheduled_at) ||
