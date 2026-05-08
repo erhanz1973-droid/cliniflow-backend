@@ -1317,7 +1317,13 @@
     }, 200);
   };
 
+  let dashboardInitialized = false;
+  let badgesLoading = false;
+  let lastBadgesLoadAt = 0;
+
   function initializeDashboard() {
+    if (dashboardInitialized) return;
+    dashboardInitialized = true;
     loadClinicInfo();
     loadEvents();
 
@@ -1873,29 +1879,41 @@ function updateActivePatientsUI(data) {
 
   // Load all badges
   async function loadAllBadges() {
-    console.log("[DASHBOARD] Loading all badges...");
-    // Ensure badges exist (i18n may re-render nav DOM)
-    ensureNavBadge("chatNavLink", "chatBadge");
-    ensureNavBadge("patientsNavLink", "patientsBadge");
-    ensureNavBadge("referralsNavLink", "referralsBadge");
-    // Use allSettled to ensure all badges load even if one fails
-    await Promise.allSettled([
-      loadUnreadMessageCount().catch(err => {
-        console.error("[DASHBOARD] Failed to load unread message count:", err);
-      }),
-      loadPendingPatientsCount().catch(err => {
-        console.error("[DASHBOARD] Failed to load pending patients count:", err);
-      }),
-      loadPendingReferralsCount().catch(err => {
-        console.error("[DASHBOARD] Failed to load pending referrals count:", err);
-      })
-    ]);
-    console.log("[DASHBOARD] All badges loaded");
+    if (window.__ADMIN_LAYOUT_BADGES_ACTIVE) return;
+    const now = Date.now();
+    if (badgesLoading) return;
+    if (now - lastBadgesLoadAt < 5000) return;
+    badgesLoading = true;
+    lastBadgesLoadAt = now;
+    try {
+      console.log("[DASHBOARD] Loading all badges...");
+      // Ensure badges exist (i18n may re-render nav DOM)
+      ensureNavBadge("chatNavLink", "chatBadge");
+      ensureNavBadge("patientsNavLink", "patientsBadge");
+      ensureNavBadge("referralsNavLink", "referralsBadge");
+      // Use allSettled to ensure all badges load even if one fails
+      await Promise.allSettled([
+        loadUnreadMessageCount().catch(err => {
+          console.error("[DASHBOARD] Failed to load unread message count:", err);
+        }),
+        loadPendingPatientsCount().catch(err => {
+          console.error("[DASHBOARD] Failed to load pending patients count:", err);
+        }),
+        loadPendingReferralsCount().catch(err => {
+          console.error("[DASHBOARD] Failed to load pending referrals count:", err);
+        })
+      ]);
+      console.log("[DASHBOARD] All badges loaded");
+    } finally {
+      badgesLoading = false;
+    }
   }
 
   // Badges are loaded before events (see above)
   // Refresh badges every 30 seconds (independent of events)
-  setInterval(loadAllBadges, 30000);
+  if (!window.__ADMIN_LAYOUT_BADGES_ACTIVE) {
+    setInterval(loadAllBadges, 30000);
+  }
 </script>
 <script src="/admin-layout.js?v=202604171"></script>
 </body>

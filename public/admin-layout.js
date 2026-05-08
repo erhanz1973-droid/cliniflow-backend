@@ -358,6 +358,9 @@
   }
 
   function startBadgePolling() {
+    if (window.__ADMIN_LAYOUT_BADGE_POLLING_STARTED__) return;
+    window.__ADMIN_LAYOUT_BADGE_POLLING_STARTED__ = true;
+    window.__ADMIN_LAYOUT_BADGES_ACTIVE = true;
     pollUnreadCount();
     pollPendingDoctorApplications();
     pollPendingReferrals();
