@@ -764,7 +764,13 @@
     const year = date.getFullYear();
     const dateFormatted = `${weekday}, ${day} ${month} ${year}`;
 
-    const resolvedTime = timeStr || (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
+    const adminCalTz =
+      (typeof window !== "undefined" && String(window.__ADMIN_CAL_TZ || "").trim()) ||
+      String(localStorage.getItem("adminCalendarTz") || "").trim() ||
+      "Europe/Istanbul";
+    const resolvedTime = timeStr || (hasTimePart
+      ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', timeZone: adminCalTz })
+      : "");
     return resolvedTime ? `${dateFormatted} ${resolvedTime}` : dateFormatted;
   }
 
