@@ -217,9 +217,9 @@
 
     // Hook into i18n updates to refresh sidebar labels
     const prevOnI18nUpdated = window.onI18nUpdated;
-    window.onI18nUpdated = function () {
+    window.onI18nUpdated = function (lang) {
       updateSidebarLabels();
-      if (typeof prevOnI18nUpdated === 'function') prevOnI18nUpdated();
+      if (typeof prevOnI18nUpdated === 'function') prevOnI18nUpdated(lang);
     };
   }
 

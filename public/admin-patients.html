@@ -985,7 +985,11 @@ if (Array.isArray(json)) {
         const isSelected = getSelectedPatientId() && getSelectedPatientId() === patientId;
         const createdAt = p.createdAt || p.created_at || '-';
         const currentLang = window.i18n ? window.i18n.getLang() : 'tr';
-        const locale = currentLang === 'en' ? 'en-US' : 'tr-TR';
+        const locale =
+          currentLang === 'en' ? 'en-US' :
+          currentLang === 'ru' ? 'ru-RU' :
+          currentLang === 'ka' ? 'ka-GE' :
+          'tr-TR';
         const dateStr = createdAt !== '-' ? new Date(createdAt).toLocaleDateString(locale) : '-';
         const beforeScore = p.beforeScore !== undefined ? p.beforeScore : null;
         const afterScore = p.afterScore !== undefined ? p.afterScore : null;
@@ -1586,14 +1590,24 @@ if (Array.isArray(json)) {
       ]);
     }
 
-    // Language change handler
-    window.onI18nUpdated = function(lang) {
-      renderSelectedBar();
-      applyFilters(); // Re-render patient cards with new language
-      updateStatusFilterOptions(); // Update status filter options (includes PENDING/APPROVED)
-      updateLangToggle();
-      updateNavbar(); // Update navbar menu items
-    };
+    // Language change handler (chain so admin-layout sidebar labels still refresh)
+    (function () {
+      const prevOnI18nUpdated = typeof window.onI18nUpdated === "function" ? window.onI18nUpdated : null;
+      window.onI18nUpdated = function (lang) {
+        renderSelectedBar();
+        applyFilters(); // Re-render patient cards with new language
+        updateStatusFilterOptions(); // Update status filter options (includes PENDING/APPROVED)
+        updateLangToggle();
+        updateNavbar(); // Update navbar menu items
+        if (typeof prevOnI18nUpdated === "function") {
+          try {
+            prevOnI18nUpdated(lang);
+          } catch (e) {
+            console.error("[admin-patients] prev onI18nUpdated failed:", e);
+          }
+        }
+      };
+    })();
 
     function updateNavbar() {
       if (!window.i18n) return;
@@ -1637,12 +1651,20 @@ if (Array.isArray(json)) {
       if (!window.i18n) return;
       const langTr = document.getElementById('lang-tr');
       const langEn = document.getElementById('lang-en');
+      const langRu = document.getElementById('lang-ru');
+      const langKa = document.getElementById('lang-ka');
       const currentLang = window.i18n.getLang();
       if (langTr) {
         langTr.classList.toggle('active', currentLang === 'tr');
       }
       if (langEn) {
         langEn.classList.toggle('active', currentLang === 'en');
+      }
+      if (langRu) {
+        langRu.classList.toggle('active', currentLang === 'ru');
+      }
+      if (langKa) {
+        langKa.classList.toggle('active', currentLang === 'ka');
       }
     }
 

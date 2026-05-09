@@ -528,7 +528,19 @@
           upgradeMessage: "Yeni hasta eklemek için planınızı yükseltebilirsiniz.",
           upgradeButton: "Planı Yükselt",
           continueButton: "Mevcut Hastalarla Devam Et"
-        }
+        },
+        addPatient: "➕ Hasta Ekle",
+        addPatientTitle: "Yeni Hasta",
+        firstName: "Ad *",
+        lastName: "Soyad *",
+        email: "E-posta",
+        dateOfBirth: "Doğum Tarihi",
+        address: "Adres",
+        notes: "Notlar",
+        cancel: "İptal",
+        add: "Hasta Ekle",
+        addSuccess: "✅ Hasta eklendi",
+        addError: "❌ Hasta eklenemedi"
       },
       
       // Referrals (admin-referrals.html)
@@ -1123,7 +1135,19 @@
           upgradeMessage: "Upgrade your plan to add new patients.",
           upgradeButton: "Upgrade Plan",
           continueButton: "Continue with Existing Patients"
-        }
+        },
+        addPatient: "➕ Add Patient",
+        addPatientTitle: "Add New Patient",
+        firstName: "First Name *",
+        lastName: "Last Name *",
+        email: "Email",
+        dateOfBirth: "Date of Birth",
+        address: "Address",
+        notes: "Notes",
+        cancel: "Cancel",
+        add: "Add Patient",
+        addSuccess: "✅ Patient added",
+        addError: "❌ Failed to add patient"
       },
       
       // Referrals (admin-referrals.html)
@@ -1245,12 +1269,58 @@
       },
       login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль.", sessionExpired: "⏰ Срок сессии истёк или токен недействителен. Пожалуйста, войдите снова." },
       patients: {
-        title: "Пациенты", search: "Поиск пациентов...", filter: "Фильтр",
-        filterAll: "Все", approve: "Одобрить", treatment: "Лечение", chat: "Чат", travel: "Путешествие", health: "Здоровье", files: "📁 Файлы",
-        approveConfirm: "Вы хотите одобрить пациента? ({patientId})", approveSuccess: "✅ Пациент одобрен",
-        before: "До", after: "После", phone: "Телефон",
+        title: "Clinifly Admin – Пациенты",
+        registeredPatients: "Зарегистрированные пациенты",
+        searchPlaceholder: "Поиск: имя / телефон / patientId / clinicCode",
+        filterAll: "Все",
+        clearFilters: "Сбросить фильтры",
+        refresh: "Обновить",
+        loading: "Загрузка...",
+        noResults: "Нет результатов",
+        selectedPatient: "Выбранный пациент: {name}",
+        patientId: "ID пациента: {id}",
+        copyId: "Копировать ID",
+        copyIdSuccess: "✅ ID пациента скопирован",
+        clear: "Сбросить",
+        travel: "Поездки",
+        treatment: "Лечение",
+        health: "Здоровье",
+        chat: "Чат",
+        files: "📁 Файлы",
+        approve: "Одобрить",
+        approveConfirm: "Вы уверены, что хотите одобрить этого пациента? ({patientId})",
+        approveSuccess: "✅ Пациент одобрен",
+        before: "До",
+        after: "После",
+        phone: "Телефон",
         status: { PENDING: "Ожидание", APPROVED: "Одобрено" },
-        errors: { noToken: "⚠️ Токен не найден.", loadFailed: "❌ Ошибка загрузки: {error}", approveFailed: "❌ Ошибка одобрения: {error}" }
+        errors: {
+          noToken: "⚠️ Токен администратора не найден. Сначала войдите в систему.",
+          unauthorized: "❌ Ошибка авторизации. Войдите снова.",
+          loadFailed: "❌ Не удалось загрузить список пациентов: {error}",
+          approveFailed: "❌ Ошибка одобрения: {error}",
+          patientLimitReached: "⚠️ Достигнут лимит активных пациентов. Обновите план, чтобы добавлять новых.",
+          patientLimitReachedTitle: "Лимит пациентов"
+        },
+        limits: {
+          title: "Лимит активных пациентов",
+          message: "В вашем текущем плане {current}/{limit} активных пациентов.",
+          upgradeMessage: "Обновите план, чтобы добавлять новых пациентов.",
+          upgradeButton: "Обновить план",
+          continueButton: "Продолжить с текущими пациентами"
+        },
+        addPatient: "➕ Добавить пациента",
+        addPatientTitle: "Новый пациент",
+        firstName: "Имя *",
+        lastName: "Фамилия *",
+        email: "Email",
+        dateOfBirth: "Дата рождения",
+        address: "Адрес",
+        notes: "Заметки",
+        cancel: "Отмена",
+        add: "Добавить пациента",
+        addSuccess: "✅ Пациент добавлен",
+        addError: "❌ Не удалось добавить пациента"
       },
       referrals: {
         title: "🎁 Рефералы", referrals: "Рефералы", filterAll: "Все", refresh: "Обновить",
@@ -1521,12 +1591,58 @@
       },
       login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია.", sessionExpired: "⏰ სეანსი ამოიწურა ან ტოკენი არასწორია. გთხოვთ, ხელახლა შეხვიდეთ." },
       patients: {
-        title: "პაციენტები", search: "პაციენტის ძებნა...", filter: "ფილტრი",
-        filterAll: "ყველა", approve: "დადასტურება", treatment: "მკურნალება", chat: "ჩათი", travel: "მოგზაურობა", health: "ჯანმრთელობა", files: "📁 ფაილები",
-        approveConfirm: "გსურთ პაციენტის დადასტურება? ({patientId})", approveSuccess: "✅ პაციენტი დადასტურებულია",
-        before: "წინ", after: "შემდეგ", phone: "ტელეფონი",
+        title: "Clinifly Admin – პაციენტები",
+        registeredPatients: "რეგისტრირებული პაციენტები",
+        searchPlaceholder: "ძებნა: სახელი / ტელეფონი / patientId / clinicCode",
+        filterAll: "ყველა",
+        clearFilters: "ფილტრების გასუფთავება",
+        refresh: "განახლება",
+        loading: "იტვირთება...",
+        noResults: "შედეგები არ არის",
+        selectedPatient: "არჩეული პაციენტი: {name}",
+        patientId: "პაციენტის ID: {id}",
+        copyId: "ID-ის კოპირება",
+        copyIdSuccess: "✅ პაციენტის ID დაკოპირდა",
+        clear: "გასუფთავება",
+        travel: "მოგზაურობა",
+        treatment: "მკურნალება",
+        health: "ჯანმრთელობა",
+        chat: "ჩათი",
+        files: "📁 ფაილები",
+        approve: "დადასტურება",
+        approveConfirm: "დარწმუნებული ხართ, რომ გსურთ ამ პაციენტის დადასტურება? ({patientId})",
+        approveSuccess: "✅ პაციენტი დადასტურებულია",
+        before: "წინ",
+        after: "შემდეგ",
+        phone: "ტელეფონი",
         status: { PENDING: "მოლოდინში", APPROVED: "დადასტურებულია" },
-        errors: { noToken: "⚠️ ტოკენი ვერ მოიძებნა.", loadFailed: "❌ ჩატვირთვის შეცდომა: {error}", approveFailed: "❌ დადასტურების შეცდომა: {error}" }
+        errors: {
+          noToken: "⚠️ ადმინის ტოკენი ვერ მოიძებნა. ჯერ შედით სისტემაში.",
+          unauthorized: "❌ ავტორიზაციის შეცდომა. ხელახლა შედით.",
+          loadFailed: "❌ პაციენტების სიის ჩატვირთვა ვერ მოხერხდა: {error}",
+          approveFailed: "❌ დადასტურების შეცდომა: {error}",
+          patientLimitReached: "⚠️ მიღწეულია აქტიური პაციენტების ლიმიტი. ახლის დასამატებლად განაახლეთ გეგმა.",
+          patientLimitReachedTitle: "პაციენტების ლიმიტი"
+        },
+        limits: {
+          title: "აქტიური პაციენტების ლიმიტი",
+          message: "თქვენს მიმდინარე გეგმაში {current}/{limit} აქტიური პაციენტია.",
+          upgradeMessage: "ახალი პაციენტის დასამატებლად განაახლეთ გეგმა.",
+          upgradeButton: "გეგმის განახლება",
+          continueButton: "არსებული პაციენტებით გაგრძელება"
+        },
+        addPatient: "➕ პაციენტის დამატება",
+        addPatientTitle: "ახალი პაციენტი",
+        firstName: "სახელი *",
+        lastName: "გვარი *",
+        email: "ელფოსტა",
+        dateOfBirth: "დაბადების თარიღი",
+        address: "მისამართი",
+        notes: "შენიშვნები",
+        cancel: "გაუქმება",
+        add: "პაციენტის დამატება",
+        addSuccess: "✅ პაციენტი დაემატა",
+        addError: "❌ პაციენტის დამატება ვერ მოხერხდა"
       },
       referrals: {
         title: "🎁 მოწვევები", referrals: "მოწვევები", filterAll: "ყველა", refresh: "განახლება",
@@ -1768,10 +1884,21 @@
     
     // State-only: do NOT call updatePage() here.
     setLanguage(lang) {
-      if (!translations[lang]) lang = 'en';
-      this.currentLang = lang;
-      localStorage.setItem('admin_lang', lang);
-      document.documentElement.lang = lang;
+      const raw = String(lang == null ? "" : lang).trim();
+      let code = raw.toLowerCase();
+      if (code === "en-us" || code === "en_gb") code = "en";
+      if (code === "tr-tr") code = "tr";
+      if (!translations[code]) {
+        if (raw && raw !== code) {
+          console.warn("[i18n] Unknown language:", raw, "— falling back to en. Supported:", Object.keys(translations).join(", "));
+        } else if (raw) {
+          console.warn("[i18n] Unknown language:", raw, "— falling back to en");
+        }
+        code = "en";
+      }
+      this.currentLang = code;
+      localStorage.setItem("admin_lang", code);
+      document.documentElement.lang = code;
     },
 
     // Backward-compatible alias
