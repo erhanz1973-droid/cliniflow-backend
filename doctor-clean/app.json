@@ -2,14 +2,24 @@
   "expo": {
     "name": "doctor-clean",
     "slug": "doctor-clean",
-    "version": "1.0.0",
+    "version": "123",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "doctorclean",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "notification": {
+      "icon": "./assets/images/icon.png",
+      "color": "#2563eb",
+      "androidMode": "default",
+      "androidCollapsedTitle": "Yeni bildirimler"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cliniflow.doctor",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -26,6 +36,15 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#2563eb",
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
@@ -41,6 +60,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ecc01c94-36cd-48e9-9618-48ce29fd29df"
+      }
+    },
+    "owner": "erhanzorlu"
   }
 }
