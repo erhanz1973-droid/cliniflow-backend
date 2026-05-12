@@ -398,12 +398,14 @@ export function usePushNotifications() {
       ) {
         lastDoctorPushForegroundResyncAt = Date.now();
         void syncDoctorExpoPushTokenWithBackend({}).then((r) => {
-          if (__DEV__) {
-            const res = r;
+          const res = r;
+          if (!res.ok || __DEV__) {
             console.log("[DOCTOR_PUSH] foreground_token_resync", {
               ok: res.ok,
               ...(!res.ok && "reason" in res ? { reason: res.reason } : {}),
             });
+          }
+          if (__DEV__) {
             logDoctorCleanPushSyncResult(res);
           }
         });
