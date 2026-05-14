@@ -2,7 +2,7 @@
   "expo": {
     "name": "doctor-clean",
     "slug": "doctor-clean",
-    "version": "123",
+    "version": "123.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "doctorclean",
