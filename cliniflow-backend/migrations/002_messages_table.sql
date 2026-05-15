@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS messages (
   id               UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
   patient_id       UUID        NOT NULL,  -- FK to patients.id
   clinic_id        UUID        NOT NULL,  -- FK to clinics.id
-  sender_type      TEXT        NOT NULL CHECK (sender_type IN ('patient', 'admin', 'doctor')),
+  sender_type      TEXT        NOT NULL CHECK (sender_type IN ('patient', 'PATIENT', 'admin', 'ADMIN', 'doctor', 'DOCTOR', 'clinic', 'CLINIC')),
   sender_id        TEXT        NOT NULL,  -- patients.id UUID or admin_id or doctor_id
   message_text     TEXT,
   attachment       JSONB,                 -- { name, size, url, mimeType, fileType }
