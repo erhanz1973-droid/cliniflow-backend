@@ -23,6 +23,28 @@ In the output, you'll find options to open the app in a
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
+## Push notifications & sound (doctor-clean)
+
+This app already configures:
+
+1. **`Notifications.setNotificationHandler`** — `shouldPlaySound: true` (see `app/_layout.tsx`).
+2. **Android channel `default`** — `sound: 'default'`, `importance: MAX` (see `hooks/use-push-notifications.ts`).
+3. **Backend payload** — `cliniflow-backend-clean` sends `sound: "default"` and `channelId: "default"` when message sound is on (`sendExpoToEntity` in `index.cjs`).
+4. **iOS permission request** — `allowSound: true` with `allowAlert` / `allowBadge` in `requestPermissionsAsync`.
+
+**Expo Go:** Remote notifications may appear, but **reliable push sound / full APNs behavior is not guaranteed** in Expo Go (SDK 53+). Metro will log `[PUSH_SOUND] Running in Expo Go…` when `Constants.appOwnership === "expo"`.
+
+**Test like production:** use a **development build** (this repo includes `expo-dev-client` and `eas.json` → profile `development`):
+
+```bash
+# Install EAS CLI if needed: npm i -g eas-cli
+eas build --profile development --platform ios
+# After install on device:
+npm run start:dev
+```
+
+`npm run start:dev` runs `expo start --dev-client` so the installed dev client loads your JS bundle.
+
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
 ## Get a fresh project

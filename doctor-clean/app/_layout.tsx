@@ -3,7 +3,7 @@ import { Stack } from "expo-router";
 import * as Notifications from "expo-notifications";
 
 import { PushDiagDevBanner } from "@/components/PushDiagDevBanner";
-import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { PushNotificationBootstrap } from "@/components/PushNotificationBootstrap";
 import { setAuthToken } from "@/lib/api";
 import { logDoctorCleanStartupEnv } from "@/lib/logStartup";
 import { getDoctorJwt } from "@/lib/session";
@@ -48,10 +48,10 @@ export default function RootLayout() {
     })();
   }, []);
 
-  usePushNotifications();
   return (
     <>
       <Stack screenOptions={{ headerShown: false }} />
+      <PushNotificationBootstrap />
       <PushDiagDevBanner />
     </>
   );
