@@ -2,6 +2,7 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
 import { AiCoordinationBar } from "@/components/AiCoordinationBar";
+import { DoctorIntentPanel } from "@/components/DoctorIntentPanel";
 
 export default function DoctorPatientWorkspace() {
   const { patientId } = useLocalSearchParams<{ patientId: string }>();
@@ -12,7 +13,10 @@ export default function DoctorPatientWorkspace() {
       <Text style={styles.title}>Hasta çalışma alanı</Text>
       <Text style={styles.sub}>Canlı YZ koordinasyonu — klinik politikası üst sınırı aşmaz.</Text>
       {id ? (
-        <AiCoordinationBar patientId={id} />
+        <>
+          <AiCoordinationBar patientId={id} />
+          <DoctorIntentPanel patientId={id} />
+        </>
       ) : (
         <Text style={styles.muted}>Hasta kimliği yok.</Text>
       )}
