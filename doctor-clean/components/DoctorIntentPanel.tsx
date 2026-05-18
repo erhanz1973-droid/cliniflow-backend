@@ -105,7 +105,12 @@ export function DoctorIntentPanel({ patientId }: Props) {
         guidanceId: guidanceId || undefined,
       });
       if (!res.ok) {
-        setError(res.message || res.error || "Genişletme başarısız");
+        const code = res.error || "";
+        if (code === "expansion_not_allowed") {
+          setError("YZ genişletme kapalı (HUMAN_ONLY / eskalasyon).");
+        } else {
+          setError(res.message || code || "Genişletme başarısız");
+        }
         return;
       }
       if (res.guidance?.id) setGuidanceId(res.guidance.id);
@@ -118,7 +123,12 @@ export function DoctorIntentPanel({ patientId }: Props) {
         ...(res.safetyReport?.warnings || []),
       ]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Genişletme hatası");
+      const err = e as Error & { status?: number; code?: string };
+      if (err.status === 403 || err.code === "expansion_not_allowed") {
+        setError("YZ genişletme kapalı (HUMAN_ONLY / eskalasyon).");
+      } else {
+        setError(err.message || "Genişletme hatası");
+      }
     } finally {
       setBusy(false);
     }
@@ -169,6 +179,7 @@ export function DoctorIntentPanel({ patientId }: Props) {
         return;
       }
       setSent(true);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gönderim hatası");
     } finally {
