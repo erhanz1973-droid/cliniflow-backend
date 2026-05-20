@@ -91,6 +91,9 @@ export type CoordinationWorkspaceResponse = {
   currentStrategy?: CurrentStrategy;
   blocker?: string | null;
   nextStep?: string | null;
+  latestAiReply?: string | null;
+  latestAiReplyAt?: string | null;
+  latestPatientMessage?: string | null;
   error?: string;
   message?: string;
 };

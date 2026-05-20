@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -18,6 +19,8 @@ type Props = {
   aiState?: AiState;
   onRefresh: () => void;
   onGuideAi: () => void;
+  onInputFocus?: (fieldRef: RefObject<View | null>) => void;
+  compact?: boolean;
 };
 
 export function InterventionControls({
@@ -25,11 +28,15 @@ export function InterventionControls({
   aiState,
   onRefresh,
   onGuideAi,
+  onInputFocus,
+  compact,
 }: Props) {
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const draftInputRef = useRef<TextInput>(null);
+  const draftFieldRef = useRef<View>(null);
 
   const patch = useCallback(
     async (body: Record<string, unknown>) => {
@@ -75,9 +82,14 @@ export function InterventionControls({
 
   const escalated = aiState?.aiEscalationRequired;
 
+  const takeOver = useCallback(async () => {
+    await patch({ action: "takeOver" });
+    setTimeout(() => onGuideAi?.(), Platform.OS === "ios" ? 350 : 200);
+  }, [patch, onGuideAi]);
+
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>👨‍⚕️ Doktor müdahalesi</Text>
+    <View style={[styles.wrap, compact && styles.wrapCompact]}>
+      <Text style={[styles.title, compact && styles.titleCompact]}>👨‍⚕️ Doktor müdahalesi</Text>
       <View style={styles.row}>
         <ActionBtn
           label="AI duraklat"
@@ -93,7 +105,7 @@ export function InterventionControls({
         />
         <ActionBtn
           label="Devral"
-          onPress={() => patch({ action: "takeOver" })}
+          onPress={() => void takeOver()}
           disabled={saving}
           variant="primary"
         />
@@ -106,13 +118,19 @@ export function InterventionControls({
         />
       </View>
 
-      <TextInput
-        style={styles.draftInput}
-        multiline
-        placeholder="Manuel yanıt veya AI taslağı — Gönder için Intent Panel'i kullanın"
-        value={draft}
-        onChangeText={setDraft}
-      />
+      <View ref={draftFieldRef} collapsable={false}>
+        <TextInput
+          ref={draftInputRef}
+          style={[styles.draftInput, compact && styles.draftInputCompact]}
+          multiline
+          placeholder="Manuel yanıt veya AI taslağı — Gönder için Intent Panel'i kullanın"
+          value={draft}
+          onChangeText={setDraft}
+          onFocus={() => onInputFocus?.(draftFieldRef)}
+          blurOnSubmit={false}
+          textAlignVertical="top"
+        />
+      </View>
       {draft ? (
         <Pressable style={styles.guideLink} onPress={onGuideAi}>
           <Text style={styles.guideLinkText}>Taslağı Intent Panel'de düzenle ve gönder →</Text>
@@ -164,7 +182,9 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
+  wrapCompact: { padding: 10, marginBottom: 8, borderRadius: 10 },
   title: { fontSize: 14, fontWeight: "700", color: "#111827", marginBottom: 10 },
+  titleCompact: { fontSize: 13, marginBottom: 6 },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   btn: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8 },
   btnDisabled: { opacity: 0.45 },
@@ -179,6 +199,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlignVertical: "top",
   },
+  draftInputCompact: { marginTop: 8, minHeight: 52, fontSize: 13, padding: 8 },
   guideLink: { marginTop: 8 },
   guideLinkText: { fontSize: 12, color: "#7c3aed", fontWeight: "600" },
   error: { marginTop: 8, fontSize: 12, color: "#b91c1c" },

@@ -9,7 +9,7 @@ type Props = {
 export function OperationalActivityLog({ events }: Props) {
   if (!events.length) return null;
 
-  const recent = [...events].reverse().slice(0, 8);
+  const recent = [...events].reverse().slice(0, 12);
 
   return (
     <View style={styles.wrap}>

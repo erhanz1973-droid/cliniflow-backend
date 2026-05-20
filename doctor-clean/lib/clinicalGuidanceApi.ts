@@ -87,18 +87,44 @@ export async function rewriteClinicalDraft(body: {
   });
 }
 
+export type SendClinicalGuidanceResponse = {
+  ok?: boolean;
+  alreadySent?: boolean;
+  error?: string;
+  message?: string;
+};
+
+export function isDraftAlreadySentError(err: unknown): boolean {
+  const e = err as Error & { status?: number; code?: string };
+  return (
+    e?.status === 409 ||
+    e?.code === "draft_already_sent" ||
+    String(e?.message || "").includes("draft_already_sent")
+  );
+}
+
 export async function sendClinicalGuidance(body: {
   guidanceId: string;
   draftId: string;
   finalText: string;
-}): Promise<{ ok?: boolean; error?: string; message?: string }> {
-  return apiFetchJson(`/api/ai/clinical-guidance/${body.guidanceId}/send`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      draftId: body.draftId,
-      finalText: body.finalText,
-    }),
-    timeoutMs: 30_000,
-  });
+}): Promise<SendClinicalGuidanceResponse> {
+  try {
+    return await apiFetchJson<SendClinicalGuidanceResponse>(
+      `/api/ai/clinical-guidance/${body.guidanceId}/send`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftId: body.draftId,
+          finalText: body.finalText,
+        }),
+        timeoutMs: 30_000,
+      },
+    );
+  } catch (err) {
+    if (isDraftAlreadySentError(err)) {
+      return { ok: true, alreadySent: true };
+    }
+    throw err;
+  }
 }

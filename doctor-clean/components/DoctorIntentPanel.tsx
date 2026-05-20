@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -43,13 +43,29 @@ const TAG_LABELS: Record<string, string> = {
 
 type Props = {
   patientId: string;
+  /** From coordination workspace — updates after Devral / refresh. */
+  draftGenerationAllowed?: boolean;
+  /** Scroll parent so the focused field stays above the keyboard (mobile). */
+  onInputFocus?: (fieldRef: RefObject<View | null>) => void;
+  compact?: boolean;
 };
 
-export function DoctorIntentPanel({ patientId }: Props) {
-  const [expansionAllowed, setExpansionAllowed] = useState(true);
+function intentFromTags(tags: IntentTag[]): string {
+  if (!tags.length) return "";
+  return tags.map((tag) => TAG_LABELS[tag] || tag).join(". ");
+}
+
+export function DoctorIntentPanel({
+  patientId,
+  draftGenerationAllowed: draftAllowedProp,
+  onInputFocus,
+  compact,
+}: Props) {
+  const [expansionAllowed, setExpansionAllowed] = useState(draftAllowedProp !== false);
   const [intentTags, setIntentTags] = useState<IntentTag[]>([]);
   const [selectedTags, setSelectedTags] = useState<IntentTag[]>([]);
   const [intentText, setIntentText] = useState("");
+  const intentTextRef = useRef("");
   const [patientDraft, setPatientDraft] = useState("");
   const [guidanceId, setGuidanceId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -58,6 +74,8 @@ export function DoctorIntentPanel({ patientId }: Props) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const intentFieldRef = useRef<View>(null);
+  const patientDraftFieldRef = useRef<View>(null);
 
   useEffect(() => {
     fetchIntentTags()
@@ -66,6 +84,13 @@ export function DoctorIntentPanel({ patientId }: Props) {
   }, []);
 
   useEffect(() => {
+    if (draftAllowedProp !== undefined) {
+      setExpansionAllowed(draftAllowedProp !== false);
+      if (draftAllowedProp === false) {
+        setError("YZ genişletme bu modda kapalı (eskalasyon veya politika).");
+      }
+      return;
+    }
     if (!patientId) return;
     apiFetchJson<{
       ok?: boolean;
@@ -77,7 +102,30 @@ export function DoctorIntentPanel({ patientId }: Props) {
         if (!allowed) setError("YZ genişletme bu başvuruda kapalı (yalnızca insan modu).");
       })
       .catch(() => setExpansionAllowed(true));
-  }, [patientId]);
+  }, [patientId, draftAllowedProp]);
+
+  const setIntentTextLive = useCallback((value: string) => {
+    intentTextRef.current = value;
+    setIntentText(value);
+  }, []);
+
+  const resolveIntentText = useCallback(() => {
+    const typed = (intentTextRef.current || intentText).trim();
+    if (typed) return typed;
+    return intentFromTags(selectedTags);
+  }, [intentText, selectedTags]);
+
+  const canExpand = Boolean(resolveIntentText()) && Boolean(patientId) && expansionAllowed;
+
+  const resetForNewMessage = useCallback(() => {
+    setGuidanceId(null);
+    setDraftId(null);
+    setPatientDraft("");
+    setWarnings([]);
+    setConfidence(null);
+    setSent(false);
+    setError(null);
+  }, []);
 
   const toggleTag = (tag: IntentTag) => {
     setSelectedTags((prev) =>
@@ -86,8 +134,13 @@ export function DoctorIntentPanel({ patientId }: Props) {
   };
 
   const onExpand = useCallback(async () => {
-    if (!patientId || !intentText.trim()) {
-      setError("Klinik notu gerekli.");
+    const resolvedIntent = resolveIntentText();
+    if (!patientId) {
+      setError("Hasta kimliği eksik — Gelen Talepler’den tekrar açın.");
+      return;
+    }
+    if (!resolvedIntent) {
+      setError("Dahili klinik not yazın veya en az bir niyet etiketi seçin.");
       return;
     }
     if (!expansionAllowed) {
@@ -97,12 +150,13 @@ export function DoctorIntentPanel({ patientId }: Props) {
     setBusy(true);
     setError(null);
     setSent(false);
+    setDraftId(null);
     try {
       const res = await expandClinicalGuidance({
         patientId,
-        intentText: intentText.trim(),
+        intentText: resolvedIntent,
         intentTags: selectedTags,
-        guidanceId: guidanceId || undefined,
+        guidanceId: sent ? undefined : guidanceId || undefined,
       });
       if (!res.ok) {
         const code = res.error || "";
@@ -113,9 +167,17 @@ export function DoctorIntentPanel({ patientId }: Props) {
         }
         return;
       }
+      if (res.draft?.status === "sent") {
+        setError("Bu taslak zaten gönderilmiş. Yeni mesaj için «Yeni taslak» kullanın.");
+        return;
+      }
       if (res.guidance?.id) setGuidanceId(res.guidance.id);
-      if (res.draft?.id) setDraftId(res.draft.id);
+      setDraftId(res.draft?.id ?? null);
       if (res.draft?.guidanceId) setGuidanceId(res.draft.guidanceId);
+      if (!res.draft?.id) {
+        setError("Taslak kaydı oluşturulamadı — tekrar deneyin.");
+        return;
+      }
       setPatientDraft(res.patientDraft || "");
       setConfidence(res.confidence ?? null);
       setWarnings([
@@ -132,9 +194,13 @@ export function DoctorIntentPanel({ patientId }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [patientId, intentText, selectedTags, guidanceId, expansionAllowed]);
+  }, [patientId, resolveIntentText, selectedTags, guidanceId, expansionAllowed, sent]);
 
   const onRewrite = async (action: RewriteAction) => {
+    if (sent) {
+      setError("Bu taslak gönderildi. Yeni mesaj için «Yeni taslak» kullanın.");
+      return;
+    }
     if (!draftId || !patientDraft.trim()) {
       setError("Önce hasta taslağı oluşturun.");
       return;
@@ -162,6 +228,10 @@ export function DoctorIntentPanel({ patientId }: Props) {
   };
 
   const onSend = async () => {
+    if (sent) {
+      setError("Bu mesaj zaten gönderildi. Yeni mesaj için «Yeni taslak» kullanın.");
+      return;
+    }
     if (!guidanceId || !draftId || !patientDraft.trim()) {
       setError("Göndermek için taslak ve onay gerekli.");
       return;
@@ -175,11 +245,20 @@ export function DoctorIntentPanel({ patientId }: Props) {
         finalText: patientDraft.trim(),
       });
       if (!res.ok) {
+        if (res.error === "draft_already_sent") {
+          setSent(true);
+          setError("Bu mesaj zaten hastaya iletildi.");
+          return;
+        }
         setError(res.message || res.error || "Gönderilemedi");
         return;
       }
       setSent(true);
-      setError(null);
+      setError(
+        res.alreadySent
+          ? "Bu mesaj zaten hastaya iletilmişti."
+          : null,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gönderim hatası");
     } finally {
@@ -188,22 +267,29 @@ export function DoctorIntentPanel({ patientId }: Props) {
   };
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Klinik niyet → hasta mesajı</Text>
-      <Text style={styles.sub}>
-        Dahili not hastaya asla doğrudan gitmez. YZ güvenli, hasta dostu taslak üretir; siz
-        onaylayıp gönderirsiniz.
-      </Text>
+    <View style={[styles.wrap, compact && styles.wrapCompact]}>
+      <Text style={[styles.title, compact && styles.titleCompact]}>Klinik niyet → hasta mesajı</Text>
+      {!compact ? (
+        <Text style={styles.sub}>
+          Dahili not hastaya asla doğrudan gitmez. YZ güvenli, hasta dostu taslak üretir; siz
+          onaylayıp gönderirsiniz.
+        </Text>
+      ) : null}
 
       <Text style={styles.label}>Dahili klinik not</Text>
-      <TextInput
-        style={styles.inputMultiline}
-        multiline
-        placeholder="Örn: 2 implant gerekebilir. Önce CBCT. Korkutma. 2 ziyaret sürecini kısaca anlat."
-        value={intentText}
-        onChangeText={setIntentText}
-        editable={!busy}
-      />
+      <View ref={intentFieldRef} collapsable={false}>
+        <TextInput
+          style={[styles.inputMultiline, compact && styles.inputMultilineCompact]}
+          multiline
+          placeholder="Örn: 2 implant gerekebilir. Önce CBCT. Korkutma. 2 ziyaret sürecini kısaca anlat."
+          value={intentText}
+          onChangeText={setIntentTextLive}
+          onFocus={() => onInputFocus?.(intentFieldRef)}
+          editable={!busy}
+          blurOnSubmit={false}
+          textAlignVertical="top"
+        />
+      </View>
 
       <Text style={styles.label}>Niyet etiketleri</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagRow}>
@@ -225,10 +311,20 @@ export function DoctorIntentPanel({ patientId }: Props) {
         )}
       </ScrollView>
 
+      {!canExpand && !busy && !sent ? (
+        <Text style={styles.hint}>
+          {!resolveIntentText()
+            ? "Taslak için önce «Dahili klinik not» yazın veya niyet etiketi seçin."
+            : !expansionAllowed
+              ? "YZ taslak üretimi şu an kapalı."
+              : null}
+        </Text>
+      ) : null}
+
       <Pressable
-        style={[styles.btnPrimary, (!expansionAllowed || busy) && styles.btnDisabled]}
+        style={[styles.btnPrimary, (!canExpand || busy) && styles.btnDisabled]}
         onPress={onExpand}
-        disabled={!expansionAllowed || busy}
+        disabled={!canExpand || busy}
       >
         {busy ? (
           <ActivityIndicator color="#fff" />
@@ -249,14 +345,19 @@ export function DoctorIntentPanel({ patientId }: Props) {
       ) : null}
 
       <Text style={styles.label}>Hasta mesajı (önizleme / düzenle)</Text>
-      <TextInput
-        style={[styles.inputMultiline, styles.draftInput]}
-        multiline
-        value={patientDraft}
-        onChangeText={setPatientDraft}
-        placeholder="YZ taslağı burada görünür…"
-        editable={!busy}
-      />
+      <View ref={patientDraftFieldRef} collapsable={false}>
+        <TextInput
+          style={[styles.inputMultiline, styles.draftInput, compact && styles.draftInputCompact]}
+          multiline
+          value={patientDraft}
+          onChangeText={setPatientDraft}
+          onFocus={() => onInputFocus?.(patientDraftFieldRef)}
+          placeholder="YZ taslağı burada görünür…"
+          editable={!busy}
+          blurOnSubmit={false}
+          textAlignVertical="top"
+        />
+      </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.rewriteRow}>
         {REWRITE_ACTIONS.map((a) => (
@@ -272,14 +373,22 @@ export function DoctorIntentPanel({ patientId }: Props) {
       </ScrollView>
 
       <Pressable
-        style={[styles.btnSend, (busy || !patientDraft || sent) && styles.btnDisabled]}
+        style={[styles.btnSend, (busy || !patientDraft || sent || !draftId) && styles.btnDisabled]}
         onPress={onSend}
-        disabled={busy || !patientDraft || sent}
+        disabled={busy || !patientDraft || sent || !draftId}
       >
         <Text style={styles.btnSendText}>{sent ? "Gönderildi ✓" : "Onayla ve gönder"}</Text>
       </Pressable>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {sent ? (
+        <Pressable style={styles.btnNewDraft} onPress={resetForNewMessage} disabled={busy}>
+          <Text style={styles.btnNewDraftText}>＋ Yeni taslak</Text>
+        </Pressable>
+      ) : null}
+
+      {error ? (
+        <Text style={[styles.error, sent && styles.errorMuted]}>{error}</Text>
+      ) : null}
     </View>
   );
 }
@@ -293,9 +402,12 @@ const styles = StyleSheet.create({
     borderColor: "#dbeafe",
     backgroundColor: "#f0f9ff",
   },
+  wrapCompact: { marginTop: 0, padding: 10, borderRadius: 10 },
   title: { fontSize: 16, fontWeight: "700", color: "#0f172a", marginBottom: 4 },
+  titleCompact: { fontSize: 13, marginBottom: 6 },
   sub: { fontSize: 12, color: "#475569", lineHeight: 17, marginBottom: 12 },
   label: { fontSize: 12, fontWeight: "600", color: "#334155", marginBottom: 6, marginTop: 8 },
+  hint: { fontSize: 11, color: "#64748b", marginTop: 8, marginBottom: 4, lineHeight: 15 },
   inputMultiline: {
     minHeight: 88,
     borderWidth: 1,
@@ -307,7 +419,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     textAlignVertical: "top",
   },
+  inputMultilineCompact: { minHeight: 56, fontSize: 13, padding: 8 },
   draftInput: { minHeight: 120, borderColor: "#93c5fd" },
+  draftInputCompact: { minHeight: 72 },
   tagRow: { marginBottom: 8, maxHeight: 40 },
   tag: {
     paddingHorizontal: 10,
@@ -357,4 +471,15 @@ const styles = StyleSheet.create({
   warnBody: { fontSize: 11, color: "#78350f", marginTop: 4 },
   meta: { fontSize: 11, color: "#64748b", marginTop: 6 },
   error: { marginTop: 10, color: "#b91c1c", fontSize: 13 },
+  errorMuted: { color: "#047857" },
+  btnNewDraft: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    backgroundColor: "#fff",
+    alignItems: "center",
+  },
+  btnNewDraftText: { color: "#1d4ed8", fontWeight: "700", fontSize: 13 },
 });
