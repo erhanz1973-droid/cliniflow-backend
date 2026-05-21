@@ -45,8 +45,11 @@ type Props = {
   patientId: string;
   /** From coordination workspace — updates after Devral / refresh. */
   draftGenerationAllowed?: boolean;
+  /** False while AI owns the patient thread (must Devral first). */
+  canSendToPatient?: boolean;
   /** Scroll parent so the focused field stays above the keyboard (mobile). */
   onInputFocus?: (fieldRef: RefObject<View | null>) => void;
+  onMessageSent?: () => void;
   compact?: boolean;
 };
 
@@ -58,7 +61,9 @@ function intentFromTags(tags: IntentTag[]): string {
 export function DoctorIntentPanel({
   patientId,
   draftGenerationAllowed: draftAllowedProp,
+  canSendToPatient = true,
   onInputFocus,
+  onMessageSent,
   compact,
 }: Props) {
   const [expansionAllowed, setExpansionAllowed] = useState(draftAllowedProp !== false);
@@ -78,10 +83,18 @@ export function DoctorIntentPanel({
   const patientDraftFieldRef = useRef<View>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetchIntentTags()
-      .then(setIntentTags)
-      .catch(() => setIntentTags([]));
-  }, []);
+      .then((tags) => {
+        if (!cancelled) setIntentTags(tags);
+      })
+      .catch(() => {
+        if (!cancelled) setIntentTags([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
 
   useEffect(() => {
     if (draftAllowedProp !== undefined) {
@@ -117,7 +130,10 @@ export function DoctorIntentPanel({
 
   const canExpand = Boolean(resolveIntentText()) && Boolean(patientId) && expansionAllowed;
 
-  const resetForNewMessage = useCallback(() => {
+  const clearComposeScreen = useCallback(() => {
+    intentTextRef.current = "";
+    setIntentText("");
+    setSelectedTags([]);
     setGuidanceId(null);
     setDraftId(null);
     setPatientDraft("");
@@ -126,6 +142,14 @@ export function DoctorIntentPanel({
     setSent(false);
     setError(null);
   }, []);
+
+  const hasComposeContent =
+    Boolean(intentText.trim()) ||
+    selectedTags.length > 0 ||
+    Boolean(patientDraft.trim()) ||
+    Boolean(draftId) ||
+    Boolean(guidanceId) ||
+    sent;
 
   const toggleTag = (tag: IntentTag) => {
     setSelectedTags((prev) =>
@@ -259,6 +283,8 @@ export function DoctorIntentPanel({
           ? "Bu mesaj zaten hastaya iletilmişti."
           : null,
       );
+      onMessageSent?.();
+      clearComposeScreen();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gönderim hatası");
     } finally {
@@ -268,7 +294,19 @@ export function DoctorIntentPanel({
 
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
-      <Text style={[styles.title, compact && styles.titleCompact]}>Klinik niyet → hasta mesajı</Text>
+      <View style={styles.titleRow}>
+        <Text style={[styles.title, compact && styles.titleCompact, styles.titleInRow]}>
+          Klinik niyet → hasta mesajı
+        </Text>
+        <Pressable
+          style={[styles.btnClear, (!hasComposeContent || busy) && styles.btnDisabled]}
+          onPress={clearComposeScreen}
+          disabled={!hasComposeContent || busy}
+          accessibilityLabel="Yazı alanını temizle"
+        >
+          <Text style={styles.btnClearText}>Temizle</Text>
+        </Pressable>
+      </View>
       {!compact ? (
         <Text style={styles.sub}>
           Dahili not hastaya asla doğrudan gitmez. YZ güvenli, hasta dostu taslak üretir; siz
@@ -372,19 +410,22 @@ export function DoctorIntentPanel({
         ))}
       </ScrollView>
 
+      {!canSendToPatient ? (
+        <Text style={styles.ownerBlock}>
+          AI konuşmayı yönetiyor. Hastaya mesaj göndermek için önce Devral.
+        </Text>
+      ) : null}
+
       <Pressable
-        style={[styles.btnSend, (busy || !patientDraft || sent || !draftId) && styles.btnDisabled]}
+        style={[
+          styles.btnSend,
+          (busy || !patientDraft || sent || !draftId || !canSendToPatient) && styles.btnDisabled,
+        ]}
         onPress={onSend}
-        disabled={busy || !patientDraft || sent || !draftId}
+        disabled={busy || !patientDraft || sent || !draftId || !canSendToPatient}
       >
         <Text style={styles.btnSendText}>{sent ? "Gönderildi ✓" : "Onayla ve gönder"}</Text>
       </Pressable>
-
-      {sent ? (
-        <Pressable style={styles.btnNewDraft} onPress={resetForNewMessage} disabled={busy}>
-          <Text style={styles.btnNewDraftText}>＋ Yeni taslak</Text>
-        </Pressable>
-      ) : null}
 
       {error ? (
         <Text style={[styles.error, sent && styles.errorMuted]}>{error}</Text>
@@ -403,8 +444,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#f0f9ff",
   },
   wrapCompact: { marginTop: 0, padding: 10, borderRadius: 10 },
-  title: { fontSize: 16, fontWeight: "700", color: "#0f172a", marginBottom: 4 },
-  titleCompact: { fontSize: 13, marginBottom: 6 },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 4,
+  },
+  title: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  titleInRow: { flex: 1, marginBottom: 0 },
+  titleCompact: { fontSize: 13 },
+  btnClear: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#94a3b8",
+    backgroundColor: "#fff",
+  },
+  btnClearText: { fontSize: 12, fontWeight: "700", color: "#475569" },
   sub: { fontSize: 12, color: "#475569", lineHeight: 17, marginBottom: 12 },
   label: { fontSize: 12, fontWeight: "600", color: "#334155", marginBottom: 6, marginTop: 8 },
   hint: { fontSize: 11, color: "#64748b", marginTop: 8, marginBottom: 4, lineHeight: 15 },
@@ -471,15 +529,14 @@ const styles = StyleSheet.create({
   warnBody: { fontSize: 11, color: "#78350f", marginTop: 4 },
   meta: { fontSize: 11, color: "#64748b", marginTop: 6 },
   error: { marginTop: 10, color: "#b91c1c", fontSize: 13 },
-  errorMuted: { color: "#047857" },
-  btnNewDraft: {
+  ownerBlock: {
     marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#93c5fd",
-    backgroundColor: "#fff",
-    alignItems: "center",
+    fontSize: 12,
+    color: "#92400e",
+    backgroundColor: "#fffbeb",
+    padding: 10,
+    borderRadius: 8,
+    lineHeight: 17,
   },
-  btnNewDraftText: { color: "#1d4ed8", fontWeight: "700", fontSize: 13 },
+  errorMuted: { color: "#047857" },
 });

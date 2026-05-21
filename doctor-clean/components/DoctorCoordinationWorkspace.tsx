@@ -21,8 +21,12 @@ import { InterventionControls } from "@/components/InterventionControls";
 import { LiveConversationFeed } from "@/components/LiveConversationFeed";
 import { OperationalActivityLog } from "@/components/OperationalActivityLog";
 import { PatientContextPanel } from "@/components/PatientContextPanel";
-import { operationalEventsFromFeed } from "@/lib/coordinationFeedUtils";
+import {
+  conversationTurnsFromFeed,
+  operationalEventsFromFeed,
+} from "@/lib/coordinationFeedUtils";
 import { useCoordinationWorkspace } from "@/hooks/useCoordinationWorkspace";
+import type { AiState } from "@/lib/coordinationWorkspaceTypes";
 
 type Props = {
   patientId: string;
@@ -36,16 +40,40 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
   const lastFocusedFieldRef = useRef<RefObject<View | null> | null>(null);
   const insets = useSafeAreaInsets();
   const [keyboardInset, setKeyboardInset] = useState(0);
-  const [showCoordinationDetails, setShowCoordinationDetails] = useState(false);
+  const [showCoordinationDetails, setShowCoordinationDetails] = useState(true);
   const { width } = useWindowDimensions();
   const isWide = width >= 960;
   const { data, loading, error, refresh } = useCoordinationWorkspace(patientId);
+  const [aiOverride, setAiOverride] = useState<Partial<AiState> | null>(null);
+
+  useEffect(() => {
+    setAiOverride(null);
+  }, [patientId]);
+
+  useEffect(() => {
+    if (data?.aiState) setAiOverride(null);
+  }, [
+    data?.aiState?.responderMode,
+    data?.aiState?.aiPaused,
+    data?.aiState?.aiEscalationRequired,
+  ]);
+
+  const aiState = useMemo(() => {
+    const base = data?.aiState;
+    if (!base) return base;
+    return aiOverride ? { ...base, ...aiOverride } : base;
+  }, [data?.aiState, aiOverride]);
+
+  const handleAiPatch = useCallback((patch: Partial<AiState>) => {
+    setAiOverride((prev) => ({ ...(prev || {}), ...patch }));
+  }, []);
 
   const feed = useMemo(
     () => data?.supervisionFeed || data?.conversation || data?.messages || [],
     [data],
   );
 
+  const messageTurns = useMemo(() => conversationTurnsFromFeed(feed), [feed]);
   const stats = useMemo(() => countFeedStats(feed), [feed]);
   const operationalEvents = useMemo(() => operationalEventsFromFeed(feed), [feed]);
 
@@ -128,6 +156,8 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
     );
   }
 
+  const refreshing = loading && !!data?.profile;
+
   if (!data?.profile) {
     return (
       <View style={styles.emptyCard}>
@@ -152,8 +182,10 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
       )}
       <DoctorIntentPanel
         patientId={patientId}
-        draftGenerationAllowed={data.aiState?.draftGenerationAllowed}
+        draftGenerationAllowed={aiState?.draftGenerationAllowed}
+        canSendToPatient={aiState?.canSendPatientMessageAsDoctor ?? aiState?.conversationOwner === "doctor"}
         onInputFocus={scrollFieldIntoView}
+        onMessageSent={() => void refresh()}
         compact={!isWide}
       />
     </>
@@ -162,13 +194,13 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
   const leftColumn = (
     <View style={styles.leftStack}>
       <CoordinationContextStrip
-        aiState={data.aiState}
+        aiState={aiState}
         leadHeat={data.leadHeat}
         strategy={data.currentStrategy}
       />
       <PatientContextPanel
         profile={data.profile}
-        aiState={data.aiState}
+        aiState={aiState}
         leadHeat={data.leadHeat}
         strategy={data.currentStrategy}
       />
@@ -190,7 +222,7 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         </View>
       </View>
       <LiveConversationFeed
-        turns={feed}
+        turns={messageTurns}
         patientName={data.profile.patientName}
         flex={isWide}
         embedInParentScroll={!isWide}
@@ -202,8 +234,9 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
     <View style={styles.rightStack}>
       <InterventionControls
         patientId={patientId}
-        aiState={data.aiState}
+        aiState={aiState}
         onRefresh={refresh}
+        onAiPatch={handleAiPatch}
         onGuideAi={scrollToIntent}
         onInputFocus={scrollFieldIntoView}
         compact={!isWide}
@@ -232,21 +265,17 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
     </View>
   ) : (
     <View style={styles.columnsStacked}>
+      {feedPanel}
       {rightColumn}
       <Pressable
         style={styles.detailsToggle}
         onPress={() => setShowCoordinationDetails((v) => !v)}
       >
         <Text style={styles.detailsToggleText}>
-          {showCoordinationDetails ? "▲ Bağlam ve akışı gizle" : "▼ Bağlam ve konuşma akışı"}
+          {showCoordinationDetails ? "▲ Hasta bağlamını gizle" : "▼ Hasta bağlamı"}
         </Text>
       </Pressable>
-      {showCoordinationDetails ? (
-        <>
-          {leftColumn}
-          {feedPanel}
-        </>
-      ) : null}
+      {showCoordinationDetails ? leftColumn : null}
     </View>
   );
 
@@ -270,6 +299,7 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         <Pressable onPress={refresh} style={styles.refreshBtn}>
           <Text style={styles.refreshBtnText}>↻ Yenile</Text>
         </Pressable>
+        {refreshing ? <ActivityIndicator size="small" color="#2563eb" /> : null}
       </View>
       {missionBar}
       {body}
@@ -296,6 +326,7 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
           <Pressable onPress={refresh} style={styles.refreshBtnCompact}>
             <Text style={styles.refreshBtnText}>↻</Text>
           </Pressable>
+          {refreshing ? <ActivityIndicator size="small" color="#2563eb" /> : null}
         </View>
         {missionBar}
         {body}
@@ -372,7 +403,7 @@ const styles = StyleSheet.create({
     padding: 12,
     minHeight: 480,
   },
-  feedCardMobile: { minHeight: 0, maxHeight: 200, flex: 0 },
+  feedCardMobile: { minHeight: 220, flex: 0 },
   feedHeader: {
     flexDirection: "row",
     justifyContent: "space-between",

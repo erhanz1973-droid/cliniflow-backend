@@ -1,6 +1,7 @@
 /**
  * Admin chat HTTP handlers for server/index.js (Supabase + JWT).
- * Single source of truth: patient_messages only (no legacy `messages` table merge or fallback).
+ * Canonical thread stream: merge `patient_messages` + `messages` (same as cliniflow-backend-clean
+ * `fetchMessagesFromSupabase`) so doctor/clinic rows that land in either table all hydrate for admin.
  */
 
 const UUID_RE_CHAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,13 +41,23 @@ function mapPatientMessagesRowToLegacy(row) {
       if (!Number.isNaN(p)) readAt = p;
     } else if (readRaw instanceof Date) readAt = readRaw.getTime();
   }
-  const bodyText =
+  let bodyText =
     row.text ??
     row.message ??
     row.content ??
     row.message_text ??
     row.body ??
     "";
+  if (!String(bodyText || "").trim() && row.payload != null) {
+    try {
+      const p = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+      if (p && typeof p === "object") {
+        bodyText = p.text ?? p.message ?? p.body ?? p.content ?? bodyText;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
   return {
     id: String(row.message_id || row.id || ""),
     text: String(bodyText || ""),
@@ -79,6 +90,57 @@ function isRenderableLegacyMessage(m) {
 
 function filterRenderableMessages(list) {
   return (Array.isArray(list) ? list : []).filter(isRenderableLegacyMessage);
+}
+
+/** `messages` table row → same legacy shape as GET merge in index.cjs `mapDbMessageToLegacyMessage`. */
+function mapMessagesTableRowToLegacy(row) {
+  if (!row) return null;
+  const senderRaw =
+    row.sender ??
+    row.sender_type ??
+    row.from_role ??
+    row.from ??
+    (row.from_patient !== undefined ? (row.from_patient ? "patient" : "clinic") : "");
+  const sender = String(senderRaw || "").toLowerCase();
+  const from = sender === "patient" ? "PATIENT" : "CLINIC";
+  const text =
+    row.message ??
+    row.message_text ??
+    row.text ??
+    row.content ??
+    row.body ??
+    "";
+  const createdRaw = row.created_at ?? row.createdAt;
+  let createdAt = now();
+  if (typeof createdRaw === "number") createdAt = createdRaw;
+  else if (typeof createdRaw === "string") {
+    const parsed = Date.parse(createdRaw);
+    if (!Number.isNaN(parsed)) createdAt = parsed;
+  } else if (createdRaw instanceof Date) {
+    createdAt = createdRaw.getTime();
+  }
+  let readAt = null;
+  const readRaw = row.read_at ?? row.readAt ?? row.admin_read_at ?? row.read_by_clinic_at ?? null;
+  if (readRaw != null) {
+    if (typeof readRaw === "number") readAt = readRaw;
+    else if (typeof readRaw === "string") {
+      const p = Date.parse(readRaw);
+      if (!Number.isNaN(p)) readAt = p;
+    } else if (readRaw instanceof Date) readAt = readRaw.getTime();
+  }
+  const out = {
+    id: String(row.id || row.message_id || row.messageId || ""),
+    text: String(text || ""),
+    from,
+    type: row.type || "text",
+    attachment: row.attachments ?? row.attachment ?? undefined,
+    createdAt,
+    patientId: row.patient_id || undefined,
+    ...(readAt != null ? { readAt } : {}),
+  };
+  const tidRaw = row.thread_id ?? row.threadId;
+  if (tidRaw != null && String(tidRaw).trim()) out.thread_id = String(tidRaw).trim();
+  return out;
 }
 
 async function resolveAdminClinicContext(supabase, adminJwt) {
@@ -199,22 +261,41 @@ function createChatController({ supabase, jwt, jwtSecret }) {
   }
 
   async function loadPatientMessagesOnly(resolvedUuid) {
-    const { data, error } = await supabase
-      .from("patient_messages")
-      .select("*")
-      .eq("patient_id", resolvedUuid)
-      .order("created_at", { ascending: true });
+    const [pmRes, mgRes] = await Promise.all([
+      supabase
+        .from("patient_messages")
+        .select("*")
+        .eq("patient_id", resolvedUuid)
+        .order("created_at", { ascending: true }),
+      supabase.from("messages").select("*").eq("patient_id", resolvedUuid).order("created_at", { ascending: true }),
+    ]);
 
-    if (error) {
-      const c = String(error.code || "");
-      if (["42P01", "PGRST205", "PGRST116"].includes(c)) {
-        return { messages: [], fetchError: null };
-      }
-      return { messages: [], fetchError: error.message || "fetch_failed" };
+    const ignorableFetchErr = (e) => {
+      if (!e) return true;
+      const c = String(e.code || "");
+      return ["42P01", "PGRST205", "PGRST116"].includes(c);
+    };
+
+    if (!ignorableFetchErr(pmRes.error) && !ignorableFetchErr(mgRes.error)) {
+      return {
+        messages: [],
+        fetchError: pmRes.error?.message || mgRes.error?.message || "fetch_failed",
+      };
     }
 
-    const messages = (data || []).map(mapPatientMessagesRowToLegacy).filter(Boolean);
-    return { messages, fetchError: null };
+    const pmRows = !pmRes.error && Array.isArray(pmRes.data) ? pmRes.data : [];
+    const mgRows = !mgRes.error && Array.isArray(mgRes.data) ? mgRes.data : [];
+
+    const legacyPm = pmRows.map(mapPatientMessagesRowToLegacy).filter(Boolean);
+    const legacyMg = mgRows.map(mapMessagesTableRowToLegacy).filter(Boolean);
+
+    const sortKey = (m) => {
+      const t = Number(m?.createdAt);
+      return Number.isFinite(t) ? t : 0;
+    };
+    const merged = [...legacyPm, ...legacyMg].sort((a, b) => sortKey(a) - sortKey(b));
+
+    return { messages: merged, fetchError: null };
   }
 
   async function assertPatientCanAccessThread(req, resolvedUuid, prow) {

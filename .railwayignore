@@ -1,0 +1,23 @@
+# Monorepo: exclude paths outside cliniflow-backend-clean when Root Directory is repo root (misconfig fallback).
+
+cliniflow-backend/
+cliniflow-app/
+cliniflow-admin/
+doctor-clean/
+public/
+server/
+server_OLD/
+routes/
+migrations/
+tmp-backend-clean-deploy/
+tmp/
+node_modules
+.expo
+dist
+build
+.git
+
+# Legacy root backend (not Railway live entry)
+index.cjs
+package.json
+package-lock.json

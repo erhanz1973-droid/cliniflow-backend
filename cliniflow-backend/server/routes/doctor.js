@@ -23,6 +23,7 @@ type TreatmentPlan = {
   procedure_name: string;
   scheduled_date?: string;
   date?: string;
+  time?: string;
   created_at?: string;
   patient: {
     name: string;
@@ -46,6 +47,13 @@ function getStatusColor(status: TodayAppointmentStatus) {
   if (status === "in_progress") return "#16a34a";
   if (status === "completed") return "#9ca3af";
   return "#2563eb";
+}
+
+function normalizeApptStatus(status: string): TodayAppointmentStatus {
+  const s = String(status || "").trim().toLowerCase();
+  if (s === "in_progress" || s === "in-progress" || s === "ongoing") return "in_progress";
+  if (s === "completed" || s === "done" || s === "finished") return "completed";
+  return "scheduled";
 }
 
 // Tarih karşılaştırma yardımcısı
@@ -77,6 +85,7 @@ export default function DoctorDashboard() {
   const [todayAppointments, setTodayAppointments] = useState<TreatmentPlan[]>([]);
   const [tomorrowAppointments, setTomorrowAppointments] = useState<TreatmentPlan[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<TreatmentPlan[]>([]);
+  const [dashboardTimezone, setDashboardTimezone] = useState<string>("UTC");
 
   const fetchDashboard = useCallback(async () => {
     if (!token) {
@@ -94,6 +103,7 @@ export default function DoctorDashboard() {
       setDoctorInfo(data.doctor || null);
       setStats(data.stats || { planned: 0, in_progress: 0, done: 0, today: 0, waiting: 0 });
       setRecentPatients(Array.isArray(data.recentPatients) ? data.recentPatients.slice(0, 5) : []);
+      setDashboardTimezone(String(data?.dashboardCalendar?.timezone || "UTC"));
 
       /** cliniflow-backend-clean: todayAppointments / tomorrowAppointments (recentTreatmentPlans yok) */
       const mapDashboardAppt = (a: any): TreatmentPlan => {
@@ -116,6 +126,7 @@ export default function DoctorDashboard() {
           procedure_name: String(a?.procedureSummary || "Randevu"),
           scheduled_date: sched,
           date: sched,
+          time: timePart && timePart.length >= 4 ? timePart.slice(0, 5) : "",
           patient: { name: String(a?.patientName || "Hasta") },
         };
       };
@@ -221,24 +232,40 @@ export default function DoctorDashboard() {
   // Plan kartı render fonksiyonu
   const renderPlanCard = (plan: TreatmentPlan, isToday: boolean, isTomorrow: boolean) => {
     const dateStr = plan.scheduled_date || plan.date || plan.created_at;
-    let dateLabel = "Tarih belirtilmemiş";
+    let dateLabel = "Tarih yok";
     let timeLabel = "";
     
     if (dateStr) {
       const date = new Date(dateStr);
       if (isToday) {
-        dateLabel = "📅 Bugün";
+        dateLabel = "Bugün";
       } else if (isTomorrow) {
-        dateLabel = "📅 Yarın";
+        dateLabel = "Yarın";
       } else {
-        dateLabel = `📅 ${formatDateTR(date)}`;
+        dateLabel = formatDateTR(date);
       }
       
       // Saat varsa göster
-      if (plan.scheduled_date || plan.date) {
-        timeLabel = date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+      // Use backend-provided clinic-local time directly to avoid double timezone conversion.
+      if (plan.time && String(plan.time).trim()) {
+        timeLabel = String(plan.time).trim().slice(0, 5);
+      } else if (plan.scheduled_date || plan.date) {
+        try {
+          timeLabel = new Intl.DateTimeFormat("tr-TR", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: dashboardTimezone || "UTC",
+          }).format(date);
+        } catch {
+          timeLabel = date.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", hour12: false });
+        }
       }
     }
+
+    const normalizedStatus = normalizeApptStatus(plan.status);
+    const statusLabel = getStatusLabel(normalizedStatus, t);
+    const statusColor = getStatusColor(normalizedStatus);
 
     return (
       <TouchableOpacity
@@ -255,17 +282,15 @@ export default function DoctorDashboard() {
         </View>
         
         <View style={styles.planContent}>
-          <Text style={styles.planPatient}>{plan.patient?.name || "Hasta"}</Text>
-          <Text style={styles.planProcedure}>{plan.procedure_name}</Text>
-          
-          <View style={styles.planFooter}>
-            <View style={[styles.statusBadge, { backgroundColor: plan.status === 'planned' ? '#dbeafe' : '#dcfce7' }]}>
-              <Text style={[styles.statusBadgeText, { color: plan.status === 'planned' ? '#1e40af' : '#166534' }]}>
-                {plan.status === 'planned' ? 'Planlandı' : plan.status}
-              </Text>
+          <View style={styles.planTopRow}>
+            <Text numberOfLines={1} style={styles.planPatient}>{plan.patient?.name || "Hasta"}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: `${statusColor}1a` }]}>
+              <Text style={[styles.statusBadgeText, { color: statusColor }]}>{statusLabel}</Text>
             </View>
           </View>
+          <Text numberOfLines={1} style={styles.planProcedure}>{plan.procedure_name || "Randevu"}</Text>
         </View>
+        <Text style={styles.planChevron}>›</Text>
       </TouchableOpacity>
     );
   };
@@ -528,7 +553,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 1,
-    padding: 12,
+    padding: 8,
   },
   actionsRow: {
     flexDirection: "row",
@@ -566,18 +591,26 @@ const styles = StyleSheet.create({
   planCard: {
     backgroundColor: "#f9fafb",
     borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 50,
   },
   dateBadge: {
     backgroundColor: "#f3f4f6",
     borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    alignSelf: "flex-start",
-    marginBottom: 8,
+    width: 56,
+    minHeight: 34,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+    flexShrink: 0,
   },
   dateBadgeToday: {
     backgroundColor: "#dcfce7",
@@ -586,9 +619,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#dbeafe",
   },
   dateBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     color: "#6b7280",
     fontWeight: "600",
+    textAlign: "center",
   },
   dateBadgeTextHighlight: {
     color: "#111827",
@@ -597,35 +631,48 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 10,
     color: "#9ca3af",
-    marginTop: 2,
+    marginTop: 1,
   },
   planContent: {
     flex: 1,
+    minWidth: 0,
+  },
+  planTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+    marginBottom: 1,
   },
   planPatient: {
-    fontSize: 15,
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
     fontWeight: "700",
     color: "#111827",
+    lineHeight: 17,
   },
   planProcedure: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#6b7280",
-    marginTop: 2,
-  },
-  planFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 8,
+    lineHeight: 15,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    marginLeft: 6,
+    flexShrink: 0,
   },
   statusBadgeText: {
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: "700",
+  },
+  planChevron: {
+    fontSize: 14,
+    color: "#94a3b8",
+    marginLeft: 6,
+    lineHeight: 16,
   },
   // Hasta Stilleri
   patientRow: {

@@ -1,8 +1,6 @@
-[build]
-builder = "nixpacks"
+# Monorepo root — production API runs from cliniflow-backend-clean/ (set Root Directory in Railway UI).
+# Do not use Nixpacks here; the live service uses cliniflow-backend-clean/Dockerfile.
 
 [deploy]
-startCommand = "npm start"
-healthcheckPath = "/api/health"
-healthcheckTimeout = 120
-restartPolicyType = "ON_FAILURE"
+healthcheckPath = "/health"
+healthcheckTimeout = 300

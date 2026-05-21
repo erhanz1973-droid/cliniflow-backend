@@ -537,23 +537,84 @@ router.get('/patient/:patientId/messages', adminAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: "Patient not found" });
     }
 
-    // Get messages for this patient
-    const { data: messages, error: messagesError } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("patient_id", patientId)
-      .order("created_at", { ascending: true });
+    // Canonical thread: merge `patient_messages` (doctor/admin fast path) + `messages` (legacy / rich rows).
+    const [mgRes, pmRes] = await Promise.all([
+      supabase.from("messages").select("*").eq("patient_id", patientId).order("created_at", { ascending: true }),
+      supabase.from("patient_messages").select("*").eq("patient_id", patientId).order("created_at", { ascending: true }),
+    ]);
 
-    if (messagesError) {
-      console.error("[ADMIN PATIENT MESSAGES] Database error:", messagesError);
+    const ignorable = (e) => {
+      if (!e) return true;
+      const c = String(e.code || "");
+      return ["42P01", "PGRST205", "PGRST116"].includes(c);
+    };
+
+    if (!ignorable(mgRes.error) && !ignorable(pmRes.error)) {
+      console.error("[ADMIN PATIENT MESSAGES] Database error:", mgRes.error || pmRes.error);
       return res.status(500).json({ ok: false, error: "failed_to_fetch_messages" });
     }
 
-    console.log(`[ADMIN PATIENT MESSAGES] Found ${messages?.length || 0} messages for patient ${patientId}`);
+    const mgRows = !mgRes.error && Array.isArray(mgRes.data) ? mgRes.data : [];
+    const pmRows = !pmRes.error && Array.isArray(pmRes.data) ? pmRes.data : [];
+
+    function mapPm(r) {
+      if (!r) return null;
+      const role = String(r.from_role || "").toLowerCase();
+      const from = role === "patient" ? "PATIENT" : "CLINIC";
+      const createdRaw = r.created_at;
+      let createdAt = Date.now();
+      if (typeof createdRaw === "number") createdAt = createdRaw;
+      else if (typeof createdRaw === "string") {
+        const p = Date.parse(createdRaw);
+        if (!Number.isNaN(p)) createdAt = p;
+      }
+      const text =
+        r.text ?? r.message ?? r.content ?? r.message_text ?? r.body ?? "";
+      return {
+        id: String(r.message_id || r.id || ""),
+        text: String(text || ""),
+        from,
+        type: r.type || "text",
+        createdAt,
+        patientId: r.patient_id,
+      };
+    }
+
+    function mapMg(r) {
+      if (!r) return null;
+      const sender = String(r.sender_type || r.sender || r.from_role || "").toLowerCase();
+      const from = sender === "patient" ? "PATIENT" : "CLINIC";
+      const createdRaw = r.created_at;
+      let createdAt = Date.now();
+      if (typeof createdRaw === "number") createdAt = createdRaw;
+      else if (typeof createdRaw === "string") {
+        const p = Date.parse(createdRaw);
+        if (!Number.isNaN(p)) createdAt = p;
+      }
+      const text = r.message ?? r.message_text ?? r.text ?? r.content ?? r.body ?? "";
+      return {
+        id: String(r.id || r.message_id || ""),
+        text: String(text || ""),
+        from,
+        type: r.type || "text",
+        createdAt,
+        patientId: r.patient_id,
+      };
+    }
+
+    const legacyPm = pmRows.map(mapPm).filter(Boolean);
+    const legacyMg = mgRows.map(mapMg).filter(Boolean);
+    const sortKey = (m) => {
+      const t = Number(m.createdAt);
+      return Number.isFinite(t) ? t : 0;
+    };
+    const messages = [...legacyPm, ...legacyMg].sort((a, b) => sortKey(a) - sortKey(b));
+
+    console.log(`[ADMIN PATIENT MESSAGES] Found ${messages.length} merged messages for patient ${patientId}`);
 
     res.json({
       ok: true,
-      messages: messages || []
+      messages,
     });
 
   } catch (error) {
