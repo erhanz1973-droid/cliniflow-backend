@@ -1,5 +1,14 @@
-import { useEffect, useRef } from "react";
-import { FlatList, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
+import {
+  FlatList,
+  InteractionManager,
+  StyleSheet,
+  Text,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ViewStyle,
+} from "react-native";
 
 import type { ConversationTurn } from "@/lib/coordinationWorkspaceTypes";
 
@@ -88,12 +97,20 @@ function metaForTurn(item: ConversationTurn): RoleMeta {
   return ROLE_META[item.role] || ROLE_META.system;
 }
 
+const NEAR_BOTTOM_PX = 96;
+
 type Props = {
   turns: ConversationTurn[];
   patientName?: string;
   flex?: boolean;
   /** Render static rows inside a parent ScrollView (no nested VirtualizedList). */
   embedInParentScroll?: boolean;
+  /** Resets initial auto-scroll when the conversation changes. */
+  scrollKey?: string;
+  /** Anchor at the last message — parent ScrollView can scroll this into view. */
+  bottomAnchorRef?: RefObject<View | null>;
+  /** Fired after embedded message list lays out (parent may scroll to bottom). */
+  onEmbeddedContentChange?: () => void;
 };
 
 function TurnRow({
@@ -134,13 +151,64 @@ export function LiveConversationFeed({
   patientName,
   flex,
   embedInParentScroll = false,
+  scrollKey,
+  bottomAnchorRef,
+  onEmbeddedContentChange,
 }: Props) {
   const listRef = useRef<FlatList<ConversationTurn>>(null);
+  const userNearBottomRef = useRef(true);
+  const initialScrollDoneRef = useRef(false);
+  const lastTurnIdRef = useRef<string | undefined>(undefined);
+
+  const scrollListToLatest = useCallback((animated: boolean) => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
 
   useEffect(() => {
-    if (embedInParentScroll || turns.length === 0) return;
-    listRef.current?.scrollToEnd({ animated: true });
-  }, [embedInParentScroll, turns.length, turns[turns.length - 1]?.id]);
+    initialScrollDoneRef.current = false;
+    userNearBottomRef.current = true;
+    lastTurnIdRef.current = undefined;
+  }, [scrollKey]);
+
+  const onListScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+    userNearBottomRef.current =
+      contentOffset.y + layoutMeasurement.height >= contentSize.height - NEAR_BOTTOM_PX;
+  }, []);
+
+  useEffect(() => {
+    if (embedInParentScroll) {
+      if (turns.length > 0) onEmbeddedContentChange?.();
+      return;
+    }
+    if (turns.length === 0) return;
+
+    const lastId = turns[turns.length - 1]?.id;
+    const isNewTail = lastId !== lastTurnIdRef.current;
+    lastTurnIdRef.current = lastId;
+
+    if (!initialScrollDoneRef.current) {
+      const task = InteractionManager.runAfterInteractions(() => {
+        scrollListToLatest(false);
+        initialScrollDoneRef.current = true;
+        userNearBottomRef.current = true;
+      });
+      return () => task.cancel();
+    }
+
+    if (isNewTail && userNearBottomRef.current) {
+      scrollListToLatest(true);
+    }
+  }, [
+    embedInParentScroll,
+    turns,
+    turns.length,
+    turns[turns.length - 1]?.id,
+    onEmbeddedContentChange,
+    scrollListToLatest,
+  ]);
 
   if (!turns.length) {
     return (
@@ -153,12 +221,17 @@ export function LiveConversationFeed({
     );
   }
 
+  const bottomAnchor = (
+    <View ref={bottomAnchorRef} collapsable={false} style={styles.bottomAnchor} />
+  );
+
   if (embedInParentScroll) {
     return (
       <View style={[styles.list, styles.listEmbedded]}>
         {turns.map((item) => (
           <TurnRow key={item.id} item={item} patientName={patientName} />
         ))}
+        {bottomAnchor}
       </View>
     );
   }
@@ -171,6 +244,16 @@ export function LiveConversationFeed({
       style={[styles.list, flex && styles.listFlex]}
       contentContainerStyle={styles.listContent}
       renderItem={({ item }) => <TurnRow item={item} patientName={patientName} />}
+      onScroll={onListScroll}
+      scrollEventThrottle={16}
+      ListFooterComponent={bottomAnchor}
+      onContentSizeChange={() => {
+        if (!initialScrollDoneRef.current && turns.length > 0) {
+          scrollListToLatest(false);
+          initialScrollDoneRef.current = true;
+          userNearBottomRef.current = true;
+        }
+      }}
     />
   );
 }
@@ -253,4 +336,5 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 14, fontWeight: "600", color: "#374151", marginBottom: 4 },
   emptyBody: { fontSize: 12, color: "#6b7280", textAlign: "center", lineHeight: 18 },
+  bottomAnchor: { height: 1 },
 });

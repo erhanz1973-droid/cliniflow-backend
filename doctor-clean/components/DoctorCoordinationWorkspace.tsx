@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -35,9 +36,12 @@ type Props = {
 export function DoctorCoordinationWorkspace({ patientId }: Props) {
   const intentRef = useRef<ScrollView>(null);
   const mainScrollRef = useRef<ScrollView>(null);
+  const feedBottomRef = useRef<View>(null);
   const keyboardInsetRef = useRef(0);
   const scrollYRef = useRef(0);
-  const lastFocusedFieldRef = useRef<RefObject<View | null> | null>(null);
+  const feedNearBottomRef = useRef(true);
+  const initialFeedScrollDoneRef = useRef(false);
+  const lastFeedTurnIdRef = useRef<string | undefined>(undefined);
   const insets = useSafeAreaInsets();
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [showCoordinationDetails, setShowCoordinationDetails] = useState(true);
@@ -85,47 +89,61 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
     }
   };
 
-  const scrollFieldIntoView = useCallback(
-    (fieldRef?: RefObject<View | null>) => {
-      if (fieldRef) lastFocusedFieldRef.current = fieldRef;
-      if (isWide) {
-        scrollToIntent();
-        return;
-      }
-      const anchor = fieldRef?.current ?? lastFocusedFieldRef.current?.current;
-      const headerClearance = insets.top + 40;
-      const delays = Platform.OS === "ios" ? [50, 220, 420] : [50, 180];
-      delays.forEach((ms, index) => {
-        setTimeout(() => {
-          const kb = keyboardInsetRef.current || 280;
-          const measureTarget = anchor;
-          if (!measureTarget) {
-            if (index === delays.length - 1) scrollToIntent();
-            return;
+  const scrollFeedToLatest = useCallback(
+    (animated: boolean) => {
+      if (isWide) return;
+      const anchor = feedBottomRef.current;
+      if (!anchor) return;
+      requestAnimationFrame(() => {
+        anchor.measureInWindow((_x, y, _w, h) => {
+          const winH = Dimensions.get("window").height;
+          const kb = keyboardInsetRef.current || 0;
+          const visibleBottom = winH - kb - insets.bottom - 32;
+          const feedBottom = y + h;
+          const overflow = feedBottom - visibleBottom;
+          if (overflow > 0) {
+            mainScrollRef.current?.scrollTo({
+              y: Math.max(0, scrollYRef.current + overflow + 8),
+              animated,
+            });
           }
-          measureTarget.measureInWindow((_x, y, _w, h) => {
-            const winH = Dimensions.get("window").height;
-            const fieldTop = y;
-            const fieldBottom = y + h;
-            const visibleMax = winH - kb - insets.bottom - 24;
-            let delta = 0;
-            if (fieldBottom > visibleMax) {
-              delta = fieldBottom - visibleMax + 16;
-            } else if (fieldTop < headerClearance) {
-              delta = fieldTop - headerClearance - 8;
-            }
-            if (delta !== 0) {
-              mainScrollRef.current?.scrollTo({
-                y: Math.max(0, scrollYRef.current + delta),
-                animated: index === delays.length - 1,
-              });
-            }
-          });
-        }, ms);
+        });
       });
     },
-    [isWide, insets.top, insets.bottom],
+    [isWide, insets.bottom],
   );
+
+  useEffect(() => {
+    initialFeedScrollDoneRef.current = false;
+    feedNearBottomRef.current = true;
+    lastFeedTurnIdRef.current = undefined;
+  }, [patientId]);
+
+  const handleEmbeddedFeedChange = useCallback(() => {
+    if (isWide || messageTurns.length === 0) return;
+    if (!initialFeedScrollDoneRef.current) {
+      InteractionManager.runAfterInteractions(() => {
+        scrollFeedToLatest(false);
+        initialFeedScrollDoneRef.current = true;
+        feedNearBottomRef.current = true;
+        lastFeedTurnIdRef.current = messageTurns[messageTurns.length - 1]?.id;
+      });
+    }
+  }, [isWide, messageTurns, scrollFeedToLatest]);
+
+  useEffect(() => {
+    if (isWide || loading || messageTurns.length === 0) return;
+
+    const lastId = messageTurns[messageTurns.length - 1]?.id;
+    const isNewTail = lastId !== lastFeedTurnIdRef.current;
+    lastFeedTurnIdRef.current = lastId;
+
+    if (!initialFeedScrollDoneRef.current) return;
+
+    if (isNewTail && feedNearBottomRef.current) {
+      scrollFeedToLatest(true);
+    }
+  }, [isWide, loading, messageTurns, scrollFeedToLatest]);
 
   useEffect(() => {
     if (isWide) return undefined;
@@ -135,7 +153,6 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
       const h = e.endCoordinates?.height ?? 280;
       keyboardInsetRef.current = h;
       setKeyboardInset(h);
-      scrollFieldIntoView(lastFocusedFieldRef.current ?? undefined);
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
       keyboardInsetRef.current = 0;
@@ -145,7 +162,7 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
       showSub.remove();
       hideSub.remove();
     };
-  }, [isWide, scrollFieldIntoView]);
+  }, [isWide]);
 
   if (loading && !data?.profile) {
     return (
@@ -184,7 +201,6 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         patientId={patientId}
         draftGenerationAllowed={aiState?.draftGenerationAllowed}
         canSendToPatient={aiState?.canSendPatientMessageAsDoctor ?? aiState?.conversationOwner === "doctor"}
-        onInputFocus={scrollFieldIntoView}
         onMessageSent={() => void refresh()}
         compact={!isWide}
       />
@@ -226,6 +242,9 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         patientName={data.profile.patientName}
         flex={isWide}
         embedInParentScroll={!isWide}
+        scrollKey={patientId}
+        bottomAnchorRef={feedBottomRef}
+        onEmbeddedContentChange={handleEmbeddedFeedChange}
       />
     </View>
   );
@@ -238,7 +257,6 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         onRefresh={refresh}
         onAiPatch={handleAiPatch}
         onGuideAi={scrollToIntent}
-        onInputFocus={scrollFieldIntoView}
         compact={!isWide}
       />
       {isWide ? (
@@ -318,7 +336,10 @@ export function DoctorCoordinationWorkspace({ patientId }: Props) {
         keyboardDismissMode="interactive"
         nestedScrollEnabled
         onScroll={(e) => {
-          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          scrollYRef.current = contentOffset.y;
+          feedNearBottomRef.current =
+            contentOffset.y + layoutMeasurement.height >= contentSize.height - 150;
         }}
         scrollEventThrottle={16}
       >
