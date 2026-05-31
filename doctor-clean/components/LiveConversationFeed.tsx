@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   InteractionManager,
+  Pressable,
   StyleSheet,
   Text,
   View,
@@ -9,8 +12,15 @@ import {
   type NativeSyntheticEvent,
   type ViewStyle,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
-import type { ConversationTurn } from "@/lib/coordinationWorkspaceTypes";
+import type { ConversationTurn, MessageTranslation } from "@/lib/coordinationWorkspaceTypes";
+import {
+  langFlag,
+  pickCachedTranslation,
+  translateDoctorMessage,
+} from "@/lib/doctorChatTranslationApi";
+import { getDoctorPreferredLanguage } from "@/lib/doctorPreferredLanguage";
 
 type BubbleStyleKey =
   | "bubblePatient"
@@ -103,45 +113,81 @@ type Props = {
   turns: ConversationTurn[];
   patientName?: string;
   flex?: boolean;
-  /** Render static rows inside a parent ScrollView (no nested VirtualizedList). */
   embedInParentScroll?: boolean;
-  /** Resets initial auto-scroll when the conversation changes. */
   scrollKey?: string;
-  /** Anchor at the last message — parent ScrollView can scroll this into view. */
   bottomAnchorRef?: RefObject<View | null>;
-  /** Fired after embedded message list lays out (parent may scroll to bottom). */
   onEmbeddedContentChange?: () => void;
+};
+
+type TurnRowProps = {
+  item: ConversationTurn;
+  patientName?: string;
+  doctorLang: string;
+  translation?: MessageTranslation | null;
+  translationVisible: boolean;
+  translating: boolean;
+  onOpenMenu: (item: ConversationTurn) => void;
 };
 
 function TurnRow({
   item,
   patientName,
-}: {
-  item: ConversationTurn;
-  patientName?: string;
-}) {
+  doctorLang,
+  translation,
+  translationVisible,
+  translating,
+  onOpenMenu,
+}: TurnRowProps) {
   const meta = metaForTurn(item);
   const bubbleStyle = styles[meta.bubbleKey] as ViewStyle;
   const isSystem = item.kind === "system" || item.role === "system";
   const displayLabel = String(item.label || "").trim();
   const who =
-    item.role === "patient" && patientName
-      ? patientName
-      : displayLabel || meta.label;
+    item.role === "patient" && patientName ? patientName : displayLabel || meta.label;
 
   return (
     <View style={[styles.turn, isSystem && styles.turnSystem]}>
-      <Text style={[styles.who, { color: meta.labelColor }]}>
-        {meta.emoji} {who}
-        {item.at ? <Text style={styles.time}> · {formatTime(item.at)}</Text> : null}
-      </Text>
+      <View style={styles.turnHeader}>
+        <Text style={[styles.who, { color: meta.labelColor }]}>
+          {meta.emoji} {who}
+          {item.at ? <Text style={styles.time}> · {formatTime(item.at)}</Text> : null}
+        </Text>
+        {!isSystem && String(item.text || "").trim() ? (
+          <Pressable
+            onPress={() => onOpenMenu(item)}
+            hitSlop={8}
+            style={styles.menuBtn}
+            accessibilityLabel="Mesaj menüsü"
+          >
+            <Text style={styles.menuBtnText}>⋯</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {meta.caption ? <Text style={styles.caption}>{meta.caption}</Text> : null}
       {item.label && item.kind !== "system" ? (
         <Text style={styles.eventLabel}>{item.label}</Text>
       ) : null}
-      <View style={[styles.bubble, bubbleStyle, isSystem && styles.bubbleSystemOnly]}>
+      <Pressable
+        onLongPress={() => onOpenMenu(item)}
+        delayLongPress={280}
+        style={[styles.bubble, bubbleStyle, isSystem && styles.bubbleSystemOnly]}
+      >
         <Text style={[styles.body, isSystem && styles.bodySystem]}>{item.text}</Text>
-      </View>
+        {translationVisible && translation?.translatedText ? (
+          <View style={styles.translationBlock}>
+            <Text style={styles.translationLine}>
+              {langFlag(translation.targetLanguage || doctorLang)}{" "}
+              {translation.translatedText}
+            </Text>
+          </View>
+        ) : null}
+        {translating ? (
+          <View style={styles.translatingRow}>
+            <ActivityIndicator size="small" color="#64748b" />
+            <Text style={styles.translatingText}>Çevriliyor…</Text>
+          </View>
+        ) : null}
+      </Pressable>
     </View>
   );
 }
@@ -160,6 +206,32 @@ export function LiveConversationFeed({
   const initialScrollDoneRef = useRef(false);
   const lastTurnIdRef = useRef<string | undefined>(undefined);
 
+  const [doctorLang, setDoctorLang] = useState("tr");
+  const [translationById, setTranslationById] = useState<Record<string, MessageTranslation>>({});
+  const [visibleTranslationIds, setVisibleTranslationIds] = useState<Set<string>>(new Set());
+  const [translatingIds, setTranslatingIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    void getDoctorPreferredLanguage().then(setDoctorLang);
+  }, []);
+
+  useEffect(() => {
+    if (!doctorLang || !turns.length) return;
+    setTranslationById((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const turn of turns) {
+        if (next[turn.id]) continue;
+        const cached = pickCachedTranslation(turn.translation, doctorLang);
+        if (cached) {
+          next[turn.id] = cached;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [turns, doctorLang]);
+
   const scrollListToLatest = useCallback((animated: boolean) => {
     requestAnimationFrame(() => {
       listRef.current?.scrollToEnd({ animated });
@@ -177,6 +249,90 @@ export function LiveConversationFeed({
     userNearBottomRef.current =
       contentOffset.y + layoutMeasurement.height >= contentSize.height - NEAR_BOTTOM_PX;
   }, []);
+
+  const toggleTranslationVisibility = useCallback((messageId: string, visible: boolean) => {
+    setVisibleTranslationIds((prev) => {
+      const next = new Set(prev);
+      if (visible) next.add(messageId);
+      else next.delete(messageId);
+      return next;
+    });
+  }, []);
+
+  const ensureTranslation = useCallback(
+    async (item: ConversationTurn) => {
+      const messageId = String(item.id || "").trim();
+      if (!messageId) return null;
+
+      const existing = translationById[messageId];
+      if (existing?.translatedText) return existing;
+
+      setTranslatingIds((prev) => new Set(prev).add(messageId));
+      try {
+        const lang = doctorLang || (await getDoctorPreferredLanguage());
+        const res = await translateDoctorMessage(messageId, lang);
+        const tr: MessageTranslation = {
+          sourceLanguage: String(res.sourceLanguage || res.translation?.sourceLanguage || "auto"),
+          targetLanguage: String(res.targetLanguage || res.translation?.targetLanguage || lang),
+          translatedText: String(
+            res.translatedText || res.translation?.translatedText || "",
+          ).trim(),
+          translatedAt: res.translation?.translatedAt,
+        };
+        if (!tr.translatedText) return null;
+        setTranslationById((prev) => ({ ...prev, [messageId]: tr }));
+        return tr;
+      } catch {
+        Alert.alert("Çeviri", "Mesaj çevrilemedi. Lütfen tekrar deneyin.");
+        return null;
+      } finally {
+        setTranslatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(messageId);
+          return next;
+        });
+      }
+    },
+    [doctorLang, translationById],
+  );
+
+  const openMessageMenu = useCallback(
+    (item: ConversationTurn) => {
+      const messageId = String(item.id || "").trim();
+      const text = String(item.text || "").trim();
+      if (!messageId || !text) return;
+
+      const hasVisible = visibleTranslationIds.has(messageId);
+      const hasTranslation = Boolean(translationById[messageId]?.translatedText);
+
+      Alert.alert("", undefined, [
+        {
+          text: "📋 Copy",
+          onPress: () => {
+            void Clipboard.setStringAsync(text);
+          },
+        },
+        {
+          text: hasVisible ? "🌐 Hide Translation" : "🌐 Show Translation",
+          onPress: () => {
+            void (async () => {
+              if (hasVisible) {
+                toggleTranslationVisibility(messageId, false);
+                return;
+              }
+              if (!hasTranslation) {
+                const tr = await ensureTranslation(item);
+                if (!tr) return;
+              }
+              toggleTranslationVisibility(messageId, true);
+            })();
+          },
+        },
+        { text: "İptal", style: "cancel" },
+      ]);
+    },
+    [ensureTranslation, toggleTranslationVisibility, translationById, visibleTranslationIds],
+  );
 
   useEffect(() => {
     if (embedInParentScroll) {
@@ -225,11 +381,23 @@ export function LiveConversationFeed({
     <View ref={bottomAnchorRef} collapsable={false} style={styles.bottomAnchor} />
   );
 
+  const renderTurn = (item: ConversationTurn) => (
+    <TurnRow
+      item={item}
+      patientName={patientName}
+      doctorLang={doctorLang}
+      translation={translationById[item.id] || pickCachedTranslation(item.translation, doctorLang)}
+      translationVisible={visibleTranslationIds.has(item.id)}
+      translating={translatingIds.has(item.id)}
+      onOpenMenu={openMessageMenu}
+    />
+  );
+
   if (embedInParentScroll) {
     return (
       <View style={[styles.list, styles.listEmbedded]}>
         {turns.map((item) => (
-          <TurnRow key={item.id} item={item} patientName={patientName} />
+          <View key={item.id}>{renderTurn(item)}</View>
         ))}
         {bottomAnchor}
       </View>
@@ -243,7 +411,7 @@ export function LiveConversationFeed({
       keyExtractor={(item) => item.id}
       style={[styles.list, flex && styles.listFlex]}
       contentContainerStyle={styles.listContent}
-      renderItem={({ item }) => <TurnRow item={item} patientName={patientName} />}
+      renderItem={({ item }) => renderTurn(item)}
       onScroll={onListScroll}
       scrollEventThrottle={16}
       ListFooterComponent={bottomAnchor}
@@ -265,8 +433,21 @@ const styles = StyleSheet.create({
   listContent: { paddingVertical: 8, gap: 14, paddingBottom: 16 },
   turn: { marginBottom: 2 },
   turnSystem: { marginVertical: 4 },
-  who: { fontSize: 12, fontWeight: "700", marginBottom: 2 },
+  turnHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  who: { fontSize: 12, fontWeight: "700", marginBottom: 2, flex: 1 },
   time: { fontWeight: "400", color: "#9ca3af" },
+  menuBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: "#f3f4f6",
+  },
+  menuBtnText: { fontSize: 16, lineHeight: 18, color: "#6b7280", fontWeight: "700" },
   caption: { fontSize: 10, color: "#9ca3af", marginBottom: 4, fontStyle: "italic" },
   eventLabel: { fontSize: 10, color: "#6b7280", marginBottom: 4, fontWeight: "600" },
   bubble: {
@@ -324,6 +505,24 @@ const styles = StyleSheet.create({
   },
   body: { fontSize: 14, lineHeight: 21, color: "#111827" },
   bodySystem: { fontSize: 12, color: "#4b5563", textAlign: "center" },
+  translationBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(148, 163, 184, 0.35)",
+  },
+  translationLine: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: "#334155",
+  },
+  translatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  translatingText: { fontSize: 12, color: "#64748b" },
   empty: {
     padding: 20,
     alignItems: "center",

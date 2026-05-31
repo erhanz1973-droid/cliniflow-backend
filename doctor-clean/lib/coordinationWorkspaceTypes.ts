@@ -9,6 +9,13 @@ export type ConversationRole =
 
 export type ConversationKind = "message" | "system" | "doctor_intent" | "ai_draft";
 
+export type MessageTranslation = {
+  sourceLanguage: string;
+  targetLanguage: string;
+  translatedText: string;
+  translatedAt?: string;
+};
+
 export type ConversationTurn = {
   id: string;
   kind?: ConversationKind;
@@ -19,6 +26,7 @@ export type ConversationTurn = {
   label?: string | null;
   eventType?: string | null;
   source?: string | null;
+  translation?: unknown;
 };
 
 export type OperationalEvent = {
