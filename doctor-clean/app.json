@@ -18,7 +18,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.cliniflow.doctor",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {

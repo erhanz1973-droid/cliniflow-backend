@@ -85,15 +85,28 @@ function getRequestId(response: Notifications.NotificationResponse): string {
 
 async function ensureAndroidDefaultChannel() {
   if (Platform.OS !== "android") return;
-  await Notifications.setNotificationChannelAsync(ANDROID_DEFAULT_CHANNEL_ID, {
-    name: "default",
+  const channelBase = {
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
-    sound: "default",
     enableVibrate: true,
     showBadge: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  };
+  await Notifications.setNotificationChannelAsync(ANDROID_DEFAULT_CHANNEL_ID, {
+    ...channelBase,
+    name: "default",
+    sound: "default",
   });
-  __DEV__ && console.log("[PUSH_SOUND] android_channel_set", { id: ANDROID_DEFAULT_CHANNEL_ID, sound: "default" });
+  await Notifications.setNotificationChannelAsync("chat_alerts", {
+    ...channelBase,
+    name: "Messages",
+    sound: "default",
+  });
+  __DEV__ &&
+    console.log("[PUSH_SOUND] android_channel_set", {
+      ids: [ANDROID_DEFAULT_CHANNEL_ID, "chat_alerts"],
+      sound: "default",
+    });
   await logAndroidDefaultChannelReadback(ANDROID_DEFAULT_CHANNEL_ID);
 }
 
