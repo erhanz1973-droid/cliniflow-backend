@@ -4,7 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title id="pageTitle">Clinifly - Fiyatlandırma</title>
-  <script src="/admin-i18n.js?v=27"></script>
+  <script src="/api/public/meta-pixel-config.js"></script>
+  <script src="/meta-pixel.js?v=1"></script>
+  <!-- Stripe Price IDs: set content to price_… from Stripe Dashboard (Products) -->
+  <meta name="cliniflow-stripe-price-basic" content="" />
+  <meta name="cliniflow-stripe-price-pro" content="" />
+  <meta name="DEBUG" content="WORKING" />
+  <script src="/admin-i18n.js?v=36"></script>
+  <script src="/api-base.js?v=202605185"></script>
   <style>
     :root {
       --bg: #111827;
@@ -120,10 +127,30 @@
     }
 
     .plan-patients {
-      font-size: 32px;
-      font-weight: 800;
+      font-size: 22px;
+      font-weight: 700;
       color: var(--primary);
+      margin-bottom: 10px;
+    }
+
+    .plan-price {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
       margin-bottom: 16px;
+    }
+
+    .plan-price .amount {
+      font-size: 44px;
+      line-height: 1;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .plan-price .period {
+      font-size: 14px;
+      color: var(--muted);
+      padding-bottom: 6px;
     }
 
     .plan-description {
@@ -180,6 +207,17 @@
     .plan-cta.secondary:hover {
       border-color: var(--primary);
       color: var(--primary);
+    }
+
+    .plan-cta:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .plan-cta-row {
+      display: grid;
+      gap: 10px;
     }
 
     .comparison-table {
@@ -319,17 +357,18 @@
     </div>
 
     <div class="pricing-info">
-      <p data-i18n="pricing.info">
-        Planlar <span class="highlight">aktif hasta sayısına</span> göre belirlenir. 
-        Mevccut hastalarınızla çalışmaya devam edebilirsiniz.
-      </p>
+      <p data-i18n="pricing.info">Sadece aktif hasta sayınıza göre ödeme yapın.</p>
     </div>
 
     <div class="plans">
       <div class="plan">
         <div class="plan-icon">🆓</div>
         <div class="plan-name" data-i18n="pricing.free.name">Free</div>
-        <div class="plan-patients">5 Hasta</div>
+        <div class="plan-patients" data-i18n="pricing.free.patients">5 patients</div>
+        <div class="plan-price">
+          <span class="amount">$0</span>
+          <span class="period" data-i18n="pricing.periodMonthly">/month</span>
+        </div>
         <div class="plan-description" data-i18n="pricing.free.description">
           "Clinifly'i gerçek hastalarla denemeniz için."
         </div>
@@ -340,43 +379,51 @@
           <li><span class="check">✓</span> <span data-i18n="pricing.features.referral">Referral sistemi</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.branding">Clinifly branding</span></li>
         </ul>
-        <button class="plan-cta secondary" data-i18n="pricing.free.cta">Başla</button>
+        <button type="button" class="plan-cta secondary" data-i18n="pricing.free.cta" onclick="window.location.href='/admin-register.html'">Başla</button>
       </div>
 
       <div class="plan featured">
         <div class="plan-badge" data-i18n="pricing.basic.badge">Popüler</div>
-        <div class="plan-icon">💼</div>
-        <div class="plan-name" data-i18n="pricing.basic.name">Basic</div>
-        <div class="plan-patients">15 Hasta</div>
+        <div class="plan-icon">🚀</div>
+        <div class="plan-name" data-i18n="pricing.basic.name">Pro</div>
+        <div class="plan-patients" data-i18n="pricing.basic.patients">15 patients</div>
+        <div class="plan-price">
+          <span class="amount">$29</span>
+          <span class="period" data-i18n="pricing.periodMonthly">/month</span>
+        </div>
         <div class="plan-description" data-i18n="pricing.basic.description">
-          "Günlük hasta iletişimi olan klinikler için ideal."
+          "Büyüyen klinikler için güçlü paket."
         </div>
         <ul class="plan-features">
-          <li><span class="check">✓</span> <span data-i18n="pricing.features.allCore">Tüm core özellikler</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.customBranding">Özel branding</span></li>
-          <li><span class="check">✓</span> <span data-i18n="pricing.features.referral">Gelişmiş referral</span></li>
-          <li><span class="check">✓</span> <span data-i18n="pricing.features.analytics">Temel analizler</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.referral">Referral sistemi</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.analytics">Analizler</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.support">E-posta desteği</span></li>
         </ul>
-        <button class="plan-cta primary" data-i18n="pricing.basic.cta">Upgrade Et</button>
+        <button type="button" class="plan-cta primary" data-i18n="pricing.basic.cta" id="btn-upgrade-basic" onclick="upgradePlan('', 'pro')">Upgrade Et</button>
       </div>
 
       <div class="plan">
-        <div class="plan-icon">🚀</div>
-        <div class="plan-name" data-i18n="pricing.pro.name">Pro</div>
-        <div class="plan-patients">Sınırsız</div>
+        <div class="plan-icon">👑</div>
+        <div class="plan-name" data-i18n="pricing.pro.name">Premium</div>
+        <div class="plan-patients" data-i18n="pricing.pro.patients">Unlimited patients</div>
+        <div class="plan-price">
+          <span class="amount">$89</span>
+          <span class="period" data-i18n="pricing.periodMonthly">/month</span>
+        </div>
         <div class="plan-description" data-i18n="pricing.pro.description">
-          "Büyüyen klinikler için limitsiz kullanım."
+          "Kurumsal klinikler için premium destek."
         </div>
         <ul class="plan-features">
-          <li><span class="check">✓</span> <span data-i18n="pricing.features.allCore">Tüm core özellikler</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.unlimitedPatients">Sınırsız hasta</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.advancedReferral">Gelişmiş referral (level, kampanya)</span></li>
-          <li><span class="check">✓</span> <span data-i18n="pricing.features.analytics">Detaylı raporlama</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.prioritySupport">Öncelikli destek</span></li>
           <li><span class="check">✓</span> <span data-i18n="pricing.features.onboarding">Özel onboarding</span></li>
         </ul>
-        <button class="plan-cta primary" data-i18n="pricing.pro.cta">İletişime Geç</button>
+        <div class="plan-cta-row">
+          <button type="button" class="plan-cta primary" data-i18n="pricing.pro.cta" id="btn-upgrade-pro" onclick="upgradePlan('', 'premium')">Upgrade Et</button>
+          <button type="button" class="plan-cta secondary" data-i18n="pricing.pro.contactCta" onclick="window.location.href='mailto:hello@clinifly.com?subject=Clinifly%20Premium%20Plan'">Contact</button>
+        </div>
       </div>
     </div>
 
@@ -386,8 +433,8 @@
           <tr>
             <th data-i18n="pricing.comparison.feature">Özellik</th>
             <th data-i18n="pricing.comparison.free">Free</th>
-            <th data-i18n="pricing.comparison.basic">Basic</th>
-            <th data-i18n="pricing.comparison.pro">Pro</th>
+            <th data-i18n="pricing.comparison.basic">Pro</th>
+            <th data-i18n="pricing.comparison.pro">Premium</th>
           </tr>
         </thead>
         <tbody>
@@ -527,12 +574,76 @@
         answer.classList.contains('active') ? '▲' : '▼';
     }
 
-    // Initialize i18n
-    document.addEventListener('DOMContentLoaded', () => {
-      if (window.i18n) {
-        window.i18n.updatePage();
+    function getStripePrice(tier) {
+      const name = tier === "pro" ? "cliniflow-stripe-price-pro" : "cliniflow-stripe-price-basic";
+      const el = document.querySelector('meta[name="' + name + '"]');
+      return (el && el.getAttribute("content") || "").trim();
+    }
+
+    function checkoutApiOrigin() {
+      if (typeof cliniflowAdminApiOrigin === "function") {
+        var b = cliniflowAdminApiOrigin();
+        if (b && /^https?:\/\//i.test(String(b))) return String(b).replace(/\/+$/, "");
       }
-    });
+      return "https://cliniflow-backend-clean-production.up.railway.app";
+    }
+
+    async function upgradePlan(priceId, tier) {
+      var pid = String(priceId || "").trim();
+      var planTier = String(tier || "").trim().toLowerCase();
+      try {
+        var token = "";
+        try {
+          token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "";
+        } catch (e) { token = ""; }
+        if (!token) {
+          if (confirm("Clinic admin login is required to subscribe. Open login?")) {
+            window.location.href = "/admin-login.html?next=" + encodeURIComponent("/pricing.html");
+          }
+          return;
+        }
+
+        var clinicId = "";
+        try {
+          var u = JSON.parse(localStorage.getItem("user") || "{}");
+          clinicId = String(u.clinicId || u.clinic_id || "").trim();
+        } catch (e2) { clinicId = ""; }
+
+        var origin = checkoutApiOrigin();
+        var path = "/api/stripe/create-checkout";
+        var url = origin ? origin + path : path;
+
+        var res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + token,
+          },
+          body: JSON.stringify({
+            ...(pid ? { priceId: pid } : {}),
+            ...(planTier ? { tier: planTier } : {}),
+            ...(clinicId ? { clinicId: clinicId } : {}),
+          }),
+        });
+
+        var data = {};
+        try {
+          data = await res.json();
+        } catch (e3) {}
+
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        }
+
+        alert(data.error || data.message || ("Failed to start checkout (HTTP " + res.status + ")"));
+      } catch (e) {
+        console.error(e);
+        alert("Error starting payment");
+      }
+    }
+
+    // Buttons stay enabled; backend resolves correct live price IDs by tier.
   </script>
 </body>
 </html>
