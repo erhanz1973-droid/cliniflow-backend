@@ -21,11 +21,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout (submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Init backend submodule
+        run: |
+          git submodule sync -- cliniflow-backend-clean
+          git submodule update --init --depth 1 -- cliniflow-backend-clean
 
       - name: Deploy via Railway CLI
         env:
