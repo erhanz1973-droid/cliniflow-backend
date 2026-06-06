@@ -1,9 +1,7 @@
-# Railway: requires GitHub repo secrets (Project → Settings → Tokens in Railway dashboard):
-#   RAILWAY_TOKEN        — Project token
-#   RAILWAY_PROJECT_ID   — Project ID (from dashboard URL or Settings)
-# Optional:
-#   RAILWAY_ENVIRONMENT  — defaults to production
-#   RAILWAY_SERVICE      — service name or ID if the project has multiple services
+# Railway: requires one GitHub Actions secret:
+#   RAILWAY_TOKEN — Project token (Railway → Project → Settings → Tokens)
+# Project/service targeting comes from Railway dashboard linkage (Root Directory, service config).
+# No RAILWAY_PROJECT_ID needed when using a project-scoped token.
 name: Deploy Railway
 
 on:
@@ -29,28 +27,11 @@ jobs:
           git submodule sync -- cliniflow-backend-clean
           git submodule update --init --depth 1 -- cliniflow-backend-clean
 
-      - name: Deploy via Railway CLI
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy
+        working-directory: cliniflow-backend-clean
+        run: railway up --ci
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
-          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
-        run: |
-          set -euo pipefail
-          if [ -z "${RAILWAY_TOKEN:-}" ] || [ -z "${RAILWAY_PROJECT_ID:-}" ]; then
-            echo "Missing RAILWAY_TOKEN or RAILWAY_PROJECT_ID in repo secrets."
-            echo "Railway → Project → Settings → Tokens; copy Project ID from the URL or settings."
-            exit 1
-          fi
-          npm i -g @railway/cli@4
-          ENV_NAME="${RAILWAY_ENVIRONMENT:-production}"
-          if [ -n "${RAILWAY_SERVICE:-}" ]; then
-            railway up -d --ci -y \
-              -p "$RAILWAY_PROJECT_ID" \
-              -e "$ENV_NAME" \
-              -s "$RAILWAY_SERVICE"
-          else
-            railway up -d --ci -y \
-              -p "$RAILWAY_PROJECT_ID" \
-              -e "$ENV_NAME"
-          fi
