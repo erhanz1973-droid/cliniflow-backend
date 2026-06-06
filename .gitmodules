@@ -1,0 +1,12 @@
+[submodule "cliniflow-admin"]
+	path = cliniflow-admin
+	url = https://github.com/erhanz1973-droid/cliniflow-admin.git
+[submodule "cliniflow-app"]
+	path = cliniflow-app
+	url = https://github.com/erhanz1973-droid/cliniflow-app.git
+[submodule "cliniflow-backend-clean"]
+	path = cliniflow-backend-clean
+	url = https://github.com/erhanz1973-droid/cliniflow-backend-clean.git
+[submodule "server_OLD"]
+	path = server_OLD
+	url = https://github.com/erhanz1973-droid/cliniflow-server.git
