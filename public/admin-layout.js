@@ -171,6 +171,17 @@
     `;
   }
 
+  function loadImpersonationBanner() {
+    if (window.__CLINIFLOW_IMPERSONATION_LOADED__) return;
+    var p = window.location.pathname || '';
+    if (p.includes('login') || p.includes('register') || p.includes('super-admin')) return;
+    window.__CLINIFLOW_IMPERSONATION_LOADED__ = true;
+    var s = document.createElement('script');
+    s.src = '/admin-impersonation.js?v=202606141';
+    s.defer = true;
+    document.body.appendChild(s);
+  }
+
   /* ── Inject layout ───────────────────────────────────────── */
   function inject() {
     // Auth guard (must match admin.html: adminToken OR admin_token)
@@ -222,6 +233,7 @@
 
     // Start unread badge polling
     startBadgePolling();
+    loadImpersonationBanner();
 
     // Hook into i18n updates to refresh sidebar labels
     const prevOnI18nUpdated = window.onI18nUpdated;
@@ -252,6 +264,13 @@
 
   /* ── Logout ──────────────────────────────────────────────── */
   window.__alLogout = function () {
+    try {
+      var impRaw = localStorage.getItem('cliniflow_impersonation');
+      if (impRaw && typeof window.endClinicImpersonation === 'function') {
+        window.endClinicImpersonation({ redirectUrl: '/super-admin.html' });
+        return;
+      }
+    } catch (_) { /* fall through */ }
     localStorage.removeItem('adminToken');
     localStorage.removeItem('admin_token');
     localStorage.removeItem('selected_patient_id');
@@ -379,6 +398,8 @@
       pollPendingReferrals();
     }, 45000);
   }
+
+  loadImpersonationBanner();
 
   /* ── Run ─────────────────────────────────────────────────── */
   if (document.readyState === 'loading') {
